@@ -69,7 +69,7 @@ pub const TLS_MODULE_INDEX: u32 = 1;
 
 /// Initial contents of a module's thread-local storage: every thread gets a
 /// copy of `size` bytes from `start` on its first `__tls_get_addr`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TlsImage {
     pub module_index: u32,
     pub start: u32,

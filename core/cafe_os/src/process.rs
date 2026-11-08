@@ -59,7 +59,7 @@ pub struct BootInfo {
 }
 
 /// What runs after `__preinit_user` returns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MainEntry {
     pub entry: u32,
     pub argc: u32,

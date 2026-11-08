@@ -5,7 +5,8 @@
 //!
 //! ```text
 //!  <title>/update/                    next to the title's own code/, content/ and meta/
-//!  <exe>/update/  <exe>/update/*/     a folder of updates for any number of titles
+//!  <exe>/update/  and folders chosen  folders of updates for any number of titles, searched
+//!                 in the settings     through their subfolders (an `mlc01` copy works too)
 //!  <mlc>/usr/title/0005000e/<id>/     the console's storage (`mlc01`) as Cemu lays it out
 //!                 0005000c/<id>/      (downloadable content)
 //! ```
@@ -115,7 +116,7 @@ pub fn find_update(title_id: u64, root: Option<&Path>, mlc_dirs: &[PathBuf]) -> 
 }
 
 /// Looks for the add-on of `title_id`: in `<root>/<kind>` first (if the title has a folder),
-/// then in each of `library_dirs` and their subfolders, then in each of `mlc_dirs`.
+/// then anywhere below each of `library_dirs`, then in each of `mlc_dirs`.
 pub fn find_add_on(
     kind: AddOnKind,
     title_id: u64,
@@ -134,10 +135,11 @@ pub fn find_add_on(
     let mut candidates: Vec<(PathBuf, bool)> =
         root.map(|root| (root.join(kind.dir_name()), false)).into_iter().collect();
     for dir in library_dirs {
-        candidates.extend(library_entries(dir).into_iter().map(|dir| (dir, true)));
+        candidates.extend(library_entries(dir, &names[0].1).into_iter().map(|dir| (dir, true)));
     }
     for mlc in mlc_dirs {
-        candidates.extend(names.iter().map(|(h, l)| (mlc.join("usr/title").join(h).join(l), false)));
+        candidates
+            .extend(names.iter().map(|(h, l)| (mlc.join("usr/title").join(h).join(l), false)));
     }
 
     let mut search = UpdateSearch::default();
@@ -161,17 +163,34 @@ pub fn find_add_on(
     search
 }
 
-/// `dir` itself, then its subfolders by name.
-fn library_entries(dir: &Path) -> Vec<PathBuf> {
-    let mut children: Vec<PathBuf> = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
-    children.sort();
-    std::iter::once(dir.to_owned()).chain(children).collect()
+/// How deep below a library folder add-ons are looked for: enough for an `mlc01` copied
+/// whole (`mlc01/usr/title/0005000e/<id>`) inside a folder or two of the user's own.
+const LIBRARY_DEPTH: usize = 8;
+
+/// Every folder at or below `dir` that holds a `code/` folder, those whose path names the
+/// title (`id`, its low half in hex) first. Below such a folder nothing is looked for:
+/// it is a title, an update or downloadable content, and its `content/` can be huge.
+fn library_entries(dir: &Path, id: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![(dir.to_owned(), 0)];
+    while let Some((dir, depth)) = pending.pop() {
+        if dir.join("code").is_dir() {
+            found.push(dir);
+            continue;
+        }
+        if depth >= LIBRARY_DEPTH {
+            continue;
+        }
+        let children = fs::read_dir(&dir).into_iter().flatten().filter_map(Result::ok);
+        pending.extend(
+            children
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .map(|entry| (entry.path(), depth + 1)),
+        );
+    }
+    let names_title = |path: &Path| path.to_string_lossy().to_ascii_lowercase().contains(id);
+    found.sort_by_cached_key(|path| (!names_title(path), path.clone()));
+    found
 }
 
 /// Whether `dir` holds the update of `title_id`, as its `code/app.xml` says.
@@ -293,13 +312,16 @@ mod tests {
         // Another title's update first by name: passed over without a word.
         write_app_xml(&updates.join("1010ec00"), &app_xml(update_title_id(0x0005_0000_1010_EC00)));
         write_app_xml(&updates.join("any name"), &app_xml(update_title_id(BASE)));
+        // Deep in a copied `mlc01`: found, and before the other one, as its path names the title.
+        let nested = updates.join("backup/mlc01/usr/title/0005000e/101c9300");
+        write_app_xml(&nested, &app_xml(update_title_id(BASE)));
         let dlc_id = AddOnKind::Dlc.title_id(BASE);
         write_app_xml(&dlc, &format!(
             "<app><title_id type=\"hexBinary\">{dlc_id:016X}</title_id>             <title_version type=\"hexBinary\">0050</title_version></app>"
         ).into_bytes());
 
         let found = find_add_on(AddOnKind::Update, BASE, None, std::slice::from_ref(&updates), &[]);
-        assert_eq!(found.found, Some(updates.join("any name")));
+        assert_eq!(found.found, Some(nested));
         assert!(found.rejected.is_empty());
         let found = find_add_on(AddOnKind::Dlc, BASE, None, std::slice::from_ref(&dlc), &[]);
         assert_eq!((found.found, found.version), (Some(dlc), Some(0x50)));

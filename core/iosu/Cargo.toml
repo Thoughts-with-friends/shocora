@@ -12,6 +12,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+serde = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 wiiu_fs = { workspace = true }

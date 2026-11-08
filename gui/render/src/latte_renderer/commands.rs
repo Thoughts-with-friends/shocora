@@ -6,6 +6,8 @@ impl LatteRenderer {
     /// all its shaders, whose ids start over.
     fn reset(&mut self) {
         self.submit();
+        // Everything goes at once: let the GPU finish what still uses it first.
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         self.save_pipeline_cache();
         self.surfaces.clear();
         self.uploaded.clear();
@@ -45,7 +47,8 @@ impl RenderBackend for LatteRenderer {
                 RenderCommand::Draw(draw) => {
                     (!self.pipelines.contains_key(&pipeline_key(draw))).then_some(draw.as_ref())
                 }
-                RenderCommand::ClearScreen { .. }
+                RenderCommand::ReadSurfaces { .. }
+                | RenderCommand::ClearScreen { .. }
                 | RenderCommand::ArenaWrite { .. }
                 | RenderCommand::ArenaWrap
                 | RenderCommand::Reset
@@ -67,8 +70,17 @@ impl RenderBackend for LatteRenderer {
             match command {
                 RenderCommand::ClearScreen { screen, color } => self.clear_screen(*screen, *color),
                 RenderCommand::ArenaWrite { offset, bytes } => {
-                    if u64::from(*offset) + bytes.len() as u64 <= self.arena.size() {
-                        self.queue.write_buffer(&self.arena, u64::from(*offset), bytes);
+                    // Writes must cover whole words: vertex data and indices often end mid-word.
+                    // The padding lands in the gap `arena_reserve` leaves before the next entry.
+                    let padded = (bytes.len() as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+                    if u64::from(*offset) + padded <= self.arena.size() {
+                        if padded == bytes.len() as u64 {
+                            self.queue.write_buffer(&self.arena, u64::from(*offset), bytes);
+                        } else {
+                            let mut whole = bytes.to_vec();
+                            whole.resize(padded as usize, 0);
+                            self.queue.write_buffer(&self.arena, u64::from(*offset), &whole);
+                        }
                     }
                 }
                 RenderCommand::ArenaWrap => {
@@ -76,6 +88,11 @@ impl RenderBackend for LatteRenderer {
                     self.submit();
                 }
                 RenderCommand::Reset => self.reset(),
+                RenderCommand::ReadSurfaces { keys, reply } => {
+                    let surfaces = self.read_surfaces(keys);
+                    // Nobody waiting any more is no reason to stop.
+                    let _ = reply.0.send(surfaces);
+                }
                 RenderCommand::SetResolution(resolution) => self.set_resolution(*resolution),
                 RenderCommand::Upload(upload) => self.upload(upload),
                 RenderCommand::ForgetTexture(key) => self.forget_texture(*key),

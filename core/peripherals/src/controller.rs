@@ -99,7 +99,7 @@ pub struct GamePadState {
 }
 
 /// Tracks edges between samples (`trigger` / `release` in `VPADStatus`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ButtonEdges {
     previous: VpadButtons,
 }

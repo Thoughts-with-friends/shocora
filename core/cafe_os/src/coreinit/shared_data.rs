@@ -31,7 +31,7 @@ const HOST_FALLBACKS: [&[&str]; 4] = [
 const CEMU_SEARCH_LEVELS: usize = 3;
 
 /// Where the shared area is filled up to, and what is mapped.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct SharedData {
     cursor: u32,
     /// `(address, size)` per font id.

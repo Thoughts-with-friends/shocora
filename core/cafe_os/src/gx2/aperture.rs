@@ -11,7 +11,7 @@ use super::Gx2Surface;
 use crate::hle::{HleContext, HleError};
 
 /// An open aperture.
-#[derive(Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 struct Aperture {
     address: u32,
     size: u32,
@@ -25,13 +25,13 @@ struct Aperture {
 /// every frame find it unchanged, as the host renders outside guest memory:
 /// comparing bytes is far cheaper than walking the tiles again. Several are kept
 /// because titles go round their swap chain, a different surface every frame.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 struct RetileCache {
     /// Most recently used last.
     levels: Vec<CachedLevel>,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct CachedLevel {
     /// `(image, level, slice)`.
     key: (u32, u32, u32),
@@ -64,7 +64,7 @@ impl RetileCache {
 }
 
 /// Open apertures of the process.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Apertures {
     open: Vec<Aperture>,
     last_handle: u32,

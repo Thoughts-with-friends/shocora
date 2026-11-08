@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EmuError {
+    #[error("{0}")]
+    State(String),
     #[error(transparent)]
     Title(#[from] wiiu_title::TitleError),
     #[error("{path}: {source}")]

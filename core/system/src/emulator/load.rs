@@ -1,13 +1,12 @@
 //! Booting titles: mount volumes, load the RPX, set up the main thread.
 use std::path::Path;
 
-use wiiu_cafe_os::{BootInfo, CafeOs};
+use wiiu_cafe_os::{BootInfo, CafeOs, aoc::AocTitle};
 use wiiu_cpu::CpuState;
 use wiiu_fs::{HostDirectory, Overlay, Vfs};
 use wiiu_gpu::Gpu;
 use wiiu_iosu::Iosu;
 use wiiu_memory::Memory;
-use wiiu_cafe_os::aoc::AocTitle;
 use wiiu_title::{
     Dlc, TitleInfo, TitleSource,
     update::{self, AddOnKind},

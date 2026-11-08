@@ -61,7 +61,7 @@ mod queue_state {
 const SLOT: u32 = 4;
 
 /// A `MPRunTask*` call in progress on one thread.
-#[derive(Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 pub struct RunningTasks {
     /// Queue to keep draining, or `None` for a single `MPRunTask`.
     queue: Option<u32>,
@@ -71,7 +71,7 @@ pub struct RunningTasks {
 }
 
 /// Per-thread continuations.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct MpState {
     running: HashMap<u32, RunningTasks>,
 }

@@ -22,7 +22,7 @@ pub const fn ticks_to_duration(ticks: u64) -> Duration {
 }
 
 /// How fast the guest's time runs compared to real time.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GameSpeed {
     Half,
     #[default]
@@ -72,7 +72,8 @@ impl GameSpeed {
 }
 
 /// Monotonic tick counter plus the wall-clock offset used by `OSGetTime`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(into = "SavedTimeBase", from = "SavedTimeBase")]
 pub struct TimeBase {
     /// When the current speed began.
     speed_start: Instant,
@@ -81,6 +82,35 @@ pub struct TimeBase {
     speed: GameSpeed,
     /// Ticks since the Wii U epoch at power-on.
     epoch_ticks_at_boot: u64,
+}
+
+/// A [`TimeBase`] without its host clock: time goes on from `ticks` when loaded.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedTimeBase {
+    ticks: u64,
+    speed: GameSpeed,
+    epoch_ticks_at_boot: u64,
+}
+
+impl From<TimeBase> for SavedTimeBase {
+    fn from(base: TimeBase) -> Self {
+        Self {
+            ticks: base.ticks_since_boot(),
+            speed: base.speed,
+            epoch_ticks_at_boot: base.epoch_ticks_at_boot,
+        }
+    }
+}
+
+impl From<SavedTimeBase> for TimeBase {
+    fn from(saved: SavedTimeBase) -> Self {
+        Self {
+            speed_start: Instant::now(),
+            ticks_at_speed_start: saved.ticks,
+            speed: saved.speed,
+            epoch_ticks_at_boot: saved.epoch_ticks_at_boot,
+        }
+    }
 }
 
 impl TimeBase {

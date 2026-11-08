@@ -9,14 +9,14 @@ use std::collections::VecDeque;
 use wiiu_cpu::CpuState;
 
 /// A guest function to call with up to eight integer arguments.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct GuestCall {
     pub function: u32,
     pub args: Vec<u32>,
 }
 
 /// Pending and running callbacks.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Callbacks {
     queue: VecDeque<GuestCall>,
     /// Registers of the interrupted code while a callback runs.

@@ -9,9 +9,14 @@ fn gx2r_set_allocator(ctx: &mut HleContext<'_>, alloc: u32, free: u32) {
     ctx.os.gx2.gx2r_allocator = (alloc, free);
 }
 
-/// Cache invalidation: memory is always coherent here.
+/// Cache invalidation: memory is always coherent here, but the GPU learns which buffers
+/// the CPU wrote. Whole-memory invalidations are ignored, as Cemu does.
 #[hle_export(lib = "gx2", name = "GX2Invalidate")]
-fn gx2_invalidate(_ctx: &mut HleContext<'_>, _flags: u32, _address: u32, _size: u32) {}
+fn gx2_invalidate(ctx: &mut HleContext<'_>, _flags: u32, address: u32, size: u32) {
+    if address != 0 && size != u32::MAX {
+        ctx.gpu.note_cpu_write(address, size);
+    }
+}
 
 /// Scan buffers are recorded by `GX2CopyColorBufferToScanBuffer`; the TV/DRC
 /// buffer memory itself is not needed.

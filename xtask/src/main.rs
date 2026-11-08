@@ -6,7 +6,8 @@
 //!
 //! `--toolchain` picks the Rust toolchain through `rustup run`: `gnu` and `msvc` stand for
 //! `stable-x86_64-pc-windows-<abi>`. Without it, the toolchain that runs xtask builds.
-//! GNU builds go to `target/gnu` so that the two do not rebuild over each other.
+//! GNU builds go to `target/gnu` so that the two do not rebuild over each other, and GNU
+//! release builds carry no debug info (it would be embedded in the exe, not in a .pdb).
 //! xtask itself is linked by the toolchain that starts it, so with no MSVC linker installed:
 //! `cargo +stable-x86_64-pc-windows-gnu xtask build`.
 mod icon;
@@ -89,6 +90,12 @@ fn main() -> ExitCode {
     if gnu && std::env::var_os("CARGO_TARGET_DIR").is_none() {
         let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         command.arg("--target-dir").arg(workspace.join("target/gnu"));
+    }
+    // MSVC puts debug info in a separate .pdb; GNU embeds it as DWARF, which takes a
+    // release exe from about 36 MB past 400 MB. Symbols stay for backtraces.
+    if gnu && release {
+        command.args(["--config", "profile.release.debug=false"]);
+        command.args(["--config", "profile.release.strip=\"debuginfo\""]);
     }
     if task == "run" && !passthrough.is_empty() {
         command.arg("--").args(&passthrough);

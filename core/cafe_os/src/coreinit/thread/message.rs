@@ -24,6 +24,7 @@ const FLAG_BLOCK: u32 = 1;
 const SYSTEM_QUEUE_SLOTS: u32 = 16;
 
 /// The ring-buffer fields of a queue.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Ring {
     array: u32,
     count: u32,

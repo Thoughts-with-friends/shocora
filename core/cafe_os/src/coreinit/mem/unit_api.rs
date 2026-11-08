@@ -9,7 +9,7 @@ use crate::hle::{HleContext, HleError};
 const UNIT_HEAP_HEADER: u32 = 0x40;
 
 /// One unit heap; the free list lives on the host.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct UnitHeap {
     free: Vec<u32>,
     capacity: u32,

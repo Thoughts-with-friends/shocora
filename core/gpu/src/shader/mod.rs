@@ -19,7 +19,7 @@ pub use emit::{
 pub use fetch::{Attribute, parse_fetch_shader};
 
 /// `E_DIM` as far as shader code is concerned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextureDim {
     #[default]
     D2,

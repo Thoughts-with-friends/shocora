@@ -17,7 +17,7 @@ const DMA_BLOCK_SIZE: u32 = 32;
 const DMA_MAX_BLOCKS: u32 = 128;
 
 /// Allocation state of every core's window.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct LockedCache {
     /// Length of the allocation starting at each block, or 0 when none does.
     allocations: [[u8; BLOCK_COUNT]; 3],

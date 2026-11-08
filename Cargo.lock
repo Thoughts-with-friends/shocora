@@ -750,6 +750,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1365,6 +1374,18 @@ dependencies = [
  "vswhom",
  "winreg",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "endi"
@@ -2433,6 +2454,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3293,6 +3323,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "postcard"
+version = "1.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
+dependencies = [
+ "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "serde",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3693,6 +3735,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3778,6 +3830,7 @@ dependencies = [
  "shocora_netplay",
  "shocora_render",
  "wiiu_emu",
+ "wiiu_title",
 ]
 
 [[package]]
@@ -4312,6 +4365,12 @@ dependencies = [
  "nom",
  "petgraph",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "type-map"
@@ -4946,6 +5005,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "log",
+ "serde",
  "thiserror 2.0.21",
  "wiiu_cpu",
  "wiiu_fs",
@@ -4978,6 +5038,10 @@ name = "wiiu_emu"
 version = "0.1.0"
 dependencies = [
  "log",
+ "lz4_flex",
+ "postcard",
+ "serde",
+ "serde_bytes",
  "thiserror 2.0.21",
  "wiiu_cafe_os",
  "wiiu_cpu",
@@ -5006,6 +5070,7 @@ dependencies = [
  "log",
  "naga",
  "serde",
+ "serde_bytes",
  "thiserror 2.0.21",
  "wiiu_interrupt",
  "wiiu_mem_addr",
@@ -5034,6 +5099,7 @@ name = "wiiu_iosu"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde",
  "thiserror 2.0.21",
  "wiiu_fs",
 ]
@@ -5067,6 +5133,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "log",
+ "serde",
  "thiserror 2.0.21",
  "wiiu_mem_addr",
  "wiiu_memory",

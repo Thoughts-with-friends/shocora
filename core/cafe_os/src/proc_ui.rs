@@ -12,7 +12,7 @@ const STATUS_FOREGROUND: u32 = 0;
 const POOL_SIZE: u32 = 0x1000;
 
 /// ProcUI state.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct ProcUiState {
     pub running: bool,
     /// Save callback set by `ProcUIInit`/`ProcUIInitEx`/`ProcUISetSaveCallback`.

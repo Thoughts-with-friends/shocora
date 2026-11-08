@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 /// Free blocks plus live allocations of one heap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ExpHeap {
     start: u32,
     end: u32,

@@ -5,6 +5,8 @@ use super::*;
 pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features()
         & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            // Titles keep 3D textures (colour grading tables, volumes) in BC formats too.
+            | wgpu::Features::TEXTURE_COMPRESSION_BC_SLICED_3D
             | wgpu::Features::DEPTH32FLOAT_STENCIL8
             | wgpu::Features::FLOAT32_FILTERABLE
             | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM

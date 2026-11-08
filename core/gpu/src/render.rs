@@ -27,7 +27,7 @@ impl Screen {
 }
 
 /// Host pixel formats (a subset every desktop adapter supports).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostFormat {
     R8Unorm,
     R8Snorm,
@@ -185,7 +185,7 @@ impl ResolutionScale {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SurfaceKey {
     pub address: u32,
     pub width: u32,
@@ -204,16 +204,17 @@ pub struct DepthClear {
 }
 
 /// One mip level, tightly packed in the host format.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct MipData {
     pub width: u32,
     pub height: u32,
     pub layers: u32,
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
 }
 
 /// New contents of a texture that came from guest memory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TextureUpload {
     pub key: SurfaceKey,
     pub dim: TextureDim,
@@ -385,9 +386,25 @@ pub enum BindingKind {
     Sampler { comparison: bool, filtering: bool },
 }
 
+/// Where the renderer answers [`RenderCommand::ReadSurfaces`].
+#[derive(Debug, Clone)]
+pub struct SurfaceReply(pub std::sync::mpsc::Sender<Vec<TextureUpload>>);
+
+impl PartialEq for SurfaceReply {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
 /// Work for the host renderer, independent of the graphics API.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderCommand {
+    /// Reads surfaces that exist on the host only, for a saved state: depth stays out, as it can
+    /// not be written back, and titles draw it anew every frame.
+    ReadSurfaces {
+        keys: Vec<SurfaceKey>,
+        reply: SurfaceReply,
+    },
     /// Draw at this scale from now on: what the old one drew is gone.
     SetResolution(ResolutionScale),
     /// Fill a screen with a solid color (linear RGBA in `0.0..=1.0`).

@@ -43,11 +43,13 @@ pub struct Dlc {
 
 impl TitleInfo {
     /// Applies the update installed at `dir`: its XML files and its RPX replace the
-    /// title's (`/vol/*` then serve its files over the title's).
+    /// title's (`/vol/*` then serve its files over the title's). The title keeps its own
+    /// ID (`00050000…`, not the update's `0005000e…`): saves and cheats go by it.
     ///
     /// # Errors
     /// Fails if the update's XML is malformed.
     pub fn with_update(mut self, dir: &Path) -> Result<Self, TitleError> {
+        let base_id = self.meta.title_id;
         let code_dir = dir.join("code");
         if let Some((text, path)) = read_if_file(code_dir.join("app.xml"))? {
             self.meta.apply_app_xml(&text, &path)?;
@@ -66,6 +68,7 @@ impl TitleInfo {
         if let Some(rpx) = rpx_name.map(|name| code_dir.join(name)).filter(|p| p.is_file()) {
             self.rpx_path = rpx;
         }
+        self.meta.title_id = base_id.or(self.meta.title_id);
         self.update_dir = Some(dir.to_owned());
         Ok(self)
     }
@@ -213,18 +216,24 @@ mod tests {
         let root = temp_dir("base");
         fs::create_dir_all(root.join("code")).unwrap();
         fs::write(root.join("code/game.rpx"), b"").unwrap();
+        fs::write(
+            root.join("code/app.xml"),
+            "<app><title_id type=\"hexBinary\">00050000101C9300</title_id></app>",
+        )
+        .unwrap();
         let update = temp_dir("update");
         fs::create_dir_all(update.join("code")).unwrap();
         fs::write(update.join("code/game.rpx"), b"").unwrap();
         fs::write(
             update.join("code/app.xml"),
-            "<app><title_version type=\"hexBinary\">00D0</title_version></app>",
+            "<app><title_id type=\"hexBinary\">0005000E101C9300</title_id>             <title_version type=\"hexBinary\">00D0</title_version></app>",
         )
         .unwrap();
 
         let info = TitleSource::open(&root).unwrap().with_update(&update).unwrap();
         assert_eq!(info.rpx_path, update.join("code/game.rpx"));
         assert_eq!(info.meta.title_version, Some(208));
+        assert_eq!(info.meta.title_id, Some(0x0005_0000_101C_9300), "the update renamed the title");
         assert_eq!(info.update_dir.as_deref(), Some(update.as_path()));
         let _ = (fs::remove_dir_all(root), fs::remove_dir_all(update));
     }

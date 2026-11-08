@@ -98,7 +98,7 @@ pub mod resource {
 pub const REGISTER_COUNT: usize = 0x1_0000;
 
 /// All GPU registers.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct RegisterFile {
     regs: Vec<u32>,
 }

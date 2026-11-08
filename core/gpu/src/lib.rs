@@ -24,5 +24,5 @@ pub mod shader;
 pub mod tiling;
 
 pub use error::GpuError;
-pub use gpu::{Gpu, GpuStats};
+pub use gpu::{Gpu, GpuState, GpuStats};
 pub use render::{RenderBackend, RenderCommand, Screen};

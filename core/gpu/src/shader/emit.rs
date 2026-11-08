@@ -655,7 +655,8 @@ impl<'a> Translator<'a> {
         };
         let coords = match signature.dim {
             TextureDim::D2 => format!("vec2<f32>({x},{y})"),
-            TextureDim::D2Array => format!("vec2<f32>({x},{y}), i32({z})"),
+            // Latte (like GLSL) rounds the slice to the nearest one: a slice of 2.9999 is 3.
+            TextureDim::D2Array => format!("vec2<f32>({x},{y}), i32(floor({z} + 0.5))"),
             TextureDim::D3 => format!("vec3<f32>({x},{y},{z})"),
             TextureDim::Cube => format!("cube_direction(vec2<f32>({x},{y}), i32({z}))"),
         };

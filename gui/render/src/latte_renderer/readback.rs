@@ -1,4 +1,6 @@
 //! Reading surfaces back to the CPU (screenshots, debugging).
+use wiiu_gpu::render::MipData;
+
 use super::*;
 
 impl LatteRenderer {
@@ -25,6 +27,7 @@ impl LatteRenderer {
             | wgpu::TextureFormat::Rgba8Snorm
             | wgpu::TextureFormat::R16Float
             | wgpu::TextureFormat::R8Unorm
+            | wgpu::TextureFormat::Rg8Unorm
             | wgpu::TextureFormat::Depth16Unorm => {
                 if format.is_depth_stencil_format() {
                     return None;
@@ -39,6 +42,9 @@ impl LatteRenderer {
                     }
                     wgpu::TextureFormat::R8Unorm => {
                         raw.iter().flat_map(|v| [*v, *v, *v, 255]).collect()
+                    }
+                    wgpu::TextureFormat::Rg8Unorm => {
+                        raw.as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[1], 0, 255]).collect()
                     }
                     wgpu::TextureFormat::R16Float => raw
                         .as_chunks::<2>()
@@ -90,6 +96,21 @@ impl LatteRenderer {
         }
     }
 
+    /// One slice of a surface as the host holds it, without conversion (tools).
+    pub fn read_surface_slice(
+        &mut self,
+        key: SurfaceKey,
+        slice: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        self.submit();
+        let texture = self.surfaces.get(&key)?.texture.clone();
+        let bytes = texture.format().block_copy_size(None)?;
+        if texture.format().is_compressed() || slice >= texture.depth_or_array_layers() {
+            return None;
+        }
+        self.read_texels_at(&texture, texture.width(), texture.height(), bytes, slice)
+    }
+
     fn read_raw(
         &self,
         texture: &wgpu::Texture,
@@ -118,6 +139,74 @@ impl LatteRenderer {
         height: u32,
         bytes: u32,
     ) -> Option<(u32, u32, Vec<u8>)> {
+        self.read_texels_at(texture, width, height, bytes, 0)
+    }
+
+    fn read_texels_at(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        bytes: u32,
+        slice: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        self.read_level(texture, (width, height), bytes, 0, slice)
+    }
+
+    /// Surfaces as an upload would bring them back, for a saved state. Those drawn larger than
+    /// the title thinks are left out: their size means nothing at another scale.
+    pub(super) fn read_surfaces(&mut self, keys: &[SurfaceKey]) -> Vec<TextureUpload> {
+        self.submit();
+        let mut surfaces = Vec::new();
+        for key in keys {
+            let Some(texture) = self.surfaces.get(key).map(|s| s.texture.clone()) else { continue };
+            let format = texture.format();
+            let Some(bytes) = format.block_copy_size(None) else { continue };
+            if format.is_depth_stencil_format()
+                || format.is_compressed()
+                || texture.width() != key.width
+                || texture.height() != key.height
+            {
+                continue;
+            }
+            let three_d = texture.dimension() == wgpu::TextureDimension::D3;
+            let dim = match (three_d, texture.depth_or_array_layers()) {
+                (true, _) => TextureDim::D3,
+                (false, 1) => TextureDim::D2,
+                _ => TextureDim::D2Array,
+            };
+            let mut mips = Vec::new();
+            for level in 0..texture.mip_level_count() {
+                let size = texture.size().mip_level_size(level, texture.dimension());
+                let mut data = Vec::new();
+                for slice in 0..size.depth_or_array_layers {
+                    let read = (size.width, size.height);
+                    let Some((_, _, part)) = self.read_level(&texture, read, bytes, level, slice)
+                    else {
+                        continue;
+                    };
+                    data.extend_from_slice(&part);
+                }
+                mips.push(MipData {
+                    width: size.width,
+                    height: size.height,
+                    layers: size.depth_or_array_layers,
+                    data,
+                });
+            }
+            surfaces.push(TextureUpload { key: *key, dim, mips });
+        }
+        surfaces
+    }
+
+    fn read_level(
+        &self,
+        texture: &wgpu::Texture,
+        (width, height): (u32, u32),
+        bytes: u32,
+        level: u32,
+        slice: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
         let row = (width * bytes).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shocora readback"),
@@ -129,7 +218,11 @@ impl LatteRenderer {
             label: Some("shocora readback"),
         });
         encoder.copy_texture_to_buffer(
-            texture.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                mip_level: level,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: slice },
+                ..texture.as_image_copy()
+            },
             wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
                 layout: wgpu::TexelCopyBufferLayout {

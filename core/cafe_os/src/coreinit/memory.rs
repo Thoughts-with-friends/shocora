@@ -15,6 +15,7 @@ fn memcpy(
     size: u32,
 ) -> Result<GuestPtr<u8>, HleError> {
     ctx.memory.copy_within(dst.address(), src.address(), size)?;
+    ctx.gpu.note_cpu_write(dst.address(), size);
     Ok(dst)
 }
 
@@ -26,6 +27,7 @@ fn memmove(
     size: u32,
 ) -> Result<GuestPtr<u8>, HleError> {
     ctx.memory.copy_within(dst.address(), src.address(), size)?;
+    ctx.gpu.note_cpu_write(dst.address(), size);
     Ok(dst)
 }
 
@@ -37,6 +39,7 @@ fn memset(
     size: u32,
 ) -> Result<GuestPtr<u8>, HleError> {
     ctx.memory.fill(dst.address(), size, value as u8)?;
+    ctx.gpu.note_cpu_write(dst.address(), size);
     Ok(dst)
 }
 
@@ -49,6 +52,7 @@ fn os_block_move(
     _flush: bool,
 ) -> Result<GuestPtr<u8>, HleError> {
     ctx.memory.copy_within(dst.address(), src.address(), size)?;
+    ctx.gpu.note_cpu_write(dst.address(), size);
     Ok(dst)
 }
 
@@ -60,6 +64,7 @@ fn os_block_set(
     size: u32,
 ) -> Result<GuestPtr<u8>, HleError> {
     ctx.memory.fill(dst.address(), size, value as u8)?;
+    ctx.gpu.note_cpu_write(dst.address(), size);
     Ok(dst)
 }
 

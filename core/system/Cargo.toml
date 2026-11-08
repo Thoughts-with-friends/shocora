@@ -12,6 +12,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+serde = { workspace = true }
+serde_bytes = "0.11"
+lz4_flex = "0.11"
 log = { workspace = true }
 thiserror = { workspace = true }
 wiiu_cafe_os = { workspace = true }

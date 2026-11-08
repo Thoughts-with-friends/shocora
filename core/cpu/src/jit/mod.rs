@@ -46,11 +46,15 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
-use self::emit::{Job, Translated};
+use self::emit::{Job, Reach, Translated};
 use crate::{Bus, CpuError, CpuState, StepEvent, interpreter::step};
 
-/// Longest block; keeps time slices responsive in loop-free code.
-const MAX_BLOCK_INSTRUCTIONS: u32 = 64;
+/// Longest block of the quick first translation.
+const MAX_BLOCK_INSTRUCTIONS: usize = 64;
+/// Most instructions of one region: Cranelift takes longer than linearly for more.
+const MAX_REGION_INSTRUCTIONS: usize = 256;
+/// How far from its entry a region follows branches: about as far as a function goes.
+const REGION_REACH: u32 = 0x4000;
 const PAGE_BITS: u32 = 12;
 const PAGE_ENTRIES: usize = 1 << (PAGE_BITS - 2);
 /// Translation threads at most; the emulator and renderer need cores too.
@@ -155,6 +159,8 @@ pub struct Jit {
     awaiting: HashMap<u32, Job>,
     /// Quickly translated blocks and where they count their runs, until they become hot.
     candidates: Vec<(Job, *const u32)>,
+    /// Code range and entries of every installed region, to forget them when code changes.
+    installed: Vec<((u32, u32), Vec<u32>)>,
     /// Storage of the run counters.
     counters: Vec<Box<[u32; COUNTER_CHUNK]>>,
     counters_used: usize,
@@ -166,8 +172,11 @@ pub struct Jit {
     generation: u64,
     /// Waits for each translation instead of interpreting meanwhile.
     synchronous: bool,
+    /// What the first translation of new code takes in.
+    first_reach: Reach,
     compiled_blocks: u64,
     compile_nanos: u64,
+    interpreted: u64,
 }
 
 // SAFETY: the module's raw code pointers are only used by the thread owning the `Jit`.
@@ -304,6 +313,7 @@ impl Jit {
             untranslated: HashMap::new(),
             awaiting: HashMap::new(),
             candidates: Vec::new(),
+            installed: Vec::new(),
             counters: Vec::new(),
             counters_used: 0,
             last_hot_scan: Instant::now(),
@@ -312,8 +322,10 @@ impl Jit {
             last_collect: Instant::now(),
             generation: 0,
             synchronous: std::env::var_os("SHOCORA_JIT_SYNC").is_some(),
+            first_reach: Reach::Block,
             compiled_blocks: 0,
             compile_nanos: 0,
+            interpreted: 0,
         }
     }
 
@@ -323,10 +335,28 @@ impl Jit {
         self.synchronous = synchronous;
     }
 
+    /// Translates new code as regions right away (tests of the region translation).
+    #[cfg(test)]
+    pub(crate) const fn set_regions_first(&mut self) {
+        self.first_reach = Reach::Region;
+    }
+
     /// Host time spent translating so far, summed over the workers.
+    #[inline]
+    pub fn queue_lengths(&self) -> (usize, usize) {
+        let queues = self.board.queues.lock().unwrap_or_else(PoisonError::into_inner);
+        (queues.first.len(), queues.optimize.len())
+    }
+
     #[inline]
     pub const fn compile_nanos(&self) -> u64 {
         self.compile_nanos
+    }
+
+    /// Guest instructions run by the interpreter while waiting for their translation.
+    #[inline]
+    pub const fn interpreted(&self) -> u64 {
+        self.interpreted
     }
 
     /// Number of blocks translated so far.
@@ -354,14 +384,17 @@ impl Jit {
                 !job.overlaps(address, end)
             });
         });
-        let mut at = address & !3;
-        while at < end {
+        let mut stale = Vec::new();
+        self.installed.retain(|(range, entries)| {
+            let overlaps = range.0 < end && address < range.1;
+            if overlaps {
+                stale.extend_from_slice(entries);
+            }
+            !overlaps
+        });
+        for at in stale {
             if let Some(page) = &mut self.pages[(at >> PAGE_BITS) as usize] {
                 page[((at >> 2) as usize) & (PAGE_ENTRIES - 1)] = std::ptr::null();
-            }
-            at = at.saturating_add(4);
-            if at == u32::MAX {
-                break;
             }
         }
     }
@@ -404,14 +437,20 @@ impl Jit {
             return;
         }
         let defined: Vec<_> =
-            batch.iter().filter_map(|t| Some((t.pc, t.optimized, self.define(t)?))).collect();
+            batch.into_iter().filter_map(|t| Some((self.define(&t)?, t))).collect();
         if let Err(error) = self.module.finalize_definitions() {
             log::error!("JIT: cannot make code executable: {error}");
             return;
         }
-        for (pc, optimized, id) in defined {
+        for (id, Translated { pc, entries, range, optimized, .. }) in defined {
             let code = self.module.get_finalized_function(id);
-            self.insert(pc, code);
+            // A return address that already has code keeps it, unless this is optimized code.
+            for &entry in &entries {
+                if entry == pc || optimized || self.lookup(entry).is_none() {
+                    self.insert(entry, code);
+                }
+            }
+            self.installed.push((range, entries));
             if !optimized {
                 self.untranslated.remove(&pc);
                 self.compiled_blocks += 1;
@@ -423,10 +462,11 @@ impl Jit {
         }
     }
 
-    /// Queues the blocks that ran often enough since the last look for optimizing.
-    fn optimize_hot_blocks(&mut self) {
+    /// Queues the blocks that ran often enough since the last look for optimizing: as a
+    /// region, so their loops and the code their calls return to run without leaving.
+    fn optimize_hot_blocks<B: Bus>(&mut self, bus: &mut B) {
         self.last_hot_scan = Instant::now();
-        let mut hot = Vec::new();
+        let mut hot_pcs = Vec::new();
         self.candidates.retain(|(job, counter)| {
             // SAFETY: counters live as long as the `Jit`; only this thread runs the code
             // that writes them.
@@ -434,9 +474,15 @@ impl Jit {
             if runs < HOT_RUNS {
                 return true;
             }
-            hot.push(job.clone().into_optimized());
+            hot_pcs.push(job.pc);
             false
         });
+        let generation = self.generation;
+        let hot: Vec<_> = hot_pcs
+            .into_iter()
+            .filter_map(|pc| emit::decode_block(pc, bus, generation, Reach::Region).ok())
+            .map(Job::into_optimized)
+            .collect();
         if !hot.is_empty() {
             self.board.change(|queues| queues.optimize.extend(hot));
         }
@@ -455,12 +501,12 @@ impl Jit {
     }
 
     /// Takes in what the workers finished, unless that was just done.
-    fn collect_if_due(&mut self) {
+    fn collect_if_due<B: Bus>(&mut self, bus: &mut B) {
         if self.last_collect.elapsed() >= COLLECT_INTERVAL {
             self.collect(None);
         }
         if self.last_hot_scan.elapsed() >= HOT_SCAN_INTERVAL {
-            self.optimize_hot_blocks();
+            self.optimize_hot_blocks(bus);
         }
     }
 
@@ -470,7 +516,7 @@ impl Jit {
         if let Some(count) = self.untranslated.get(&pc) {
             return Ok(*count);
         }
-        let mut job = emit::decode_block::<B>(pc, bus, self.generation)?;
+        let mut job = emit::decode_block::<B>(pc, bus, self.generation, self.first_reach)?;
         job.count_runs_at(self.new_counter());
         let count = job.instructions.len() as u32;
         self.untranslated.insert(pc, count);
@@ -506,7 +552,7 @@ impl Jit {
         let Some(memory) = bus.fast_memory() else {
             return crate::interpreter::run(state, bus, budget);
         };
-        self.collect_if_due();
+        self.collect_if_due(bus);
         let budget = budget as i64;
         let mut context =
             HelperContext { bus: std::ptr::from_mut(bus).cast(), result: None, remaining: budget };
@@ -528,7 +574,7 @@ impl Jit {
             // SAFETY: `context.bus` is the live `bus`; nothing else uses it meanwhile.
             let bus = unsafe { &mut *context.bus.cast::<B>() };
             let count = self.queue(pc, bus)?;
-            self.collect_if_due();
+            self.collect_if_due(bus);
             if self.synchronous {
                 self.wait_for(pc);
                 if self.lookup(pc).is_some() {
@@ -544,7 +590,7 @@ impl Jit {
 
     /// Steps through an untranslated block until it ends or translated code is reached.
     fn interpret<B: Bus>(
-        &self,
+        &mut self,
         state: &mut CpuState,
         bus: &mut B,
         count: u32,
@@ -554,6 +600,7 @@ impl Jit {
             let next = state.pc.wrapping_add(4);
             let event = step(state, bus)?;
             context.remaining -= 1;
+            self.interpreted += 1;
             if event != StepEvent::Continue {
                 return Ok(Some(event));
             }

@@ -55,6 +55,24 @@ impl StreamOutput {
     }
 }
 
+/// Where a draw's copy of its own target goes.
+fn feedback_texture(
+    device: &wgpu::Device,
+    source: &wgpu::Texture,
+    size: wgpu::Extent3d,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("shocora feedback copy"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: source.format(),
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
 impl LatteRenderer {
     /// A surface sampled while it is also a target: the draw reads a copy made
     /// just before it, which is what the hardware's texture cache would see.
@@ -65,38 +83,65 @@ impl LatteRenderer {
         kind: TextureKind,
     ) -> Option<wgpu::TextureView> {
         let source = self.surfaces.get(&bound.key)?.texture.clone();
-        if dim != TextureDim::D2 || bound.key.format.kind() != kind {
+        if !matches!(dim, TextureDim::D2 | TextureDim::D2Array)
+            || bound.key.format.kind() != kind
+            || source.dimension() != wgpu::TextureDimension::D2
+        {
             return None;
         }
         self.end_pass();
+        // The level the draw samples, as a texture of its own: titles copy one slice of an
+        // array into another this way (Breath of the Wild's terrain height maps), and a
+        // dummy in its place filled their tiles with zeros.
+        let level = bound.base_level.min(source.mip_level_count() - 1);
+        let layers = source.depth_or_array_layers();
+        let first_layer = if dim == TextureDim::D2 { bound.base_layer.min(layers - 1) } else { 0 };
+        let size = wgpu::Extent3d {
+            depth_or_array_layers: if dim == TextureDim::D2 { 1 } else { layers },
+            ..source.size().mip_level_size(level, wgpu::TextureDimension::D2)
+        };
         let device = self.device.clone();
-        let copy = self.feedback_copies.entry(bound.key).or_insert_with(|| {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("shocora feedback copy"),
-                size: source.size(),
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: source.format(),
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let aspect = if bound.key.format.has_stencil() {
-                wgpu::TextureAspect::DepthOnly
-            } else {
-                wgpu::TextureAspect::All
-            };
-            let view =
-                texture.create_view(&wgpu::TextureViewDescriptor { aspect, ..Default::default() });
-            (texture, view)
-        });
-        let (target, view) = copy.clone();
-        let size = source.size();
+        let copy = self
+            .feedback_copies
+            .entry(bound.key)
+            .and_modify(|texture| {
+                if texture.size() != size {
+                    *texture = feedback_texture(&device, &source, size);
+                }
+            })
+            .or_insert_with(|| feedback_texture(&device, &source, size));
+        let target = copy.clone();
         self.encoder().copy_texture_to_texture(
-            source.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                mip_level: level,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: first_layer },
+                ..source.as_image_copy()
+            },
             target.as_image_copy(),
-            wgpu::Extent3d { depth_or_array_layers: 1, ..size },
+            size,
         );
+        let aspect = if bound.key.format.has_stencil() {
+            wgpu::TextureAspect::DepthOnly
+        } else {
+            wgpu::TextureAspect::All
+        };
+        let view = match dim {
+            TextureDim::D2Array => {
+                let base = bound.base_layer.min(layers - 1);
+                target.create_view(&wgpu::TextureViewDescriptor {
+                    aspect,
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    base_array_layer: base,
+                    array_layer_count: Some(bound.layer_count.min(layers - base).max(1)),
+                    ..Default::default()
+                })
+            }
+            _ => target.create_view(&wgpu::TextureViewDescriptor {
+                aspect,
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                ..Default::default()
+            }),
+        };
         Some(view)
     }
 
@@ -141,9 +186,12 @@ impl LatteRenderer {
                     });
                     let view = match bound {
                         Some(bound) if in_use => self.feedback_copy(&bound, *dim, *kind),
+                        // A surface made as 2D cannot be seen as 3D, nor the other way round.
                         Some(bound)
-                            if self.surfaces.contains_key(&bound.key)
-                                && bound.key.format.kind() == *kind
+                            if self.surfaces.get(&bound.key).is_some_and(|s| {
+                                (s.texture.dimension() == wgpu::TextureDimension::D3)
+                                    == (bound.dim == TextureDim::D3)
+                            }) && bound.key.format.kind() == *kind
                                 && bound.dim == *dim =>
                         {
                             let key = bound.key;
@@ -153,7 +201,25 @@ impl LatteRenderer {
                     };
                     let view = match view {
                         Some(view) => view,
-                        None => self.dummy_texture(*dim, *kind),
+                        None => {
+                            if let Some(bound) = bound
+                                && let Some(surface) = self.surfaces.get(&bound.key)
+                            {
+                                log::warn!(
+                                    "texture {:#010x} {}x{}x{} {:?} sampled as {:?}/{:?} but made as {:?} ({:?}): dummy bound",
+                                    bound.key.address,
+                                    bound.key.width,
+                                    bound.key.height,
+                                    bound.key.layers,
+                                    bound.key.format,
+                                    bound.dim,
+                                    dim,
+                                    surface.texture.dimension(),
+                                    bound.key.format.kind(),
+                                );
+                            }
+                            self.dummy_texture(*dim, *kind)
+                        }
                     };
                     views.push((*binding, view));
                 }

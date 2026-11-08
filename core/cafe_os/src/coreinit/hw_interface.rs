@@ -35,7 +35,7 @@ const fn no_response_bit(channel: u32) -> u32 {
 }
 
 /// The serial interface's registers.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct SerialInterface {
     out_buffers: [u32; 4],
     poll: u32,

@@ -85,6 +85,22 @@ pub struct HleRegistry {
     data_cursor: u32,
 }
 
+/// What a saved state keeps of the registry: stubs and data handed out so far. The guest's
+/// code holds entry indices, so the implemented functions must stay what they were.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct RegistryState {
+    /// Tells builds with other HLE functions apart.
+    functions_hash: u64,
+    missing: Vec<(String, String)>,
+    functions: Vec<(Key, u32)>,
+    stubs: Vec<(u32, u32)>,
+    data_addresses: Vec<(Key, u32)>,
+    libraries: Vec<String>,
+    pending: Vec<(u32, u32)>,
+    stub_cursor: u32,
+    data_cursor: u32,
+}
+
 impl Default for HleRegistry {
     fn default() -> Self {
         Self::new()
@@ -109,6 +125,71 @@ impl HleRegistry {
             stub_cursor: HLE.start,
             data_cursor: HLE.start + STUB_AREA_SIZE,
         }
+    }
+
+    /// A hash of the names of the implemented functions, in their order.
+    fn functions_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for entry in &self.entries {
+            if let Entry::Function { library, name, .. } = entry {
+                (library, name).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    pub fn save_state(&self) -> RegistryState {
+        RegistryState {
+            functions_hash: self.functions_hash(),
+            missing: self
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::Missing { library, name } => Some((library.clone(), name.clone())),
+                    Entry::Function { .. } => None,
+                })
+                .collect(),
+            functions: self.functions.iter().map(|(key, index)| (key.clone(), *index)).collect(),
+            stubs: self.stubs.iter().map(|(entry, stub)| (*entry, *stub)).collect(),
+            data_addresses: self
+                .data_addresses
+                .iter()
+                .map(|(key, address)| (key.clone(), *address))
+                .collect(),
+            libraries: self.libraries.clone(),
+            pending: self.pending.clone(),
+            stub_cursor: self.stub_cursor,
+            data_cursor: self.data_cursor,
+        }
+    }
+
+    /// Goes on from `state`.
+    ///
+    /// # Errors
+    /// Fails if `state` comes from a build with other HLE functions.
+    pub fn restore_state(&mut self, state: RegistryState) -> Result<(), String> {
+        if state.functions_hash != self.functions_hash() {
+            return Err("saved by a different build of shocora".to_owned());
+        }
+        self.entries.retain(|entry| matches!(entry, Entry::Function { .. }));
+        let implemented = self.entries.len();
+        self.missing_called.truncate(implemented);
+        self.call_counts.truncate(implemented);
+        self.call_nanos.truncate(implemented);
+        self.traced.truncate(implemented);
+        for (library, name) in state.missing {
+            self.push_entry(Entry::Missing { library, name });
+        }
+        self.functions = state.functions.into_iter().collect();
+        self.stubs = state.stubs.into_iter().collect();
+        self.data_addresses = state.data_addresses.into_iter().collect();
+        self.libraries = state.libraries;
+        self.pending = state.pending;
+        self.stub_cursor = state.stub_cursor;
+        self.data_cursor = state.data_cursor;
+        self.trace.clear();
+        Ok(())
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -375,6 +456,30 @@ impl ImportResolver for HleRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_state_brings_back_stubs_and_refuses_other_builds() {
+        const EXPORT: HleExport = HleExport {
+            library: "coreinit",
+            name: "Known",
+            function: |_| unreachable!("never called"),
+        };
+        let mut registry = HleRegistry::new();
+        registry.register_functions(&[EXPORT]);
+        let known = registry.function_stub("coreinit", "Known");
+        let missing = registry.function_stub("coreinit", "Nope");
+        let state = registry.save_state();
+
+        let mut same = HleRegistry::new();
+        same.register_functions(&[EXPORT]);
+        same.restore_state(state).unwrap();
+        assert_eq!(same.function_stub("coreinit", "Known"), known);
+        assert_eq!(same.function_stub("coreinit", "Nope"), missing);
+
+        let other = HleRegistry::new();
+        assert!(HleRegistry::new().restore_state(registry.save_state()).is_err());
+        assert_eq!(other.entries.len(), 0);
+    }
 
     #[test]
     fn stubs_are_shared_and_committed() {

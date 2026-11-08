@@ -34,7 +34,7 @@ pub const DIR_ENTRY_NAME: u32 = 0x64;
 pub const DIR_ENTRY_NAME_SIZE: usize = 0x80;
 
 /// Per-client state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Client {
     pub cwd: String,
 }
@@ -46,7 +46,7 @@ impl Default for Client {
 }
 
 /// All registered `FSClient`s, keyed by their guest address.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct FsState {
     pub initialized: bool,
     pub clients: HashMap<u32, Client>,

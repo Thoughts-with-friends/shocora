@@ -23,7 +23,7 @@ const ALARM_SIZE: u32 = 0x58;
 const ALARM_MAGIC: u32 = 0x614C_724D;
 
 /// Host-side state of one armed alarm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArmedAlarm {
     pub handler: u32,
     pub deadline: u64,
@@ -33,7 +33,7 @@ pub struct ArmedAlarm {
 }
 
 /// All armed alarms, keyed by `OSAlarm` address.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Alarms {
     pub armed: BTreeMap<u32, ArmedAlarm>,
     /// `OSContext` passed to handlers (allocated on first use).

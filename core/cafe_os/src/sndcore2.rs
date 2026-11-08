@@ -79,7 +79,7 @@ mod final_mix {
 }
 
 /// One allocated voice.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct AxVoice {
     voice: Voice,
     running: bool,
@@ -111,7 +111,7 @@ impl AxVoice {
 }
 
 /// AX library state.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct AxState {
     initialized: bool,
     /// Titles choose: a voice's pitch ratio is relative to this rate, not the output's.
@@ -136,10 +136,28 @@ pub struct AxState {
     frames_due: u64,
     user_protection: u32,
     /// Interleaved stereo for the host.
+    #[serde(skip)]
     pub output: VecDeque<i16>,
 }
 
 impl AxState {
+    /// What the voices are doing, for profiling: why a title is silent.
+    pub fn summary(&self) -> String {
+        let running: Vec<&AxVoice> = self.voices.values().filter(|v| v.running).collect();
+        let loud = running.iter().filter(|v| v.volume > 0.0).count();
+        let routed = running.iter().filter(|v| v.tv_left + v.tv_right > 0.0).count();
+        let audible =
+            running.iter().filter(|v| v.volume > 0.0 && v.tv_left + v.tv_right > 0.0).count();
+        format!(
+            "voices {} (running {}, volume>0 {loud}, routed to TV {routed}, both {audible}) |              frame callbacks {} | final mix callbacks {:?} | aux callbacks {}",
+            self.voices.len(),
+            running.len(),
+            self.app_frame_callbacks.len() + usize::from(self.frame_callback != 0),
+            self.final_mix_callbacks.keys().collect::<Vec<_>>(),
+            self.aux_callbacks.len(),
+        )
+    }
+
     /// Samples the renderer makes per AX frame.
     const fn samples_per_frame(&self) -> u32 {
         if self.renderer_48khz { SAMPLES_PER_FRAME_48KHZ } else { SAMPLES_PER_FRAME_32KHZ }

@@ -1,4 +1,6 @@
 //! The settings window.
+use wiiu_title::update::AddOnKind;
+
 use super::*;
 
 /// `width` x `height` drawn `factor` times larger, as far as the limit allows.
@@ -100,6 +102,22 @@ impl ShocoraApp {
                 self.save_config();
             }
         }
+        ui.separator();
+        ui.label(tr("graphics.gpu")).on_hover_text(tr("graphics.gpu_hint"));
+        let mut chosen = self.config.gpu.clone();
+        ui.radio_value(&mut chosen, None, tr("graphics.gpu_auto"));
+        for name in &self.gpus {
+            let label = if *name == self.active_gpu {
+                trf("graphics.gpu_active", &[("gpu", name)])
+            } else {
+                name.clone()
+            };
+            ui.radio_value(&mut chosen, Some(name.clone()), label);
+        }
+        if chosen != self.config.gpu {
+            self.config.gpu = chosen;
+            self.save_config();
+        }
     }
 
     fn general_settings(&mut self, ui: &mut egui::Ui) {
@@ -131,6 +149,57 @@ impl ShocoraApp {
         if ui.button(tr("general.rom_folder")).clicked() {
             self.pick_rom_folder();
         }
+        ui.separator();
+        self.add_on_dirs(ui, AddOnKind::Update);
+        ui.separator();
+        self.add_on_dirs(ui, AddOnKind::Dlc);
+    }
+
+    /// The folders searched for updates or downloadable content: listed, added, removed.
+    fn add_on_dirs(&mut self, ui: &mut egui::Ui, kind: AddOnKind) {
+        let (label, hint) = match kind {
+            AddOnKind::Update => (tr("general.update_folders"), tr("general.update_folders_hint")),
+            AddOnKind::Dlc => (tr("general.dlc_folders"), tr("general.dlc_folders_hint")),
+        };
+        ui.label(label).on_hover_text(hint);
+        let dirs = match kind {
+            AddOnKind::Update => &self.config.update_dirs,
+            AddOnKind::Dlc => &self.config.dlc_dirs,
+        };
+        let mut removed = None;
+        for (index, dir) in dirs.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.small_button("✖").on_hover_text(tr("general.remove_folder")).clicked() {
+                    removed = Some(index);
+                }
+                ui.label(dir.display().to_string());
+            });
+        }
+        let added = ui
+            .button(tr("general.add_folder"))
+            .clicked()
+            .then(|| rfd::FileDialog::new().set_title(label).pick_folder())
+            .flatten();
+        if removed.is_none() && added.is_none() {
+            return;
+        }
+        let dirs = match kind {
+            AddOnKind::Update => &mut self.config.update_dirs,
+            AddOnKind::Dlc => &mut self.config.dlc_dirs,
+        };
+        if let Some(index) = removed {
+            dirs.remove(index);
+        }
+        if let Some(dir) = added.filter(|dir| !dirs.contains(dir)) {
+            dirs.push(dir);
+        }
+        let config = self.config.emulator_config();
+        self.console.send(ConsoleCommand::AddOnDirs {
+            update_dirs: config.update_dirs,
+            dlc_dirs: config.dlc_dirs,
+        });
+        self.save_config();
+        self.log.push(tr("log.add_on_folders").to_owned());
     }
 
     fn input_settings(&self, ui: &mut egui::Ui) {

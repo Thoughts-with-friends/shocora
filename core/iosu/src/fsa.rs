@@ -35,13 +35,13 @@ impl From<FsError> for FsaError {
 }
 
 /// `FSStat` essentials.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FsaStat {
     pub is_directory: bool,
     pub size: u64,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct OpenFile {
     path: String,
     position: u64,
@@ -49,15 +49,17 @@ struct OpenFile {
     writable: bool,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct OpenDir {
     entries: Vec<(String, FsaStat)>,
     next: usize,
 }
 
 /// FSA device state: the mount table plus open file/directory handles.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Fsa {
+    /// Host folders: a loaded state keeps those of the running title.
+    #[serde(skip)]
     vfs: Vfs,
     files: HashMap<u32, OpenFile>,
     dirs: HashMap<u32, OpenDir>,

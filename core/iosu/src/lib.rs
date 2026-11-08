@@ -14,7 +14,7 @@ pub use fsa::{Fsa, FsaError, FsaStat};
 use wiiu_fs::Vfs;
 
 /// Devices IOSU exposes to Cafe OS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeviceKind {
     /// File system access.
     Fsa,
@@ -39,11 +39,11 @@ impl DeviceKind {
 }
 
 /// An open device handle (`IOS_Open` result).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeviceHandle(pub u32);
 
 /// IOSU state.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Iosu {
     pub fsa: Fsa,
     open_devices: HashMap<DeviceHandle, DeviceKind>,
@@ -81,6 +81,12 @@ impl Iosu {
     #[inline]
     pub fn device(&self, handle: DeviceHandle) -> Option<DeviceKind> {
         self.open_devices.get(&handle).copied()
+    }
+
+    /// Takes over the mounted volumes of `running`, which a saved state does not hold.
+    #[inline]
+    pub fn adopt_volumes(&mut self, running: &mut Self) {
+        std::mem::swap(self.fsa.vfs_mut(), running.fsa.vfs_mut());
     }
 
     #[inline]

@@ -51,6 +51,10 @@ pub struct ShocoraApp {
     config_path: PathBuf,
     /// API eframe is actually running with (config may hold a pending change).
     active_api: GraphicsApi,
+    /// GPUs that can draw to the window, by name.
+    gpus: Vec<String>,
+    /// The one drawing now (config may hold a pending change).
+    active_gpu: String,
     status: Option<Status>,
     paused: bool,
     title: Option<String>,
@@ -95,9 +99,14 @@ impl ShocoraApp {
         config: AppConfig,
         config_path: PathBuf,
         active_api: GraphicsApi,
+        gpus: Vec<String>,
         boot: Option<PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let presenter = Presenter::new(cc)?;
+        let active_gpu = cc
+            .wgpu_render_state
+            .as_ref()
+            .map_or_else(String::new, |state| state.adapter.get_info().name);
         presenter.set_upscale(config.upscale);
         let ctx = cc.egui_ctx.clone();
 
@@ -125,6 +134,8 @@ impl ShocoraApp {
             config,
             config_path,
             active_api,
+            gpus,
+            active_gpu,
             status: None,
             paused: false,
             title: None,

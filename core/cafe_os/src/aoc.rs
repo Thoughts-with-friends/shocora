@@ -21,7 +21,7 @@ mod title {
 }
 
 /// Downloadable content installed for the running title.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AocTitle {
     pub title_id: u64,
     pub version: u16,

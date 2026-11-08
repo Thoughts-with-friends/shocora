@@ -39,6 +39,11 @@ const PARAMS_ALIGN: u32 = 256;
 const PARAMS_SIZE: usize = 32 + 4 * 16 * 4 + 36 + 16;
 /// Texture contents are re-checked once per this many frames at most.
 const TEXTURE_RECHECK_FRAMES: u64 = 2;
+/// Frames a vertex or uniform buffer is trusted without looking at it again, unless the
+/// title flushes its memory out of the CPU's cache. A safety net: titles do flush.
+const BUFFER_RECHECK_FRAMES: u64 = 30;
+/// Granularity of [`WriteTracker`].
+const TRACK_PAGE_BITS: u32 = 12;
 /// Frames without use after which a texture is forgotten, as in Cemu's texture cache. Only
 /// what guest memory can restore is ever forgotten, never what the GPU drew.
 const TEXTURE_EXPIRE_FRAMES: u64 = 2000;
@@ -71,7 +76,7 @@ pub mod index_type {
 }
 
 /// The surface descriptor of the HLE packets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SurfaceWords {
     pub address: u32,
     pub width: u32,
@@ -290,6 +295,49 @@ struct ArenaSlice {
     offset: u32,
 }
 
+/// Where the CPU wrote memory for the GPU to read, as the title tells it by flushing its
+/// cache (`DCFlushRange`, `GX2Invalidate`, ...). Cemu's buffer cache learns of writes the
+/// same way, and only then looks at a buffer again.
+#[derive(Debug, Default)]
+struct WriteTracker {
+    /// Per page, the [`now`](Self::now) of the last write; empty before the first one.
+    stamps: Vec<u32>,
+    now: u32,
+}
+
+impl WriteTracker {
+    fn note(&mut self, address: u32, size: u32) {
+        if size == 0 {
+            return;
+        }
+        if self.stamps.is_empty() {
+            self.stamps = vec![0; 1 << (32 - TRACK_PAGE_BITS)];
+        }
+        self.now = self.now.saturating_add(1);
+        let first = (address >> TRACK_PAGE_BITS) as usize;
+        let last = (address.saturating_add(size - 1) >> TRACK_PAGE_BITS) as usize;
+        self.stamps[first..=last].fill(self.now);
+    }
+
+    /// Whether nothing in `[address, address + size)` was written after `stamp`.
+    fn unchanged_since(&self, address: u32, size: u32, stamp: u32) -> bool {
+        if self.stamps.is_empty() || size == 0 {
+            return true;
+        }
+        let first = (address >> TRACK_PAGE_BITS) as usize;
+        let last = (address.saturating_add(size - 1) >> TRACK_PAGE_BITS) as usize;
+        self.stamps[first..=last].iter().all(|&written| written <= stamp)
+    }
+}
+
+/// A guest buffer copied into the arena, and when that was known to be up to date.
+#[derive(Debug, Clone, Copy)]
+struct GuestBuffer {
+    offset: u32,
+    stamp: u32,
+    checked: u64,
+}
+
 #[derive(Debug, Clone)]
 struct KnownTexture {
     content_hash: u64,
@@ -317,6 +365,9 @@ struct ProgramPair {
     vs_textures: Vec<u8>,
     ps_textures: Vec<u8>,
     color_exports: u8,
+    /// Uniform blocks each stage reads, as bit masks: the others are not worth storing.
+    vs_blocks: u16,
+    ps_blocks: u16,
 }
 
 /// GPU-side caches and what they need to stay coherent with the renderer.
@@ -329,6 +380,13 @@ pub struct Latte {
     frame: u64,
     arena_cursor: u32,
     arena_entries: HashMap<u64, ArenaSlice>,
+    /// Guest buffers in the arena by `(address, size, alignment)`: no need to hash them again.
+    guest_buffers: HashMap<(u32, u32, u32), GuestBuffer>,
+    /// Converted index buffers: converting them on every draw cost as much as the draw.
+    index_buffers: HashMap<IndexKey, HostIndices>,
+    writes: WriteTracker,
+    /// Whether guest buffers are trusted until written (`SHOCORA_NO_BUFFER_CACHE` turns it off).
+    buffer_cache: bool,
     /// Surfaces rendered to: `(masked address, width, height)` → key.
     host_surfaces: HashMap<(u32, u32, u32), SurfaceKey>,
     /// Factor the user asked for.
@@ -361,6 +419,10 @@ impl Default for Latte {
             frame: 0,
             arena_cursor: 0,
             arena_entries: HashMap::new(),
+            guest_buffers: HashMap::new(),
+            index_buffers: HashMap::new(),
+            writes: WriteTracker::default(),
+            buffer_cache: std::env::var_os("SHOCORA_NO_BUFFER_CACHE").is_none(),
             host_surfaces: HashMap::new(),
             requested_factor: 1,
             tv_width: 0,
@@ -443,6 +505,8 @@ impl Latte {
         if u64::from(offset) + u64::from(size) > u64::from(STREAM_REGION_BASE) {
             self.commands.push(RenderCommand::ArenaWrap);
             self.arena_entries.clear();
+            self.guest_buffers.clear();
+            self.index_buffers.clear();
             offset = 0;
         }
         self.arena_cursor = offset + size;
@@ -461,6 +525,44 @@ impl Latte {
         let offset = self.arena_reserve(data.len() as u32, align);
         self.commands.push(RenderCommand::ArenaWrite { offset, bytes: Arc::from(data) });
         self.arena_entries.insert(hash, ArenaSlice { offset });
+        offset
+    }
+
+    /// Every surface that exists on the host only.
+    pub fn host_surface_keys(&self) -> Vec<SurfaceKey> {
+        self.host_surfaces.values().copied().collect()
+    }
+
+    /// Brings back what [`Self::host_surface_keys`] named, after the renderer was reset.
+    pub fn restore_surfaces(&mut self, surfaces: Vec<TextureUpload>) {
+        for surface in surfaces {
+            let key = surface.key;
+            self.host_surfaces.insert((key.address, key.width, key.height), key);
+            self.commands.push(RenderCommand::Upload(Box::new(surface)));
+        }
+    }
+
+    /// The CPU wrote `[address, address + size)` (effective) for the GPU to read.
+    pub fn note_cpu_write(&mut self, address: u32, size: u32) {
+        self.writes.note(address, size);
+    }
+
+    /// [`arena_store`](Self::arena_store) of guest memory at `effective`: hashed again
+    /// only after the title wrote there, like Cemu's buffer cache does.
+    fn arena_store_guest(&mut self, effective: u32, data: &[u8], align: u32) -> u32 {
+        let key = (effective, data.len() as u32, align);
+        if !self.buffer_cache {
+            return self.arena_store(data, align);
+        }
+        if let Some(known) = self.guest_buffers.get(&key)
+            && self.frame.wrapping_sub(known.checked) < BUFFER_RECHECK_FRAMES
+            && self.writes.unchanged_since(effective, key.1, known.stamp)
+        {
+            return known.offset;
+        }
+        let stamp = self.writes.now;
+        let offset = self.arena_store(data, align);
+        self.guest_buffers.insert(key, GuestBuffer { offset, stamp, checked: self.frame });
         offset
     }
 
@@ -635,7 +737,7 @@ impl Latte {
             log::debug!("texture at {:#010x} outside mapped memory", words.address);
             return;
         };
-        let hash = sampled_hash(base);
+        let hash = texture_hash(base, addrlib::is_compressed(words.format & 0x3F));
         if let Some(known) = self.textures.get_mut(&key) {
             known.last_check = frame;
             if known.content_hash == hash {
@@ -820,8 +922,10 @@ impl Latte {
         });
         let alpha_control = regs.get(reg::SX_ALPHA_TEST_CONTROL);
         let alpha_function = (alpha_control & 8 != 0).then_some(alpha_control & 7);
+        let slots = export_slots(regs.get(reg::CB_SHADER_MASK), ps_use.color_exports);
         let target_kinds: [TextureKind; 8] = std::array::from_fn(|i| {
-            let w = &self.color_targets[i];
+            let Some(slot) = slots[i] else { return TextureKind::Float };
+            let w = &self.color_targets[usize::from(slot)];
             if ps_use.color_exports & (1 << i) != 0 && w.is_valid() {
                 host_format(w.format).kind()
             } else {
@@ -913,6 +1017,8 @@ impl Latte {
             }
             bindings
         };
+        let (vs_blocks, ps_blocks) =
+            (used_uniform_blocks(&vertex.wgsl, "vs"), used_uniform_blocks(&pixel.wgsl, "ps"));
         let vs_module = Arc::new(ShaderModule {
             id: self.next_module_id,
             bindings: make_bindings(&vertex, &vs_signatures, 0),
@@ -934,6 +1040,8 @@ impl Latte {
             vs_textures: vertex.textures,
             ps_textures: pixel.textures,
             color_exports: pixel.color_exports,
+            vs_blocks,
+            ps_blocks,
         });
         self.programs.insert(hash, Arc::clone(&pair));
         pair
@@ -1041,6 +1149,7 @@ impl Latte {
         let Some(effective) = wiiu_mem_addr::physical_to_effective(physical) else { return 0 };
         let Ok(bytes) = memory.slice(effective, size) else { return 0 };
         // Titles endian-swap uniform blocks themselves (GX2EndianSwap): the GPU reads them as they are.
+        // Copied whatever the cache says, like Cemu does: titles rewrite them without flushing.
         self.arena_store(bytes, 16)
     }
 
@@ -1125,6 +1234,51 @@ impl Latte {
     }
 
     /// Executes a draw from the current registers.
+    /// Indices of a draw as the host takes them: little-endian `u32`, restarts as
+    /// `u32::MAX`, primitives the host lacks made of triangles.
+    fn host_indices(
+        &mut self,
+        source: Option<&[u8]>,
+        draw: &DrawRequest<'_>,
+        mode: u32,
+        reset_index: u32,
+        stamp: u32,
+    ) -> HostIndices {
+        let mut max_index = draw.base_vertex.saturating_add(draw.count);
+        let mut count = draw.count;
+        let expanded = if let Some(source) = source {
+            let mut converted = read_indices(source, draw.count, draw.index_type, draw.immediate);
+            if reset_index != u32::MAX {
+                for index in &mut converted {
+                    if *index == reset_index {
+                        *index = u32::MAX;
+                    }
+                }
+            }
+            max_index = converted
+                .iter()
+                .copied()
+                .filter(|i| *i != u32::MAX)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1);
+            expand_indices(mode, Some(converted))
+        } else {
+            expand_indices(mode, needs_expansion(mode).then(|| (0..draw.count).collect()))
+        };
+        let offset = expanded.map(|list| {
+            let list = if mode == primitive::RECTS {
+                self.rect_corners(&list, draw.base_vertex)
+            } else {
+                list
+            };
+            count = list.len() as u32;
+            let bytes: Vec<u8> = list.iter().flat_map(|i| i.to_le_bytes()).collect();
+            self.arena_store(&bytes, 4)
+        });
+        HostIndices { offset, count, max_index, stamp, checked: self.frame }
+    }
+
     pub fn draw(&mut self, memory: &Memory, regs: &mut RegisterFile, draw: &DrawRequest<'_>) {
         if regs.get(reg::VGT_GS_MODE) & 3 != 0 {
             // Geometry shaders have no host equivalent yet.
@@ -1187,9 +1341,13 @@ impl Latte {
         let color_enabled = (color_control >> 4) & 7 == 0;
         let mut state = pipeline_state(regs);
         let mut color_targets = [None; 8];
-        for (target, words) in self.color_targets.into_iter().enumerate() {
+        let slot_blend = state.blend;
+        let slots = export_slots(cb_shader_mask, pair.color_exports);
+        for (target, slot) in slots.into_iter().enumerate() {
+            let Some(slot) = slot.map(usize::from) else { continue };
+            let words = self.color_targets[slot];
             let mask =
-                ((cb_target_mask >> (4 * target)) & (cb_shader_mask >> (4 * target)) & 0xF) as u8;
+                ((cb_target_mask >> (4 * slot)) & (cb_shader_mask >> (4 * slot)) & 0xF) as u8;
             if stream_only
                 || !color_enabled
                 || !words.is_valid()
@@ -1201,6 +1359,7 @@ impl Latte {
             self.note_target(key);
             state.color_formats[target] = Some(key.format);
             state.color_masks[target] = mask;
+            state.blend[target] = slot_blend[slot];
             color_targets[target] = Some((key, words.slice));
         }
         let depth_words = self.depth_target;
@@ -1229,11 +1388,17 @@ impl Latte {
         let mut params = [0_u32; PARAMS_SIZE / 4];
         let uniform_blocks = regs.get(config::SQ_CONFIG) & (1 << 8) == 0;
         if uniform_blocks {
+            // Hashing and copying every bound block on every draw was most of the cost of a
+            // draw; blocks the shaders never read stay at offset 0.
             for block in 0..16 {
-                params[8 + block as usize] =
-                    self.store_uniform_block(memory, regs, resource::VS_UNIFORM_BLOCK, block);
-                params[24 + block as usize] =
-                    self.store_uniform_block(memory, regs, resource::PS_UNIFORM_BLOCK, block);
+                if pair.vs_blocks & (1 << block) != 0 {
+                    params[8 + block as usize] =
+                        self.store_uniform_block(memory, regs, resource::VS_UNIFORM_BLOCK, block);
+                }
+                if pair.ps_blocks & (1 << block) != 0 {
+                    params[24 + block as usize] =
+                        self.store_uniform_block(memory, regs, resource::PS_UNIFORM_BLOCK, block);
+                }
             }
         } else {
             let read_alu = |offset: u32| -> Vec<u8> {
@@ -1248,47 +1413,46 @@ impl Latte {
         }
 
         // Vertex data.
-        let mut max_index = draw.base_vertex.saturating_add(draw.count);
-        let mut restart = false;
-        let (mut indices, mut index_count) = (None, draw.count);
         let mode = regs.get(config::VGT_PRIMITIVE_TYPE);
-        let expanded = if let Some(source) = draw.indices {
-            let resets = regs.get(reg::VGT_MULTI_PRIM_IB_RESET_EN) & 1 != 0;
-            let reset_index = regs.get(reg::VGT_MULTI_PRIM_IB_RESET_INDX);
-            let mut converted = read_indices(source, draw.count, draw.index_type, draw.immediate);
-            restart = resets
-                && matches!(
-                    mode,
-                    primitive::LINE_STRIP | primitive::TRIANGLE_STRIP | primitive::TRIANGLE_FAN
-                );
-            if restart {
-                for index in &mut converted {
-                    if *index == reset_index {
-                        *index = u32::MAX;
-                    }
+        let resets = regs.get(reg::VGT_MULTI_PRIM_IB_RESET_EN) & 1 != 0
+            && matches!(
+                mode,
+                primitive::LINE_STRIP | primitive::TRIANGLE_STRIP | primitive::TRIANGLE_FAN
+            );
+        let reset_index =
+            if resets { regs.get(reg::VGT_MULTI_PRIM_IB_RESET_INDX) } else { u32::MAX };
+        let width =
+            if matches!(draw.index_type, index_type::U32_LE | index_type::U32_BE) { 4 } else { 2 };
+        let guest_indices = draw.index_address.and_then(|address| {
+            Some((address, memory.slice(address, draw.count.saturating_mul(width)).ok()?))
+        });
+        let key: IndexKey = (
+            draw.index_address.unwrap_or(0),
+            draw.count,
+            draw.index_type,
+            mode,
+            reset_index,
+            draw.base_vertex,
+        );
+        let cached = self.index_buffers.get(&key).copied().filter(|known| {
+            self.buffer_cache
+                && guest_indices.is_some()
+                && self.frame.wrapping_sub(known.checked) < BUFFER_RECHECK_FRAMES
+                && self.writes.unchanged_since(key.0, draw.count.saturating_mul(width), known.stamp)
+        });
+        let host = match cached {
+            Some(host) => host,
+            None => {
+                let stamp = self.writes.now;
+                let source = guest_indices.map(|(_, bytes)| bytes).or(draw.indices);
+                let host = self.host_indices(source, draw, mode, reset_index, stamp);
+                if guest_indices.is_some() {
+                    self.index_buffers.insert(key, host);
                 }
+                host
             }
-            max_index = converted
-                .iter()
-                .copied()
-                .filter(|i| *i != u32::MAX)
-                .max()
-                .unwrap_or(0)
-                .saturating_add(1);
-            expand_indices(mode, Some(converted))
-        } else {
-            expand_indices(mode, needs_expansion(mode).then(|| (0..draw.count).collect()))
         };
-        if let Some(list) = expanded {
-            let list = if mode == primitive::RECTS {
-                self.rect_corners(&list, draw.base_vertex)
-            } else {
-                list
-            };
-            index_count = list.len() as u32;
-            let bytes: Vec<u8> = list.iter().flat_map(|i| i.to_le_bytes()).collect();
-            indices = Some(self.arena_store(&bytes, 4));
-        }
+        let (indices, index_count, max_index) = (host.offset, host.count, host.max_index);
 
         // Attribute buffers are stored raw: the shader decodes them.
         let vertex_end = max_index.saturating_add(draw.base_vertex);
@@ -1320,7 +1484,7 @@ impl Latte {
             let needed = u64::from(count) * u64::from(stride.max(1)) + 64;
             let available = needed.min(u64::from(size)).min(0x0400_0000) as u32;
             let Ok(bytes) = memory.slice(effective, available) else { continue };
-            params[40 + buffer] = self.arena_store(bytes, 4);
+            params[40 + buffer] = self.arena_store_guest(effective, bytes, 4);
             params[56 + buffer] = stride;
         }
         let y_scale = f32::from_bits(regs.get(reg::PA_CL_VPORT_XSCALE + 2));
@@ -1398,7 +1562,6 @@ impl Latte {
             // Rect corners carry the base vertex already.
             base_vertex: if mode == primitive::RECTS { 0 } else { draw.base_vertex.cast_signed() },
         };
-        let _ = restart;
         self.commands.push(RenderCommand::Draw(Box::new(command)));
     }
 }
@@ -1415,6 +1578,39 @@ pub struct DrawRequest<'a> {
     pub indices: Option<&'a [u8]>,
     /// The indices came embedded in the packet (`DRAW_INDEX_IMMD`).
     pub immediate: bool,
+    /// Effective address of an index buffer in guest memory, read instead of `indices`.
+    pub index_address: Option<u32>,
+}
+
+/// An index buffer as the host draws it: where in the arena, how many, and the highest one.
+#[derive(Debug, Clone, Copy)]
+struct HostIndices {
+    offset: Option<u32>,
+    count: u32,
+    max_index: u32,
+    stamp: u32,
+    checked: u64,
+}
+
+/// What makes the host's indices of a draw: source, count, type, primitive, restart index
+/// (`u32::MAX` without restart) and base vertex.
+type IndexKey = (u32, u32, u32, u32, u32, u32);
+
+/// Uniform blocks a translated stage reads (`P.<stage>_ubo[n]`), as a bit mask.
+fn used_uniform_blocks(wgsl: &str, stage: &str) -> u16 {
+    let pattern = format!("P.{stage}_ubo[");
+    let mut mask = 0;
+    let mut rest = wgsl;
+    while let Some(at) = rest.find(&pattern) {
+        rest = &rest[at + pattern.len()..];
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        match rest[..digits].parse::<u32>() {
+            Ok(block) if block < 16 => mask |= 1 << block,
+            // Not a plain number: assume the worst.
+            _ => return u16::MAX,
+        }
+    }
+    mask
 }
 
 /// Which parameters a translated vertex shader exports (from its `VsOut` struct).
@@ -1540,6 +1736,24 @@ fn viewport_of(regs: &RegisterFile) -> [f32; 6] {
         near.clamp(0.0, 1.0).min(far.clamp(0.0, 1.0)),
         far.clamp(0.0, 1.0).max(near.clamp(0.0, 1.0)),
     ]
+}
+
+/// The render target slot each pixel shader export goes to. Exports are numbered without
+/// gaps, and the `n`th one lands in the `n`th slot `CB_SHADER_MASK` enables: Breath of the
+/// Wild exports 0 to 3 under the mask `0xF0F0FF` (slots 0, 1, 3 and 5), and its normals are
+/// lost if export 2 is taken for slot 2.
+fn export_slots(shader_mask: u32, exports: u8) -> [Option<u8>; 8] {
+    let enabled = (0..8_u8).filter(|slot| (shader_mask >> (4 * slot)) & 0xF != 0);
+    let enabled_bits = enabled.clone().fold(0_u8, |bits, slot| bits | (1 << slot));
+    // No gaps to close, or a mask that says nothing about where the exports go.
+    if enabled_bits == exports || enabled_bits == 0 {
+        return std::array::from_fn(|slot| Some(slot as u8));
+    }
+    let mut slots = [None; 8];
+    for (export, slot) in enabled.enumerate() {
+        slots[export] = Some(slot);
+    }
+    slots
 }
 
 fn pipeline_state(regs: &RegisterFile) -> PipelineState {
@@ -1688,6 +1902,24 @@ const fn gx2_dim(dim: TextureDim) -> u32 {
 }
 
 /// Samples a large surface: hashing all of it per frame would dominate.
+/// Whether a texture's guest memory changed. Titles rewrite parts of large textures:
+/// *Breath of the Wild* scrolls its terrain height maps (1024 x 1024 slices, addressed
+/// with wrap-around) a strip at a time, which 256 samples over the whole texture miss,
+/// leaving stale heights as walls. A word every 256 bytes (1 KiB for compressed blocks)
+/// sees such strips in every tile row at little cost; Cemu samples similarly densely.
+fn texture_hash(bytes: &[u8], compressed: bool) -> u64 {
+    if bytes.len() <= 0x4000 {
+        return xxh3_64(bytes);
+    }
+    let step = if compressed { 1024 } else { 256 };
+    let mut hash = bytes.len() as u64;
+    for chunk in bytes.chunks(step) {
+        let Some(word) = chunk.first_chunk::<8>() else { break };
+        hash = hash.wrapping_add(u64::from_ne_bytes(*word)).rotate_left(3);
+    }
+    hash
+}
+
 fn sampled_hash(bytes: &[u8]) -> u64 {
     if bytes.len() <= 0x4000 {
         return xxh3_64(bytes);
@@ -1798,6 +2030,17 @@ mod tests {
 
     fn target(width: u32, height: u32) -> SurfaceKey {
         SurfaceKey { address: 0x1000, width, height, layers: 1, format: HostFormat::Rgba8Unorm }
+    }
+
+    #[test]
+    fn exports_land_in_the_slots_the_shader_mask_enables() {
+        // Exports 0 to 3 over slots 0, 1, 3 and 5.
+        let slots = export_slots(0x00F0_F0FF, 0b1111);
+        assert_eq!(slots[..5], [Some(0), Some(1), Some(3), Some(5), None]);
+        // Nothing to close: exports stay where they are.
+        assert_eq!(export_slots(0xFF, 0b11)[..2], [Some(0), Some(1)]);
+        assert_eq!(export_slots(0xF0, 0b10)[1], Some(1));
+        assert_eq!(export_slots(0, 0b1)[0], Some(0));
     }
 
     #[test]

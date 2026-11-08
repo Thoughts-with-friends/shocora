@@ -21,13 +21,13 @@ members = [
 resolver = "3"
 
 [profile.release]
-debug = true
+# debug = true
 lto = "thin"
 
 # The emulator cannot keep real time without optimisation. "*" alone would not cover
 # the workspace's own crates, where nearly all the time goes.
 [profile.dev]
-opt-level = 2
+opt-level = 3
 
 [workspace.dependencies]
 bitflags = "2.13"

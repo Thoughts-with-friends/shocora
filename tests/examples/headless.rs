@@ -19,6 +19,14 @@
 //! * `SHOCORA_BACKEND=auto|vulkan|dx12|gl`: host API; `auto` chooses like the GUI (default `vulkan`).
 //! * `SHOCORA_WAV=file`: saves what the TV plays. Stays outside the repository unless you say otherwise.
 //! * `SHOCORA_CAPTURE="flip,dir,min_pixels"` (with `SHOCORA_SHOTS`): one frame draw by draw, then exit.
+//! * `SHOCORA_CAPTURE_PROBE="x,y;x,y"` (with `SHOCORA_CAPTURE`): logs the draws writing these pixels.
+//! * `SHOCORA_CAPTURE_MIN_DRAWS=n` (with `SHOCORA_CAPTURE`): only a batch this large is captured.
+//! * `SHOCORA_CAPTURE_POISON="hex,hex"` (with `SHOCORA_CAPTURE`): these targets start magenta.
+//! * `SHOCORA_CAPTURE_SKY="x,y"` (with `SHOCORA_CAPTURE`): captures once this TV pixel turns as
+//!   bright as the sky (red above 100): for catching a glitch that comes and goes.
+//! * `SHOCORA_STATE_TEST="save_frame,load_frame,slot[,repeat]"`: saves a state, later goes back
+//!   to it, and again every `repeat` frames.
+//! * `SHOCORA_STATES_DIR=dir`: where states go instead of `states/`.
 //! * `SHOCORA_TRACE_UBO="first_flip,last_flip,file"`: uniform blocks of every draw, then exit.
 //! * `SHOCORA_FRAMEGEN`: generates frames; with `SHOCORA_SHOTS`, also saves them as `Gen*`.
 //! * `SHOCORA_RESET_AT=frame`: reboots the title at that frame, like the GUI's Reset.
@@ -176,17 +184,74 @@ fn capture_frame(
     use std::{collections::HashMap, fmt::Write as _};
     std::fs::create_dir_all(dir)?;
     let mut last: HashMap<_, Vec<u8>> = HashMap::new();
+    let mut dumped = std::collections::HashSet::new();
+    let mut seen_textures = std::collections::HashSet::new();
     let mut log = String::new();
+    let probes: Vec<(u32, u32)> = std::env::var("SHOCORA_CAPTURE_PROBE")
+        .unwrap_or_default()
+        .split(';')
+        .filter_map(|point| {
+            let (x, y) = point.split_once(',')?;
+            Some((x.parse().ok()?, y.parse().ok()?))
+        })
+        .collect();
+    let mut probed = HashMap::new();
+    let poison: Vec<u32> = std::env::var("SHOCORA_CAPTURE_POISON")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|address| u32::from_str_radix(address.trim(), 16).ok())
+        .collect();
+    let mut poisoned = std::collections::HashSet::new();
     for (index, command) in commands.iter().enumerate() {
-        // A surface as the frame's first readers see it.
+        // A surface as the frame's first reader sees it: once, or a capture takes gigabytes.
         if let RenderCommand::Draw(draw) = command {
             for texture in &draw.textures {
+                // Full-screen passes read the finished G-buffer: mid-pass dumps would mislead.
+                if !seen_textures.insert((texture.key, draw.count <= 4)) {
+                    continue;
+                }
                 if let Some((width, height, rgba)) = renderer.read_surface(texture.key) {
                     let name = format!(
                         "tex{index:05}_{:08x}_{width}x{height}_{:?}.png",
                         texture.key.address, texture.key.format
                     );
                     save_png(&dir.join(name), width, height, &rgba)?;
+                }
+            }
+        }
+        // 16-bit single-channel arrays (height maps): every slice, once.
+        if let RenderCommand::Draw(draw) = command {
+            for texture in &draw.textures {
+                let key = texture.key;
+                if !matches!(key.format, wiiu_gpu::render::HostFormat::R16Unorm)
+                    || key.layers < 2
+                    || !dumped.insert(key)
+                {
+                    continue;
+                }
+                for slice in 0..key.layers {
+                    if let Some((width, height, raw)) = renderer.read_surface_slice(key, slice) {
+                        let rgba: Vec<u8> = raw
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .flat_map(|p| [p[1], p[1], p[0], 255])
+                            .collect();
+                        let name = format!("h_{:08x}_s{slice}.png", key.address);
+                        save_png(&dir.join(name), width, height, &rgba)?;
+                    }
+                }
+            }
+        }
+        // SHOCORA_CAPTURE_POISON="hex,hex": targets start magenta, so what the frame leaves
+        // alone shows, and a draw writing the value already there counts as a change.
+        if let RenderCommand::Draw(draw) = command {
+            for (key, slice) in draw.color_targets.iter().flatten() {
+                if poison.contains(&key.address) && poisoned.insert(*key) {
+                    renderer.execute(&[RenderCommand::Clear {
+                        color: Some((*key, *slice, [1.0, 0.0, 1.0, 1.0])),
+                        depth: None,
+                    }]);
                 }
             }
         }
@@ -209,6 +274,18 @@ fn capture_frame(
         };
         for module in [&draw.vertex, &draw.pixel] {
             std::fs::write(dir.join(format!("shader_{}.wgsl", module.id)), &module.wgsl)?;
+        }
+        // SHOCORA_CAPTURE_PROBE="x,y;x,y": which draws write these pixels of any target.
+        for &(x, y) in &probes {
+            for (key, _) in draw.color_targets.iter().flatten() {
+                let Some((width, _, rgba)) = renderer.read_surface(*key) else { continue };
+                let at = (y * width + x) as usize * 4;
+                let Some(pixel) = rgba.get(at..at + 4) else { continue };
+                let pixel: [u8; 4] = pixel.try_into()?;
+                if probed.insert((x, y, key.address), pixel) != Some(pixel) {
+                    writeln!(log, "probe {index} ({x},{y}) {:x}: {pixel:?}", key.address)?;
+                }
+            }
         }
         let target = draw.color_targets.iter().flatten().next().map(|(key, _)| *key);
         let mut changed = None;
@@ -234,15 +311,16 @@ fn capture_frame(
         }
         writeln!(
             log,
-            "{index}: draw vs{} ps{} n{} i{} {:?} changed {changed:?} target {target:?} depth {:?} \
+            "{index}: draw vs{} ps{} n{} i{} {:?} changed {changed:?} target {target:?} all {:x?} depth {:?} \
              masks {:?} blend {:?} test {} write {} cmp {} cull {}/{} cw {} vp {:?} sc {:?}\n  tex {:?}",
             draw.vertex.id,
             draw.pixel.id,
             draw.count,
             draw.instances,
             draw.state.topology,
+            draw.color_targets.iter().flatten().map(|(key, _)| key.address).collect::<Vec<_>>(),
             draw.depth_target,
-            &draw.state.color_masks[..2],
+            &draw.state.color_masks[..4],
             draw.state.blend[0],
             draw.state.depth_test,
             draw.state.depth_write,
@@ -286,6 +364,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .and_then(|n| n.parse().ok()),
         profile: std::env::var("SHOCORA_PROFILE").is_ok_and(|value| value != "flips"),
+        states_dir: std::env::var_os("SHOCORA_STATES_DIR")
+            .map_or_else(|| PathBuf::from("states"), PathBuf::from),
         ..Config::default()
     };
     let mut emu = Emulator::new(config)?;
@@ -336,6 +416,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some((flip, dir, parts.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(64)))
     });
 
+    let capture_sky = std::env::var("SHOCORA_CAPTURE_SKY").ok().and_then(|text| {
+        let (x, y) = text.split_once(',')?;
+        Some((x.parse::<u32>().ok()?, y.parse::<u32>().ok()?))
+    });
+    let mut sky_seen = false;
+
     let ubo_trace = std::env::var("SHOCORA_TRACE_UBO").ok().and_then(|text| {
         let mut parts = text.split(',');
         Some((
@@ -374,9 +460,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => None,
     };
+    let state_test = std::env::var("SHOCORA_STATE_TEST").ok().and_then(|text| {
+        let parts: Vec<u64> = text.split(',').filter_map(|n| n.parse().ok()).collect();
+        let [save_at, load_at, slot, ..] = parts[..] else { return None };
+        Some((save_at, load_at, slot as u8))
+    });
+    let state_repeat = std::env::var("SHOCORA_STATE_TEST")
+        .ok()
+        .and_then(|text| text.split(',').nth(3)?.parse().ok())
+        .unwrap_or(u64::MAX);
     let start = Instant::now();
     let mut flips = 0_u64;
     let mut last_report = Instant::now();
+    let mut last_stats = emu.stats();
     let mut arena = std::collections::HashMap::new();
     let profile = std::env::var_os("SHOCORA_PROFILE").is_some();
     let (mut run_time, mut render_time) = (Duration::ZERO, Duration::ZERO);
@@ -425,6 +521,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::var("SHOCORA_RESET_AT").ok().and_then(|at| at.parse().ok()) == Some(frame) {
             emu.reset()?;
             println!("reset at frame {frame}");
+        }
+        if let Some((save_at, load_at, slot)) = state_test {
+            let timer = Instant::now();
+            if frame == save_at {
+                let answer = emu.request_surfaces();
+                let commands = emu.take_render_commands();
+                if let Some(renderer) = &mut renderer {
+                    renderer.execute(&commands);
+                } else if let Some(sender) = &render_sender {
+                    sender.send(commands)?;
+                }
+                let path = emu.save_state(slot, answer.recv().unwrap_or_default())?;
+                let size = std::fs::metadata(&path)?.len() / 1_000_000;
+                println!("state saved at frame {frame}: {size} MB in {:.2?}", timer.elapsed());
+            } else if frame >= load_at && (frame - load_at).is_multiple_of(state_repeat) {
+                emu.load_state(slot)?;
+                println!("state loaded at frame {frame} in {:.2?}", timer.elapsed());
+            }
         }
         let frame_start = Instant::now();
         emu.run_frame();
@@ -674,7 +788,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         if let (Some(renderer), Some((flip, dir, min_pixels))) = (&mut renderer, &capture) {
-            if flips >= *flip && new_flips > 0 {
+            // The frame's draws may come a vertical blank before its flip: the first batch
+            // with many draws is the one worth looking at.
+            let draws = commands.iter().filter(|c| matches!(c, RenderCommand::Draw(_))).count();
+            let min_draws = std::env::var("SHOCORA_CAPTURE_MIN_DRAWS")
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(100);
+            // SHOCORA_CAPTURE_SKY="x,y": wait until this TV pixel shows sky, not what covers it.
+            let armed = capture_sky.is_none() || sky_seen;
+            if flips >= *flip && draws >= min_draws && armed {
                 capture_frame(renderer, &commands, dir, *min_pixels)?;
                 return Ok(());
             }
@@ -684,6 +807,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             renderer.execute(&commands);
             renderer.submit();
             render_time += render_start.elapsed();
+            if let (Some((x, y)), Some((flip, ..)), true) = (capture_sky, &capture, new_flips > 0)
+                && flips >= *flip
+                && let Some((width, _, rgba)) = renderer.read_screen(Screen::Tv)
+                && let Some(pixel) = rgba.get((y * width + x) as usize * 4..)
+                && pixel.len() >= 3
+                && pixel[0] > 100
+            {
+                println!("sky at ({x},{y}) after flip {flips}: {:?}", &pixel[..3]);
+                sky_seen = true;
+            }
             // SHOCORA_SHOTS_FROM: first flip worth a screenshot.
             let shots_from = std::env::var("SHOCORA_SHOTS_FROM")
                 .ok()
@@ -755,6 +888,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stats.gpu.draws,
                 stats.gpu.skipped_draws
             );
+            if profile {
+                let ms = |now: u64, before: u64| now.saturating_sub(before) / 1_000_000;
+                let (first, optimize) = emu.jit_queue_lengths();
+                println!(
+                    "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize",
+                    (stats.instructions - last_stats.instructions) / 1_000_000,
+                    ms(stats.guest_nanos, last_stats.guest_nanos),
+                    ms(stats.hle_nanos, last_stats.hle_nanos),
+                    ms(stats.compile_nanos, last_stats.compile_nanos),
+                    stats.compiled_blocks - last_stats.compiled_blocks,
+                );
+            }
+            last_stats = stats;
         }
     }
     if profile {
@@ -781,10 +927,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let stats = emu.stats();
         println!(
-            "run_frame {run_time:.2?} (guest code {:.2?}, of it translating {} blocks {:.2?}; HLE {:.2?}) · render {render_time:.2?}",
+            "run_frame {run_time:.2?} (guest code {:.2?}, of it translating {} blocks {:.2?}, {:.1}% of instructions interpreted; HLE {:.2?}) · render {render_time:.2?}",
             Duration::from_nanos(stats.guest_nanos),
             stats.compiled_blocks,
             Duration::from_nanos(stats.compile_nanos),
+            100.0 * stats.interpreted as f64 / stats.instructions.max(1) as f64,
             Duration::from_nanos(stats.hle_nanos),
         );
         for (name, calls, nanos) in emu.hle_slowest(16) {

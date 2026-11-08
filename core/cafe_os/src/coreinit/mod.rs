@@ -28,7 +28,7 @@ use crate::{
 pub const LIBRARY: &str = "coreinit";
 
 /// coreinit state outside guest memory.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct CoreinitState {
     pub heaps: mem::HeapTable,
     pub alarms: alarm::Alarms,

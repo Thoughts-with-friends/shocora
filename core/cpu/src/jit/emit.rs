@@ -1,10 +1,10 @@
 //! Guest instructions → Cranelift IR.
 //!
-//! A block is a run of code with one entry and side exits: registers are cached in
-//! SSA values while translating and written back before anything that can observe
-//! them (block exits and interpreter fallbacks). No merge points exist, so no
-//! variables or block parameters are needed: an exit is a dead end for the code
-//! after it, which goes on with the values from before the exit.
+//! A region is the code reachable from an entry through nearby branches, like a
+//! function of Cemu's recompiler. Registers live in Cranelift variables, loaded once
+//! on entry and written back only where code leaves the region or calls the
+//! interpreter, and only those the paths there may have changed. Loops stay inside,
+//! with the registers in host registers.
 //!
 //! Translation runs on worker threads and only needs the instructions, which
 //! the owner of the bus decodes up front ([`decode_block`]).
@@ -15,22 +15,26 @@
     clippy::too_many_lines
 )]
 
-use std::mem::offset_of;
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    mem::offset_of,
+};
 
 use cranelift_codegen::{
     Context,
     control::ControlPlane,
     ir::{
-        AbiParam, Block as IrBlock, InstBuilder, MemFlagsData, SigRef, Signature, Value,
+        AbiParam, Block as IrBlock, InstBuilder, MemFlagsData, SigRef, Signature, Type, Value,
         condcodes::{FloatCC, IntCC},
         types::{F32, F64, I8, I16, I32, I64},
     },
     isa::OwnedTargetIsa,
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 
 use super::{
-    HelperContext, MAX_BLOCK_INSTRUCTIONS, PAGE_BITS, PAGE_ENTRIES, block_signature, interpret_one,
+    HelperContext, MAX_BLOCK_INSTRUCTIONS, MAX_REGION_INSTRUCTIONS, PAGE_BITS, PAGE_ENTRIES,
+    REGION_REACH, block_signature, interpret_one,
 };
 use crate::{
     Bus, CpuError, CpuState, Fpr, Instr, Opcode, decode, interpreter::integer::rotate_mask,
@@ -60,18 +64,66 @@ const fn field_offset_lr() -> i32 {
     offset_of!(CpuState, lr) as i32
 }
 
-/// Everything cached at one point of the translation.
+/// Registers kept in Cranelift variables while the region runs: the GPRs, both slots of
+/// the FPRs, LR, CTR, CR and XER[CA]. Bit `n` of a [`Mask`] stands for register `n`.
+const GPR: usize = 0;
+const FPR: [usize; 2] = [32, 64];
+const LR: usize = 96;
+const CTR: usize = 97;
+const CR: usize = 98;
+const CA: usize = 99;
+const REGISTERS: usize = 100;
+
+type Mask = u128;
+
+/// Where code leaves the region to.
 #[derive(Clone, Copy)]
-struct Cached {
-    gpr: [Option<Value>; 32],
-    gpr_dirty: u32,
-    fpr: [[Option<Value>; 2]; 32],
-    fpr_dirty: [u32; 2],
-    lr: Option<Value>,
-    ctr: Option<Value>,
-    cr: Option<Value>,
-    ca: Option<Value>,
-    dirty: [bool; 4],
+enum Target {
+    Known(u32),
+    Computed(Value),
+}
+
+/// What comes after an instruction the interpreter runs.
+#[derive(Clone, Copy)]
+enum Then {
+    /// Goes on with the translation at this block.
+    Resume(IrBlock),
+    /// Returns: the interpreter may have redirected `pc`.
+    Leave,
+    /// Leaves the region for this address.
+    Exit(u32),
+}
+
+#[derive(Clone, Copy)]
+enum StubKind {
+    Exit(Target),
+    Fallback {
+        pc: u32,
+        then: Then,
+    },
+    /// A loop's way back to a leader, past a look at the budget.
+    BackEdge {
+        leader: usize,
+        address: u32,
+    },
+}
+
+/// Which registers may differ from `state` at a point of the region: what the leader's
+/// predecessors left unwritten (unless everything was `flushed` since) and `local`.
+#[derive(Clone, Copy)]
+struct Dirty {
+    leader: usize,
+    local: Mask,
+    flushed: bool,
+}
+
+/// Code that writes registers back. It is emitted after the region, once it is known
+/// which registers the paths to it can change.
+#[derive(Clone, Copy)]
+struct Stub {
+    block: IrBlock,
+    at: Dirty,
+    kind: StubKind,
 }
 
 struct Emit<'a, 'b> {
@@ -79,30 +131,54 @@ struct Emit<'a, 'b> {
     state: Value,
     memory: Value,
     helper_context: Value,
-    interpret: Value,
+    /// Address of `interpret_one` for the bus in use.
+    interpret: i64,
     interpret_sig: SigRef,
     block_sig: SigRef,
     /// Address of the first-level table of translations.
     pages: usize,
-    /// Guest instructions up to and including the one being translated.
-    executed: i64,
-    gpr: [Option<Value>; 32],
-    gpr_dirty: u32,
-    fpr: [[Option<Value>; 2]; 32],
-    fpr_dirty: [u32; 2],
-    lr: Option<Value>,
-    ctr: Option<Value>,
-    cr: Option<Value>,
-    /// XER[CA] as an `i32` 0/1.
-    ca: Option<Value>,
-    lr_dirty: bool,
-    ctr_dirty: bool,
-    cr_dirty: bool,
-    ca_dirty: bool,
+    /// Where the quick translation counts its runs (0: it does not count).
+    counter: usize,
+    registers: [Variable; REGISTERS],
+    /// Instructions left in the time slice, as an `i64`.
+    remaining: Variable,
+    /// Registers the region reads or writes: loaded on entry and after the interpreter.
+    touched: Mask,
+    dirty: Dirty,
+    /// The blocks starting at a branch target or after a branch, by index.
+    leaders: Vec<IrBlock>,
+    leader_of: HashMap<u32, usize>,
+    /// Ways from one leader to another, for finding out what each one may have changed.
+    edges: Vec<(Dirty, usize)>,
+    stubs: Vec<Stub>,
 }
 
 fn flags() -> MemFlagsData {
     MemFlagsData::new().with_notrap()
+}
+
+/// Where a register lives in [`CpuState`] and its type there.
+const fn register_slot(register: usize) -> (i32, Type) {
+    match register {
+        LR => (field_offset_lr(), I32),
+        CTR => (offset_of!(CpuState, ctr) as i32, I32),
+        CR => (offset_of!(CpuState, cr) as i32, I32),
+        CA => (offset_of!(CpuState, xer_ca) as i32, I8),
+        _ if register >= FPR[1] => (fpr_offset(register - FPR[1], 1), F64),
+        _ if register >= FPR[0] => (fpr_offset(register - FPR[0], 0), F64),
+        _ => (gpr_offset(register), I32),
+    }
+}
+
+/// The registers of `mask`, lowest first.
+fn each(mut mask: Mask) -> impl Iterator<Item = usize> {
+    std::iter::from_fn(move || {
+        (mask != 0).then(|| {
+            let register = mask.trailing_zeros() as usize;
+            mask &= mask - 1;
+            register
+        })
+    })
 }
 
 impl Emit<'_, '_> {
@@ -118,18 +194,23 @@ impl Emit<'_, '_> {
         self.b.ins().store(flags(), value, self.state, offset);
     }
 
+    fn read(&mut self, register: usize) -> Value {
+        self.touched |= 1 << register;
+        self.b.use_var(self.registers[register])
+    }
+
+    fn write(&mut self, register: usize, value: Value) {
+        self.touched |= 1 << register;
+        self.dirty.local |= 1 << register;
+        self.b.def_var(self.registers[register], value);
+    }
+
     fn gpr(&mut self, index: usize) -> Value {
-        if let Some(value) = self.gpr[index] {
-            return value;
-        }
-        let value = self.load_state(gpr_offset(index));
-        self.gpr[index] = Some(value);
-        value
+        self.read(GPR + index)
     }
 
     fn set_gpr(&mut self, index: usize, value: Value) {
-        self.gpr[index] = Some(value);
-        self.gpr_dirty |= 1 << index;
+        self.write(GPR + index, value);
     }
 
     /// `(rA|0)`.
@@ -138,207 +219,143 @@ impl Emit<'_, '_> {
     }
 
     fn fpr(&mut self, index: usize, slot: usize) -> Value {
-        if let Some(value) = self.fpr[index][slot] {
-            return value;
-        }
-        let value = self.b.ins().load(F64, flags(), self.state, fpr_offset(index, slot));
-        self.fpr[index][slot] = Some(value);
-        value
+        self.read(FPR[slot] + index)
     }
 
     fn set_fpr(&mut self, index: usize, slot: usize, value: Value) {
-        self.fpr[index][slot] = Some(value);
-        self.fpr_dirty[slot] |= 1 << index;
+        self.write(FPR[slot] + index, value);
     }
 
     fn lr(&mut self) -> Value {
-        if let Some(value) = self.lr {
-            return value;
-        }
-        let value = self.load_state(field_offset_lr());
-        self.lr = Some(value);
-        value
+        self.read(LR)
     }
 
     fn set_lr(&mut self, value: Value) {
-        self.lr = Some(value);
-        self.lr_dirty = true;
+        self.write(LR, value);
     }
 
     fn ctr(&mut self) -> Value {
-        if let Some(value) = self.ctr {
-            return value;
-        }
-        let value = self.load_state(offset_of!(CpuState, ctr) as i32);
-        self.ctr = Some(value);
-        value
+        self.read(CTR)
     }
 
     fn set_ctr(&mut self, value: Value) {
-        self.ctr = Some(value);
-        self.ctr_dirty = true;
+        self.write(CTR, value);
     }
 
     fn cr(&mut self) -> Value {
-        if let Some(value) = self.cr {
-            return value;
-        }
-        let value = self.load_state(offset_of!(CpuState, cr) as i32);
-        self.cr = Some(value);
-        value
+        self.read(CR)
     }
 
     fn set_cr(&mut self, value: Value) {
-        self.cr = Some(value);
-        self.cr_dirty = true;
+        self.write(CR, value);
     }
 
+    /// XER[CA] as an `i32` 0/1.
     fn ca(&mut self) -> Value {
-        if let Some(value) = self.ca {
-            return value;
-        }
-        let value =
-            self.b.ins().uload8(I32, flags(), self.state, offset_of!(CpuState, xer_ca) as i32);
-        self.ca = Some(value);
-        value
+        self.read(CA)
     }
 
     fn set_ca(&mut self, value: Value) {
-        self.ca = Some(value);
-        self.ca_dirty = true;
+        self.write(CA, value);
     }
 
     fn so(&mut self) -> Value {
         self.b.ins().uload8(I32, flags(), self.state, offset_of!(CpuState, xer_so) as i32)
     }
 
-    /// Writes cached registers back to `state`.
-    fn flush(&mut self) {
-        let mut dirty = self.gpr_dirty;
-        while dirty != 0 {
-            let index = dirty.trailing_zeros() as usize;
-            dirty &= dirty - 1;
-            if let Some(value) = self.gpr[index] {
-                self.store_state(gpr_offset(index), value);
-            }
+    /// Writes the registers of `mask` back to `state`.
+    fn flush(&mut self, mask: Mask) {
+        for register in each(mask) {
+            let value = self.b.use_var(self.registers[register]);
+            let (offset, ty) = register_slot(register);
+            let value = if ty == I8 { self.b.ins().ireduce(I8, value) } else { value };
+            self.b.ins().store(flags(), value, self.state, offset);
         }
-        self.gpr_dirty = 0;
-        for slot in 0..2 {
-            let mut dirty = self.fpr_dirty[slot];
-            while dirty != 0 {
-                let index = dirty.trailing_zeros() as usize;
-                dirty &= dirty - 1;
-                if let Some(value) = self.fpr[index][slot] {
-                    self.store_state(fpr_offset(index, slot), value);
-                }
-            }
-            self.fpr_dirty[slot] = 0;
-        }
-        if self.lr_dirty {
-            if let Some(value) = self.lr {
-                self.store_state(field_offset_lr(), value);
-            }
-            self.lr_dirty = false;
-        }
-        if self.ctr_dirty {
-            if let Some(value) = self.ctr {
-                self.store_state(offset_of!(CpuState, ctr) as i32, value);
-            }
-            self.ctr_dirty = false;
-        }
-        if self.cr_dirty {
-            if let Some(value) = self.cr {
-                self.store_state(offset_of!(CpuState, cr) as i32, value);
-            }
-            self.cr_dirty = false;
-        }
-        if self.ca_dirty {
-            if let Some(value) = self.ca {
-                let byte = self.b.ins().ireduce(I8, value);
-                self.b.ins().store(flags(), byte, self.state, offset_of!(CpuState, xer_ca) as i32);
-            }
-            self.ca_dirty = false;
-        }
+        let remaining = self.b.use_var(self.remaining);
+        let offset = offset_of!(HelperContext, remaining) as i32;
+        self.b.ins().store(flags(), remaining, self.helper_context, offset);
     }
 
-    /// Forgets everything cached: a helper may have changed any register.
-    fn invalidate(&mut self) {
-        self.gpr = [None; 32];
-        self.fpr = [[None; 2]; 32];
-        self.lr = None;
-        self.ctr = None;
-        self.cr = None;
-        self.ca = None;
+    /// Takes the registers of `mask` from `state` again: a helper may have changed them.
+    fn reload(&mut self, mask: Mask) {
+        for register in each(mask) {
+            let (offset, ty) = register_slot(register);
+            let value = if ty == I8 {
+                self.b.ins().uload8(I32, flags(), self.state, offset)
+            } else {
+                self.b.ins().load(ty, flags(), self.state, offset)
+            };
+            self.b.def_var(self.registers[register], value);
+        }
     }
 
     fn set_pc(&mut self, pc: Value) {
         self.store_state(offset_of!(CpuState, pc) as i32, pc);
     }
 
-    /// Accounts for the instructions run so far; returns how many are left to run.
-    fn charge(&mut self) -> Value {
-        let offset = offset_of!(HelperContext, remaining) as i32;
-        let remaining = self.b.ins().load(I64, flags(), self.helper_context, offset);
-        let left = self.b.ins().iadd_imm_s(remaining, -self.executed);
-        self.b.ins().store(flags(), left, self.helper_context, offset);
-        left
+    /// Accounts for the `count` instructions of a leader's block.
+    fn charge(&mut self, count: i64) {
+        let remaining = self.b.use_var(self.remaining);
+        let left = self.b.ins().iadd_imm_s(remaining, -count);
+        self.b.def_var(self.remaining, left);
     }
 
-    fn snapshot(&self) -> Cached {
-        Cached {
-            gpr: self.gpr,
-            gpr_dirty: self.gpr_dirty,
-            fpr: self.fpr,
-            fpr_dirty: self.fpr_dirty,
-            lr: self.lr,
-            ctr: self.ctr,
-            cr: self.cr,
-            ca: self.ca,
-            dirty: [self.lr_dirty, self.ctr_dirty, self.cr_dirty, self.ca_dirty],
+    /// Counts a run of the quick translation, when it counts them.
+    fn count_run(&mut self) {
+        if self.counter != 0 {
+            let counter = self.b.ins().iconst(I64, self.counter as i64);
+            let runs = self.b.ins().load(I32, flags(), counter, 0);
+            let runs = self.b.ins().iadd_imm_u(runs, 1);
+            self.b.ins().store(flags(), runs, counter, 0);
         }
     }
 
-    fn restore(&mut self, cached: &Cached) {
-        self.gpr = cached.gpr;
-        self.gpr_dirty = cached.gpr_dirty;
-        self.fpr = cached.fpr;
-        self.fpr_dirty = cached.fpr_dirty;
-        self.lr = cached.lr;
-        self.ctr = cached.ctr;
-        self.cr = cached.cr;
-        self.ca = cached.ca;
-        [self.lr_dirty, self.ctr_dirty, self.cr_dirty, self.ca_dirty] = cached.dirty;
+    /// A block with code to emit after the region.
+    fn stub(&mut self, kind: StubKind) -> IrBlock {
+        let block = self.b.create_block();
+        self.stubs.push(Stub { block, at: self.dirty, kind });
+        block
     }
 
-    /// Runs `exit` when `condition` holds, and goes on after it otherwise. Nothing
-    /// `exit` caches or writes back is true for the code that goes on.
-    fn side_exit(&mut self, condition: Value, exit: impl FnOnce(&mut Self)) {
-        let taken = self.b.create_block();
+    /// Where a branch to `target` goes: straight to a leader of the region, or out.
+    fn destination(&mut self, target: Target, from: u32, link: bool) -> IrBlock {
+        if let Target::Known(address) = target
+            && !link
+            && let Some(&leader) = self.leader_of.get(&address)
+        {
+            self.edges.push((self.dirty, leader));
+            // A loop must still give up the host thread when the time slice ends.
+            return if address > from {
+                self.leaders[leader]
+            } else {
+                self.stub(StubKind::BackEdge { leader, address })
+            };
+        }
+        self.stub(StubKind::Exit(target))
+    }
+
+    /// Returns to [`Jit::run`](super::Jit::run) when `condition` holds.
+    fn leave_if(&mut self, condition: Value, stop: Value) {
+        let out = self.b.create_block();
         let stay = self.b.create_block();
-        self.b.ins().brif(condition, taken, &[], stay, &[]);
-        self.b.seal_block(taken);
+        self.b.ins().brif(condition, out, &[], stay, &[]);
+        self.b.seal_block(out);
         self.b.seal_block(stay);
-        let cached = self.snapshot();
-        self.b.switch_to_block(taken);
-        exit(self);
-        self.restore(&cached);
+        self.b.set_cold_block(out);
+        self.b.switch_to_block(out);
+        self.b.ins().return_(&[stop]);
         self.b.switch_to_block(stay);
     }
 
-    /// Returns to [`Jit::run`](super::Jit::run).
-    fn leave(&mut self) {
-        let done = self.c32(0);
-        self.b.ins().return_(&[done]);
-    }
-
-    /// Leaves the block with `pc` as the next address, jumping to its translation
+    /// Leaves the region with `pc` as the next address, jumping to its translation
     /// when there is one. `known` is the address, when it is a constant.
-    fn end_block(&mut self, pc: Value, known: Option<u32>) -> Flow {
-        self.flush();
+    fn exit(&mut self, pc: Value, known: Option<u32>, mask: Mask) {
+        self.flush(mask);
         self.set_pc(pc);
-        let left = self.charge();
+        let done = self.c32(0);
+        let left = self.b.use_var(self.remaining);
         let used_up = self.b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, left, 0);
-        self.side_exit(used_up, Self::leave);
+        self.leave_if(used_up, done);
 
         let page_entry = match known {
             Some(address) => {
@@ -355,7 +372,7 @@ impl Emit<'_, '_> {
         };
         let page = self.b.ins().load(I64, flags(), page_entry, 0);
         let missing = self.b.ins().icmp_imm_s(IntCC::Equal, page, 0);
-        self.side_exit(missing, Self::leave);
+        self.leave_if(missing, done);
         let slot = match known {
             Some(address) => {
                 let slot = ((address >> 2) as usize & (PAGE_ENTRIES - 1)) * 8;
@@ -371,36 +388,92 @@ impl Emit<'_, '_> {
         };
         let code = self.b.ins().load(I64, flags(), slot, 0);
         let missing = self.b.ins().icmp_imm_s(IntCC::Equal, code, 0);
-        self.side_exit(missing, Self::leave);
+        self.leave_if(missing, done);
         self.b.ins().return_call_indirect(
             self.block_sig,
             code,
             &[self.state, self.memory, self.helper_context],
         );
-        Flow::Ended
     }
 
-    /// One step of the interpreter; returns from the block if it reports an event.
-    fn interpret(&mut self, pc: u32) {
-        self.flush();
+    /// One step of the interpreter at `pc`; returns from the region if it reports an event.
+    fn interpret(&mut self, pc: u32, mask: Mask, then: Then) {
+        self.flush(mask);
         let address = self.c32(pc);
         self.set_pc(address);
+        let helper = self.b.ins().iconst(I64, self.interpret);
         let call = self.b.ins().call_indirect(
             self.interpret_sig,
-            self.interpret,
+            helper,
             &[self.state, self.helper_context],
         );
         let stop = self.b.inst_results(call)[0];
-        let exit: IrBlock = self.b.create_block();
-        let resume: IrBlock = self.b.create_block();
-        self.b.ins().brif(stop, exit, &[], resume, &[]);
-        self.b.seal_block(exit);
-        self.b.seal_block(resume);
-        self.b.switch_to_block(exit);
-        self.charge();
-        self.b.ins().return_(&[stop]);
-        self.b.switch_to_block(resume);
-        self.invalidate();
+        self.leave_if(stop, stop);
+        match then {
+            Then::Resume(block) => {
+                self.reload(self.touched);
+                self.b.ins().jump(block, &[]);
+            }
+            Then::Leave => {
+                let done = self.c32(0);
+                self.b.ins().return_(&[done]);
+            }
+            Then::Exit(address) => {
+                let next = self.c32(address);
+                self.exit(next, Some(address), 0);
+            }
+        }
+    }
+
+    /// Emits the stubs, now that the whole region is known.
+    fn finish_stubs(&mut self) {
+        // What each leader may find changed: what flows into it along every way there.
+        let mut incoming: Vec<Mask> = vec![0; self.leaders.len()];
+        let out = |incoming: &[Mask], at: Dirty| {
+            if at.flushed { at.local } else { incoming[at.leader] | at.local }
+        };
+        loop {
+            let mut changed = false;
+            for &(at, to) in &self.edges {
+                let flowing = out(&incoming, at);
+                if flowing & !incoming[to] != 0 {
+                    incoming[to] |= flowing;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        while let Some(Stub { block, at, kind }) = self.stubs.pop() {
+            self.b.switch_to_block(block);
+            self.b.seal_block(block);
+            if !matches!(kind, StubKind::BackEdge { .. }) {
+                self.b.set_cold_block(block);
+            }
+            let mask = out(&incoming, at);
+            match kind {
+                StubKind::Exit(Target::Known(address)) => {
+                    let pc = self.c32(address);
+                    self.exit(pc, Some(address), mask);
+                }
+                StubKind::Exit(Target::Computed(pc)) => self.exit(pc, None, mask),
+                StubKind::Fallback { pc, then } => self.interpret(pc, mask, then),
+                StubKind::BackEdge { leader, address } => {
+                    // A loop's rounds count as runs: hot loops are what optimizing is for.
+                    self.count_run();
+                    let left = self.b.use_var(self.remaining);
+                    let used_up = self.b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, left, 0);
+                    let exit = self.b.create_block();
+                    self.stubs.push(Stub {
+                        block: exit,
+                        at,
+                        kind: StubKind::Exit(Target::Known(address)),
+                    });
+                    self.b.ins().brif(used_up, exit, &[], self.leaders[leader], &[]);
+                }
+            }
+        }
     }
 
     fn host_address(&mut self, ea: Value) -> Value {
@@ -621,36 +694,35 @@ impl Emit<'_, '_> {
 
     /// A branch: the block ends if it is always taken, and goes on with the next
     /// instruction after a conditional one.
-    fn branch(
-        &mut self,
-        i: Instr,
-        pc: u32,
-        target: Value,
-        known: Option<u32>,
-        condition: Option<Value>,
-    ) -> Flow {
+    fn branch(&mut self, i: Instr, pc: u32, target: Target, condition: Option<Value>) -> Flow {
         if i.lk() {
             let next = self.c32(pc.wrapping_add(4));
             self.set_lr(next);
         }
-        let Some(condition) = condition else { return self.end_block(target, known) };
-        self.side_exit(condition, |emit| {
-            emit.end_block(target, known);
-        });
+        let destination = self.destination(target, pc, i.lk());
+        let Some(condition) = condition else {
+            self.b.ins().jump(destination, &[]);
+            return Flow::Ended;
+        };
+        let stay = self.b.create_block();
+        self.b.ins().brif(condition, destination, &[], stay, &[]);
+        self.b.seal_block(stay);
+        self.b.switch_to_block(stay);
         Flow::Next
     }
 
     /// `psq_l`/`psq_st` are translated for the common float case. With an integer
-    /// type in the GQR (`type_bit` set) the block ends through the interpreter.
+    /// type in the GQR (`type_bit` set) the interpreter runs the instruction instead.
     fn leave_unless_float(&mut self, pc: u32, gqr: usize, type_bit: i64) {
         let offset = (offset_of!(CpuState, gqr) + 4 * gqr) as i32;
         let quant = self.load_state(offset);
         let integer = self.b.ins().band_imm_s(quant, type_bit);
-        self.side_exit(integer, |emit| {
-            emit.interpret(pc);
-            let next = emit.c32(pc.wrapping_add(4));
-            emit.end_block(next, Some(pc.wrapping_add(4)));
-        });
+        let float = self.b.create_block();
+        let then = Then::Exit(pc.wrapping_add(4));
+        let fallback = self.stub(StubKind::Fallback { pc, then });
+        self.b.ins().brif(integer, fallback, &[], float, &[]);
+        self.b.seal_block(float);
+        self.b.switch_to_block(float);
     }
 
     /// Effective address of a `psq_*`, and whether the form updates `rA`.
@@ -1028,28 +1100,24 @@ impl Emit<'_, '_> {
             // ---- Branches ----
             O::B => {
                 let target = if i.aa() { i.li() as u32 } else { pc.wrapping_add(i.li() as u32) };
-                let known = target;
-                let target = self.c32(target);
-                return self.branch(i, pc, target, Some(known), None);
+                return self.branch(i, pc, Target::Known(target), None);
             }
             O::Bc => {
                 let target = if i.aa() { i.bd() as u32 } else { pc.wrapping_add(i.bd() as u32) };
                 let condition = self.branch_condition(i, true);
-                let known = target;
-                let target = self.c32(target);
-                return self.branch(i, pc, target, Some(known), condition);
+                return self.branch(i, pc, Target::Known(target), condition);
             }
             O::Bclr => {
                 let lr = self.lr();
                 let target = self.b.ins().band_imm_s(lr, !3_i64);
                 let condition = self.branch_condition(i, true);
-                return self.branch(i, pc, target, None, condition);
+                return self.branch(i, pc, Target::Computed(target), condition);
             }
             O::Bcctr => {
                 let ctr = self.ctr();
                 let target = self.b.ins().band_imm_s(ctr, !3_i64);
                 let condition = self.branch_condition(i, false);
-                return self.branch(i, pc, target, None, condition);
+                return self.branch(i, pc, Target::Computed(target), condition);
             }
 
             // ---- Loads and stores ----
@@ -1299,6 +1367,18 @@ impl Emit<'_, '_> {
                     self.set_paired(i, ps0, ps1);
                 }
             }
+            O::PsSel if !i.rc() => {
+                let zero = self.b.ins().f64const(0.0);
+                let mut slots = [zero; 2];
+                for (slot, out) in slots.iter_mut().enumerate() {
+                    let a = self.fpr(ra, slot);
+                    let b = self.fpr(rb, slot);
+                    let c = self.fpr(i.rc_reg(), slot);
+                    let positive = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, a, zero);
+                    *out = self.b.ins().select(positive, c, b);
+                }
+                self.set_paired(i, slots[0], slots[1]);
+            }
             O::PsMuls0 if !i.rc() => self.scaled(i, 0, false),
             O::PsMuls1 if !i.rc() => self.scaled(i, 1, false),
             O::PsMadds0 if !i.rc() => self.scaled(i, 0, true),
@@ -1406,6 +1486,16 @@ impl Emit<'_, '_> {
                 let merged = self.b.ins().bor(cleared, placed);
                 self.set_cr(merged);
             }
+            // Zeroes the 32-byte cache line: titles clear and copy memory with it.
+            O::Dcbz => {
+                let ea = self.ea_x(i, false);
+                let line = self.b.ins().band_imm_s(ea, !31);
+                let address = self.host_address(line);
+                let zero = self.b.ins().iconst(I64, 0);
+                for offset in [0, 8, 16, 24] {
+                    self.b.ins().store(flags(), zero, address, offset);
+                }
+            }
             O::Sync
             | O::Isync
             | O::Eieio
@@ -1437,7 +1527,7 @@ impl Emit<'_, '_> {
     }
 }
 
-/// Instructions after which the rest of the block must not run natively:
+/// Instructions after which the rest of the region must not run natively:
 /// the interpreter may have redirected `pc`.
 const fn ends_block_after_fallback(op: Opcode) -> bool {
     matches!(
@@ -1446,13 +1536,23 @@ const fn ends_block_after_fallback(op: Opcode) -> bool {
     )
 }
 
-/// A block to translate, decoded where the guest's memory can be read.
+/// A region to translate, decoded where the guest's memory can be read.
+///
+/// Like a function of Cemu's recompiler, a region is the code reachable from its entry
+/// through branches that stay close by: loops run inside it with the registers in host
+/// registers, and only the way back of a loop looks at the budget. Calls leave it, and
+/// the address they return to is another entry of the same code.
 #[derive(Clone)]
 pub(super) struct Job {
     pub(super) pc: u32,
+    /// The region's instructions, by address.
     pub(super) instructions: Vec<(u32, Opcode, Instr)>,
-    /// Address after the last instruction.
-    next: u32,
+    /// Addresses that start a block: entries, branch targets, and what follows a branch.
+    leaders: Vec<u32>,
+    /// Where code may come in: `pc`, then the addresses calls of the region return to.
+    pub(super) entries: Vec<u32>,
+    /// The lowest address and the one after the highest instruction.
+    range: (u32, u32),
     /// `interpret_one` for the bus in use.
     helper: usize,
     generation: u64,
@@ -1462,11 +1562,22 @@ pub(super) struct Job {
     counter: usize,
 }
 
+/// How much code a [`Job`] takes in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Reach {
+    /// A straight run up to the first jump, quick to translate.
+    Block,
+    /// Everything nearby branches reach: loops run inside. For code that runs often.
+    Region,
+}
+
 impl Job {
     /// The result of a translation that went wrong.
-    pub(super) const fn failed(&self) -> Translated {
+    pub(super) fn failed(&self) -> Translated {
         Translated {
             pc: self.pc,
+            entries: self.entries.clone(),
+            range: self.range,
             code: None,
             alignment: 1,
             generation: self.generation,
@@ -1475,7 +1586,7 @@ impl Job {
         }
     }
 
-    /// The same block again, to be made as fast as it can run.
+    /// The same region again, to be made as fast as it can run.
     pub(super) fn into_optimized(self) -> Self {
         Self { optimized: true, counter: 0, ..self }
     }
@@ -1490,20 +1601,68 @@ impl Job {
         self.counter = counter as usize;
     }
 
-    /// Whether the block has code in `[start, end)`.
+    /// Whether the region has code in `[start, end)`.
     pub(super) const fn overlaps(&self, start: u32, end: u32) -> bool {
-        self.pc < end && start < self.next
+        self.range.0 < end && start < self.range.1
     }
 
     /// A translation of it is good for the code as of `generation`.
     pub(super) const fn set_generation(&mut self, generation: u64) {
         self.generation = generation;
     }
+
+    /// Leaders not to seal on reaching them: ways in from later code (loops, the entry).
+    fn late_sealed(&self, leaders: &HashMap<u32, usize>) -> Vec<bool> {
+        let mut late = vec![false; leaders.len()];
+        for entry in &self.entries {
+            late[leaders[entry]] = true;
+        }
+        for &(at, op, i) in &self.instructions {
+            let target = match op {
+                Opcode::B => {
+                    if i.aa() {
+                        i.li() as u32
+                    } else {
+                        at.wrapping_add(i.li() as u32)
+                    }
+                }
+                Opcode::Bc => {
+                    if i.aa() {
+                        i.bd() as u32
+                    } else {
+                        at.wrapping_add(i.bd() as u32)
+                    }
+                }
+                _ => continue,
+            };
+            if target <= at
+                && !i.lk()
+                && let Some(&leader) = leaders.get(&target)
+            {
+                late[leader] = true;
+            }
+        }
+        late
+    }
+
+    /// Instructions of the block starting at `index`.
+    fn block_length(&self, index: usize, leaders: &HashMap<u32, usize>) -> i64 {
+        let mut end = index + 1;
+        while let Some(&(address, ..)) = self.instructions.get(end)
+            && address == self.instructions[end - 1].0.wrapping_add(4)
+            && !leaders.contains_key(&address)
+        {
+            end += 1;
+        }
+        (end - index) as i64
+    }
 }
 
 /// What became of a [`Job`].
 pub(super) struct Translated {
     pub(super) pc: u32,
+    pub(super) entries: Vec<u32>,
+    pub(super) range: (u32, u32),
     /// Machine code without relocations, `None` if translating failed.
     pub(super) code: Option<Vec<u8>>,
     pub(super) alignment: u64,
@@ -1524,32 +1683,97 @@ const fn ends_block(op: Opcode, i: Instr) -> bool {
     }
 }
 
-/// Reads the instructions of the block at `pc`.
+/// Reads the instructions of the region entered at `pc`.
 #[allow(clippy::fn_to_numeric_cast_any, reason = "native code calls it by its address")]
-pub(super) fn decode_block<B: Bus>(pc: u32, bus: &mut B, generation: u64) -> Result<Job, CpuError> {
+pub(super) fn decode_block<B: Bus>(
+    pc: u32,
+    bus: &mut B,
+    generation: u64,
+    reach: Reach,
+) -> Result<Job, CpuError> {
+    let limit = match reach {
+        Reach::Block => MAX_BLOCK_INSTRUCTIONS,
+        Reach::Region => MAX_REGION_INSTRUCTIONS,
+    };
     // Decode first so an unreadable first instruction reports a clean error.
-    let mut instructions = Vec::with_capacity(16);
-    let mut at = pc;
-    while instructions.len() < MAX_BLOCK_INSTRUCTIONS as usize {
-        let Ok(raw) = bus.fetch(at) else {
-            if instructions.is_empty() {
-                return Err(CpuError::Bus { pc, address: at });
+    let first = bus.fetch(pc).map_err(|_| CpuError::Bus { pc, address: pc })?;
+    let near = |address: u32| {
+        address.wrapping_sub(pc.wrapping_sub(REGION_REACH)) < 2 * REGION_REACH && address & 3 == 0
+    };
+    let mut found: BTreeMap<u32, (Opcode, Instr)> = BTreeMap::new();
+    let mut leaders = BTreeSet::new();
+    let mut entries = vec![pc];
+    let mut work = VecDeque::from([pc]);
+    while let Some(start) = work.pop_front() {
+        let mut at = start;
+        let mut leader = true;
+        loop {
+            if found.contains_key(&at) {
+                leaders.insert(at);
+                break;
             }
-            break;
-        };
-        let op = decode(raw);
-        instructions.push((at, op, Instr(raw)));
-        at = at.wrapping_add(4);
-        if ends_block(op, Instr(raw)) {
-            break;
+            if found.len() >= limit {
+                break;
+            }
+            let raw = if at == pc {
+                first
+            } else {
+                match bus.fetch(at) {
+                    Ok(raw) => raw,
+                    Err(_) => break,
+                }
+            };
+            let (op, i) = (decode(raw), Instr(raw));
+            found.insert(at, (op, i));
+            if leader {
+                leaders.insert(at);
+            }
+            let next = at.wrapping_add(4);
+            let branch = matches!(op, Opcode::B | Opcode::Bc | Opcode::Bclr | Opcode::Bcctr);
+            let target = match op {
+                Opcode::B => {
+                    Some(if i.aa() { i.li() as u32 } else { at.wrapping_add(i.li() as u32) })
+                }
+                Opcode::Bc => {
+                    Some(if i.aa() { i.bd() as u32 } else { at.wrapping_add(i.bd() as u32) })
+                }
+                _ => None,
+            };
+            if branch && i.lk() {
+                // The call leaves the region; where it returns to is another way in.
+                if reach == Reach::Region && near(next) {
+                    work.push_back(next);
+                    entries.push(next);
+                }
+                break;
+            }
+            if let Some(target) = target
+                && reach == Reach::Region
+                && near(target)
+            {
+                work.push_back(target);
+            }
+            if ends_block(op, i) {
+                break;
+            }
+            leader = branch;
+            at = next;
         }
     }
+    let mut seen = HashSet::new();
+    entries.retain(|entry| found.contains_key(entry) && seen.insert(*entry));
+    let range = (
+        found.keys().next().copied().unwrap_or(pc),
+        found.keys().next_back().map_or(pc, |last| last.wrapping_add(4)),
+    );
     let helper =
         interpret_one::<B> as unsafe extern "C" fn(*mut CpuState, *mut HelperContext) -> u32;
     Ok(Job {
         pc,
-        instructions,
-        next: at,
+        instructions: found.into_iter().map(|(at, (op, i))| (at, op, i)).collect(),
+        leaders: leaders.into_iter().collect(),
+        entries,
+        range,
         helper: helper as usize,
         generation,
         optimized: false,
@@ -1586,6 +1810,8 @@ impl Worker {
         let (code, alignment) = code.map_or((None, 1), |(code, alignment)| (Some(code), alignment));
         Translated {
             pc: job.pc,
+            entries: job.entries.clone(),
+            range: job.range,
             code,
             alignment,
             generation: job.generation,
@@ -1606,70 +1832,118 @@ impl Worker {
             b.seal_block(entry);
             let (state, memory, helper_context) =
                 (b.block_params(entry)[0], b.block_params(entry)[1], b.block_params(entry)[2]);
+            // What the entry loads is only known once the region is translated.
+            let prologue = b.create_block();
+            b.ins().jump(prologue, &[]);
 
             let mut signature = Signature::new(call_conv);
             signature.params.extend([AbiParam::new(pointer); 2]);
             signature.returns.push(AbiParam::new(I32));
             let interpret_sig = b.import_signature(signature);
             let block_sig = b.import_signature(block_signature(pointer));
-            let interpret = b.ins().iconst(pointer, job.helper as i64);
-            if job.counter != 0 {
-                // Three instructions per run tell the hot blocks, the ones worth optimizing,
-                // from the many that run a few times only.
-                let counter = b.ins().iconst(pointer, job.counter as i64);
-                let runs = b.ins().load(I32, flags(), counter, 0);
-                let runs = b.ins().iadd_imm_u(runs, 1);
-                b.ins().store(flags(), runs, counter, 0);
-            }
+            let registers = std::array::from_fn(|register| {
+                let ty = match register_slot(register).1 {
+                    I8 => I32,
+                    ty => ty,
+                };
+                b.declare_var(ty)
+            });
+            let remaining = b.declare_var(I64);
+            let leader_of: HashMap<u32, usize> =
+                job.leaders.iter().enumerate().map(|(index, &address)| (address, index)).collect();
+            let leaders = job.leaders.iter().map(|_| b.create_block()).collect();
+            let late = job.late_sealed(&leader_of);
 
             let mut emit = Emit {
                 b: &mut b,
                 state,
                 memory,
                 helper_context,
-                interpret,
+                interpret: job.helper as i64,
                 interpret_sig,
                 block_sig,
                 pages: self.pages,
-                executed: 0,
-                gpr: [None; 32],
-                gpr_dirty: 0,
-                fpr: [[None; 2]; 32],
-                fpr_dirty: [0; 2],
-                lr: None,
-                ctr: None,
-                cr: None,
-                ca: None,
-                lr_dirty: false,
-                ctr_dirty: false,
-                cr_dirty: false,
-                ca_dirty: false,
+                counter: job.counter,
+                registers,
+                remaining,
+                touched: 0,
+                dirty: Dirty { leader: 0, local: 0, flushed: false },
+                leaders,
+                leader_of,
+                edges: Vec::new(),
+                stubs: Vec::new(),
             };
-            let mut ended = false;
-            for &(address, op, i) in &job.instructions {
-                emit.executed += 1;
+            let mut open = false;
+            for (index, &(address, op, i)) in job.instructions.iter().enumerate() {
+                if let Some(&leader) = emit.leader_of.get(&address) {
+                    let block = emit.leaders[leader];
+                    if open {
+                        emit.edges.push((emit.dirty, leader));
+                        emit.b.ins().jump(block, &[]);
+                    }
+                    emit.b.switch_to_block(block);
+                    // Every way here is known once it is reached, but for loops and entries.
+                    if !late[leader] {
+                        emit.b.seal_block(block);
+                    }
+                    emit.dirty = Dirty { leader, local: 0, flushed: false };
+                    emit.charge(job.block_length(index, &emit.leader_of));
+                    open = true;
+                } else if !open {
+                    continue;
+                }
                 match emit.instruction(op, i, address) {
                     Flow::Next => {}
                     Flow::Ended => {
-                        ended = true;
-                        break;
+                        open = false;
+                        continue;
+                    }
+                    Flow::Fallback if ends_block_after_fallback(op) => {
+                        let stub = emit.stub(StubKind::Fallback { pc: address, then: Then::Leave });
+                        emit.b.ins().jump(stub, &[]);
+                        open = false;
+                        continue;
                     }
                     Flow::Fallback => {
-                        emit.interpret(address);
-                        if ends_block_after_fallback(op) {
-                            // `state.pc` is what the interpreter left there.
-                            emit.charge();
-                            emit.leave();
-                            ended = true;
-                            break;
-                        }
+                        let resume = emit.b.create_block();
+                        let then = Then::Resume(resume);
+                        let stub = emit.stub(StubKind::Fallback { pc: address, then });
+                        emit.b.ins().jump(stub, &[]);
+                        emit.b.switch_to_block(resume);
+                        emit.dirty.local = 0;
+                        emit.dirty.flushed = true;
                     }
                 }
+                let next = address.wrapping_add(4);
+                if job.instructions.get(index + 1).map(|following| following.0) != Some(next) {
+                    let exit = emit.stub(StubKind::Exit(Target::Known(next)));
+                    emit.b.ins().jump(exit, &[]);
+                    open = false;
+                }
             }
-            if !ended {
-                let next = emit.c32(job.next);
-                emit.end_block(next, Some(job.next));
+            emit.finish_stubs();
+
+            emit.b.switch_to_block(prologue);
+            emit.b.seal_block(prologue);
+            // Three instructions per run tell the hot regions, the ones worth optimizing,
+            // from the many that run a few times only.
+            emit.count_run();
+            emit.reload(emit.touched);
+            let offset = offset_of!(HelperContext, remaining) as i32;
+            let left = emit.b.ins().load(I64, flags(), helper_context, offset);
+            emit.b.def_var(remaining, left);
+            let first = emit.leaders[emit.leader_of[&job.pc]];
+            if job.entries.len() == 1 {
+                emit.b.ins().jump(first, &[]);
+            } else {
+                let pc = emit.load_state(offset_of!(CpuState, pc) as i32);
+                let mut switch = Switch::new();
+                for entry in &job.entries[1..] {
+                    switch.set_entry(u128::from(*entry), emit.leaders[emit.leader_of[entry]]);
+                }
+                switch.emit(emit.b, pc, first);
             }
+            b.seal_all_blocks();
             b.finalize(self.isa.frontend_config());
         }
         let isa = if job.optimized { &self.optimizing_isa } else { &self.isa };
@@ -1681,7 +1955,7 @@ impl Worker {
             }
         };
         if !compiled.buffer.relocs().is_empty() {
-            log::error!("JIT block at {:#010x} needs relocations", job.pc);
+            log::error!("JIT region at {:#010x} needs relocations", job.pc);
             return None;
         }
         Some((compiled.code_buffer().to_vec(), u64::from(compiled.buffer.min_alignment)))
@@ -1763,6 +2037,10 @@ mod tests {
             (4 << 26) | (4 << 21) | (1 << 16) | (2 << 11) | (21 << 1), // ps_add f4, f1, f2
             (63 << 26) | (5 << 21) | (2 << 11) | (40 << 1), // fneg f5, f2
             ((63 << 26) | (6 << 16) | (2 << 11)), // fcmpu cr0, f6, f2
+            a(4, 7, 5, 2, 4, 23),  // ps_sel f7, f5, f4, f2
+            li(16, 0x2035),
+            x(31, 0, 0, 16, 1014, false), // dcbz 0, r16 (line 0x2020..0x2040)
+            d(32, 17, 0, 0x2030),         // lwz r17, 0x2030(0)
             encode_hle_call(1),
             INSTR_BLR,
         ]
@@ -1817,11 +2095,14 @@ mod tests {
                 break event;
             }
         };
-        for synchronous in [true, false] {
+        for (synchronous, regions) in [(true, false), (true, true), (false, false)] {
             let (bus, mut state) = prepare();
             let mut bus = FlatBus(bus);
             let mut jit = Jit::new();
             jit.set_synchronous(synchronous);
+            if regions {
+                jit.set_regions_first();
+            }
             let (jit_event, executed) = jit.run(&mut state, &mut bus, 1000).unwrap();
             assert_eq!(jit_event, event);
             assert!(executed > 0);
@@ -1856,6 +2137,31 @@ mod tests {
                 ],
             );
             bus.load_program(0x420, &[0x1234_FFFE]);
+        });
+    }
+
+    /// A counted loop calling a function: the call returns into the middle of the region.
+    #[test]
+    fn calls_return_into_a_looping_region() {
+        let program = [
+            li(3, 0),
+            li(4, 5),
+            (31 << 26) | (4 << 21) | (9 << 16) | (467 << 1), // mtctr r4
+            0x4800_0015,                                     // loop: bl func
+            d(14, 3, 3, 1),                                  // addi r3, r3, 1
+            0x4200_FFF8,                                     // bdnz loop
+            encode_hle_call(3),
+            INSTR_BLR,
+            d(14, 5, 5, 2), // func: addi r5, r5, 2
+            INSTR_BLR,
+        ];
+        assert_same_as_interpreter(&program, |_, _| {});
+    }
+
+    #[test]
+    fn the_first_program_matches_the_interpreter_as_a_region() {
+        assert_same_as_interpreter(&program(), |bus, _| {
+            bus.load_program(0x2020, &[1.5_f32.to_bits()]);
         });
     }
 

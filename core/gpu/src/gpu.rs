@@ -1,3 +1,4 @@
+use crate::render::TextureUpload;
 use wiiu_interrupt::PendingInterrupts;
 use wiiu_memory::Memory;
 
@@ -28,10 +29,62 @@ pub struct Gpu {
     timestamp: u64,
 }
 
+/// What a saved state keeps of the GPU. Its caches fill again from guest memory.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct GpuState {
+    cp: CommandProcessor,
+    display: Display,
+    interrupts: PendingInterrupts,
+    timestamp: u64,
+    color_targets: [crate::latte::SurfaceWords; 8],
+    depth_target: crate::latte::SurfaceWords,
+    surfaces: Vec<TextureUpload>,
+}
+
 impl Gpu {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Asks the renderer for what the GPU drew, which guest memory does not hold. The answer
+    /// comes once the commands queued so far have reached the renderer; without one, the
+    /// receiver just reports its sender gone.
+    pub fn request_surfaces(&mut self) -> std::sync::mpsc::Receiver<Vec<TextureUpload>> {
+        let (reply, answer) = std::sync::mpsc::channel();
+        let keys = self.latte.host_surface_keys();
+        self.latte
+            .commands
+            .push(RenderCommand::ReadSurfaces { keys, reply: crate::render::SurfaceReply(reply) });
+        answer
+    }
+
+    pub fn save_state(&self, surfaces: Vec<TextureUpload>) -> GpuState {
+        GpuState {
+            cp: self.cp.clone(),
+            display: self.display.clone(),
+            interrupts: self.interrupts,
+            timestamp: self.timestamp,
+            color_targets: self.latte.color_targets,
+            depth_target: self.latte.depth_target,
+            surfaces,
+        }
+    }
+
+    /// Goes on from `state`; the host renderer starts over like at a boot.
+    pub fn restore_state(&mut self, state: GpuState, resolution_factor: u32) {
+        *self = Self {
+            cp: state.cp,
+            display: state.display,
+            interrupts: state.interrupts,
+            timestamp: state.timestamp,
+            ..Self::default()
+        };
+        self.latte.color_targets = state.color_targets;
+        self.latte.depth_target = state.depth_target;
+        self.reset_renderer();
+        self.set_resolution_factor(resolution_factor);
+        self.latte.restore_surfaces(state.surfaces);
     }
 
     /// Executes a PM4 command buffer.
@@ -80,6 +133,13 @@ impl Gpu {
     #[inline]
     pub const fn pending_commands(&self) -> usize {
         self.latte.commands.len()
+    }
+
+    /// The CPU wrote `[address, address + size)` (effective) for the GPU to read: the title
+    /// flushed it from the data cache, or the system wrote it.
+    #[inline]
+    pub fn note_cpu_write(&mut self, address: u32, size: u32) {
+        self.latte.note_cpu_write(address, size);
     }
 
     /// Drains interrupts raised since the last call.

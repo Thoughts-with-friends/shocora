@@ -53,6 +53,25 @@ impl ShocoraApp {
                     self.open_cheats();
                     ui.close();
                 }
+                let running = self.title.is_some();
+                ui.add_enabled_ui(running, |ui| {
+                    ui.menu_button(tr("menu.save_state"), |ui| {
+                        for slot in 0..wiiu_emu::STATE_SLOTS {
+                            if ui.button(trf("menu.state_slot", &[("slot", &slot)])).clicked() {
+                                self.console.send(ConsoleCommand::SaveState(slot));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button(tr("menu.load_state"), |ui| {
+                        for slot in 0..wiiu_emu::STATE_SLOTS {
+                            if ui.button(trf("menu.state_slot", &[("slot", &slot)])).clicked() {
+                                self.console.send(ConsoleCommand::LoadState(slot));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
                 if ui
                     .add_enabled(self.title.is_some(), egui::Button::new(tr("menu.reset")))
                     .clicked()

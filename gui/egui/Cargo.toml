@@ -23,6 +23,7 @@ log = { workspace = true }
 rfd = "0.15"
 serde_json = "1"
 wiiu_emu = { workspace = true }
+wiiu_title = { workspace = true }
 
 [build-dependencies]
 embed-resource = "3"

@@ -14,6 +14,7 @@ version.workspace = true
 [dependencies]
 log = { workspace = true }
 serde = { workspace = true }
+serde_bytes = "0.11"
 thiserror = { workspace = true }
 wiiu_interrupt = { workspace = true }
 wiiu_mem_addr = { workspace = true }

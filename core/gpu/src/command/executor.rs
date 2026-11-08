@@ -37,7 +37,7 @@ pub struct CpStats {
 }
 
 /// State a GX2 context restores when it becomes current again.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct SavedContext {
     regs: RegisterFile,
     color_targets: [SurfaceWords; 8],
@@ -45,9 +45,10 @@ struct SavedContext {
 }
 
 /// The command processor.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default, Clone)]
 pub struct CommandProcessor {
     pub regs: RegisterFile,
+    #[serde(skip)]
     pub stats: CpStats,
     index_type: u32,
     instances: u32,
@@ -130,6 +131,7 @@ impl CommandProcessor {
         count: u32,
         indices: Option<&[u8]>,
         immediate: bool,
+        index_address: Option<u32>,
     ) {
         self.stats.draws += 1;
         let request = DrawRequest {
@@ -140,6 +142,7 @@ impl CommandProcessor {
             index_type: self.index_type,
             indices,
             immediate,
+            index_address,
         };
         ctx.latte.draw(ctx.memory, &mut self.regs, &request);
     }
@@ -234,7 +237,7 @@ impl CommandProcessor {
             opcode::NUM_INSTANCES => self.instances = body.first().copied().unwrap_or(1),
             opcode::DRAW_INDEX_AUTO => {
                 if let [count, ..] = body {
-                    self.draw(ctx, *count, None, false);
+                    self.draw(ctx, *count, None, false, None);
                 }
             }
             opcode::DRAW_INDEX_2 => {
@@ -246,14 +249,15 @@ impl CommandProcessor {
                         } else {
                             2
                         };
-                    let bytes = ctx.memory.slice(effective, count.saturating_mul(width))?.to_vec();
-                    self.draw(ctx, *count, Some(&bytes), false);
+                    // Checked here; Latte reads them when its copy is out of date.
+                    ctx.memory.slice(effective, count.saturating_mul(width))?;
+                    self.draw(ctx, *count, None, false, Some(effective));
                 }
             }
             opcode::DRAW_INDEX_IMMD => {
                 if let [count, _initiator, indices @ ..] = body {
                     let bytes: Vec<u8> = indices.iter().flat_map(|w| w.to_be_bytes()).collect();
-                    self.draw(ctx, *count, Some(&bytes), true);
+                    self.draw(ctx, *count, Some(&bytes), true, None);
                 }
             }
             opcode::HLE_CLEAR => {

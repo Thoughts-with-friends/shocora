@@ -39,6 +39,10 @@ pub enum ConsoleCommand {
     Reset,
     /// Reads the running title's cheat codes again.
     ReloadCheats,
+    /// Saves the machine to a state slot.
+    SaveState(u8),
+    /// Goes on from a state slot.
+    LoadState(u8),
     GamePad(GamePadState),
     /// A Pro Controller on a `WPAD` channel; `None` unplugs it.
     ProController(usize, Option<GamePadState>),
@@ -46,6 +50,12 @@ pub enum ConsoleCommand {
     AudioTap(Option<SyncSender<Vec<i16>>>),
     /// Where to find the system fonts from the next boot on.
     FontsDir(Option<PathBuf>),
+    /// Where updates and downloadable content are looked for from the next boot on, as
+    /// [`AppConfig::emulator_config`](crate::config::AppConfig::emulator_config) lists them.
+    AddOnDirs {
+        update_dirs: Vec<PathBuf>,
+        dlc_dirs: Vec<PathBuf>,
+    },
     /// Vertical blanks per flip from now on, whatever the title asks for.
     SwapInterval(Option<u32>),
     /// How many times larger the title's pictures are drawn from now on.
@@ -106,6 +116,8 @@ impl Console {
             .name("shocora-emu".into())
             .spawn(move || {
                 EmuThread {
+                    profile: std::env::var_os("SHOCORA_PROFILE")
+                        .map(|_| Profile::new(emulator.stats())),
                     emulator,
                     rx,
                     render,
@@ -155,7 +167,84 @@ impl Drop for Console {
     }
 }
 
+/// Where the emulation thread's time went, logged every [`PROFILE_INTERVAL`] when
+/// `SHOCORA_PROFILE` is set.
+struct Profile {
+    start: Instant,
+    base: EmuStats,
+    /// Inside `run_frame`: guest code, HLE, translation and pacing.
+    frame: Duration,
+    /// Waiting for the render thread to take the frame's commands.
+    render_wait: Duration,
+    audio_samples: u64,
+    audio_peak: i16,
+}
+
+const PROFILE_INTERVAL: Duration = Duration::from_secs(5);
+
+impl Profile {
+    fn new(stats: EmuStats) -> Self {
+        Self {
+            start: Instant::now(),
+            base: stats,
+            frame: Duration::ZERO,
+            render_wait: Duration::ZERO,
+            audio_samples: 0,
+            audio_peak: 0,
+        }
+    }
+
+    fn audio(&mut self, samples: &[i16]) {
+        self.audio_samples += samples.len() as u64;
+        let peak = samples.iter().map(|s| s.saturating_abs()).max().unwrap_or(0);
+        self.audio_peak = self.audio_peak.max(peak);
+    }
+
+    /// Logs and starts over once the interval is up.
+    #[allow(clippy::cast_precision_loss)]
+    fn report(&mut self, emulator: &Emulator) {
+        let elapsed = self.start.elapsed();
+        if elapsed < PROFILE_INTERVAL {
+            return;
+        }
+        let stats = emulator.stats();
+        let (now, base) = (&stats, &self.base);
+        let secs = elapsed.as_secs_f64();
+        let ms = |nanos: u64| nanos as f64 / 1e6 / secs;
+        log::info!(
+            "[profile] {:.1} fps | per second: frame {:.0} ms (guest {:.0}, hle {:.0},              compile {:.0}), render wait {:.0} ms | {:.0} M instr, {:.0} draws ({} skipped) |              audio {:.0} samples/s, peak {}",
+            (now.gpu.flips - base.gpu.flips) as f64 / secs,
+            self.frame.as_secs_f64() * 1e3 / secs,
+            ms(now.guest_nanos - base.guest_nanos),
+            ms(now.hle_nanos - base.hle_nanos),
+            ms(now.compile_nanos - base.compile_nanos),
+            self.render_wait.as_secs_f64() * 1e3 / secs,
+            (now.instructions - base.instructions) as f64 / 1e6 / secs,
+            (now.gpu.draws - base.gpu.draws) as f64 / secs,
+            now.gpu.skipped_draws - base.gpu.skipped_draws,
+            self.audio_samples as f64 / secs,
+            self.audio_peak,
+        );
+        log::info!("[profile]   sound: {}", emulator.sound_summary());
+        let ax: Vec<String> = emulator
+            .hle_profile(usize::MAX)
+            .into_iter()
+            .filter(|(name, _)| name.starts_with("snd"))
+            .map(|(name, calls)| format!("{}={calls}", name.rsplit("::").next().unwrap_or(&name)))
+            .collect();
+        log::info!("[profile]   sound calls: {}", ax.join(" "));
+        for thread in emulator.thread_summary() {
+            log::info!("[profile]   thread {thread}");
+        }
+        for (name, calls, nanos) in emulator.hle_slowest(8) {
+            log::info!("[profile]   {name}: {calls} calls, {:.0} ms total", nanos as f64 / 1e6);
+        }
+        *self = Self::new(stats);
+    }
+}
+
 struct EmuThread {
+    profile: Option<Profile>,
     emulator: Emulator,
     rx: Receiver<ConsoleCommand>,
     render: SyncSender<Vec<RenderCommand>>,
@@ -168,6 +257,16 @@ struct EmuThread {
 impl EmuThread {
     fn running(&self) -> bool {
         !self.paused && *self.emulator.status() == Status::Running
+    }
+
+    fn report_state(&mut self, done: &str, result: Result<std::path::PathBuf, wiiu_emu::EmuError>) {
+        match result {
+            Ok(path) => self.emulator.log_line(format!("state {done}: {}", path.display())),
+            Err(error) => {
+                self.shared.lock().unwrap_or_else(PoisonError::into_inner).load_error =
+                    Some(format!("state: {error}"));
+            }
+        }
     }
 
     fn handle(&mut self, command: ConsoleCommand) {
@@ -205,12 +304,31 @@ impl EmuThread {
                         Some(error);
                 }
             }
+            ConsoleCommand::SaveState(slot) => {
+                // What the GPU drew comes from the render thread, after everything before it.
+                let answer = self.emulator.request_surfaces();
+                let commands = self.emulator.take_render_commands();
+                let surfaces = match self.render.send(commands) {
+                    Ok(()) => answer.recv().unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+                let result = self.emulator.save_state(slot, surfaces);
+                self.report_state("saved", result);
+            }
+            ConsoleCommand::LoadState(slot) => {
+                let result = self.emulator.load_state(slot);
+                self.report_state("loaded", result);
+            }
             ConsoleCommand::GamePad(state) => self.emulator.set_gamepad(state),
             ConsoleCommand::ProController(channel, state) => {
                 self.emulator.set_pro_controller(channel, state);
             }
             ConsoleCommand::AudioTap(tap) => self.audio_tap = tap,
             ConsoleCommand::FontsDir(dir) => self.emulator.config.fonts_dir = dir,
+            ConsoleCommand::AddOnDirs { update_dirs, dlc_dirs } => {
+                self.emulator.config.update_dirs = update_dirs;
+                self.emulator.config.dlc_dirs = dlc_dirs;
+            }
             ConsoleCommand::SwapInterval(interval) => self.emulator.set_swap_interval(interval),
             ConsoleCommand::ResolutionFactor(factor) => {
                 self.emulator.set_resolution_factor(factor);
@@ -225,6 +343,9 @@ impl EmuThread {
     fn publish(&mut self, fps: f32) {
         // Before the renderer, which may take a while: sound must not run out meanwhile.
         let sound = self.emulator.take_audio();
+        if let Some(profile) = &mut self.profile {
+            profile.audio(&sound);
+        }
         self.audio.push(&sound);
         if let Some(tap) = self.audio_tap.as_ref().filter(|_| !sound.is_empty()) {
             let _ = tap.try_send(sound);
@@ -232,8 +353,12 @@ impl EmuThread {
         let commands = self.emulator.take_render_commands();
         // Waits while the renderer is behind: frames must not be dropped, they
         // carry uploads and draws later frames build on.
+        let waited = Instant::now();
         if !commands.is_empty() && self.render.send(commands).is_err() {
             log::warn!("render thread stopped");
+        }
+        if let Some(profile) = &mut self.profile {
+            profile.render_wait += waited.elapsed();
         }
         let lines = self.emulator.take_console();
         let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
@@ -270,7 +395,12 @@ impl EmuThread {
             }
 
             if self.running() {
+                let started = Instant::now();
                 self.emulator.run_frame();
+                if let Some(profile) = &mut self.profile {
+                    profile.frame += started.elapsed();
+                    profile.report(&self.emulator);
+                }
             }
             let elapsed = fps_start.elapsed();
             if elapsed >= Duration::from_secs(1) {

@@ -1,7 +1,7 @@
 //! Frame heap (`MEMFrmHeap`): bump allocation from both ends, freed in bulk.
 
 /// Which end(s) `MEMFreeToFrmHeap` releases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreeMode(pub u32);
 
 impl FreeMode {
@@ -14,7 +14,7 @@ impl FreeMode {
 }
 
 /// A snapshot made by `MEMRecordStateForFrmHeap`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 struct RecordedState {
     id: u32,
     head: u32,
@@ -22,7 +22,7 @@ struct RecordedState {
 }
 
 /// Host-side bookkeeping of one frame heap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FrmHeap {
     start: u32,
     end: u32,

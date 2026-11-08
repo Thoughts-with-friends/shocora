@@ -12,7 +12,10 @@ mod launcher;
 mod netplay;
 mod presenter;
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex, PoisonError},
+};
 
 use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
 use shocora_gui_common::config::AppConfig;
@@ -48,7 +51,48 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn native_options(api: GraphicsApi, transparent: bool) -> eframe::NativeOptions {
+/// The adapter to use: the one named if it is there, else the fastest kind on offer. Adapters
+/// come in the order of their backends, so a GPU seen through several gets its first one.
+fn choose_adapter<'a>(
+    adapters: &'a [wgpu::Adapter],
+    surface: Option<&wgpu::Surface<'_>>,
+    wanted: Option<&str>,
+    found: &Mutex<Vec<String>>,
+) -> Result<&'a wgpu::Adapter, String> {
+    let usable: Vec<_> = adapters
+        .iter()
+        .filter(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
+        .filter(|adapter| surface.is_none_or(|surface| adapter.is_surface_supported(surface)))
+        .collect();
+    let mut names: Vec<String> = usable.iter().map(|adapter| adapter.get_info().name).collect();
+    names.sort();
+    names.dedup();
+    *found.lock().unwrap_or_else(PoisonError::into_inner) = names;
+
+    let named = wanted.and_then(|wanted| {
+        let adapter = usable.iter().find(|adapter| adapter.get_info().name == wanted);
+        if adapter.is_none() {
+            log::warn!("GPU {wanted:?} not found: choosing one");
+        }
+        adapter
+    });
+    let rank = |adapter: &&&wgpu::Adapter| match adapter.get_info().device_type {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        _ => 2,
+    };
+    named
+        .or_else(|| usable.iter().min_by_key(rank))
+        .copied()
+        .ok_or_else(|| "no GPU can draw to this window".to_owned())
+}
+
+fn native_options(
+    api: GraphicsApi,
+    transparent: bool,
+    gpu: Option<String>,
+    gpus: Arc<Mutex<Vec<String>>>,
+) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title("shocora")
         .with_inner_size([1400.0, 640.0])
@@ -66,7 +110,9 @@ fn native_options(api: GraphicsApi, transparent: bool) -> eframe::NativeOptions 
 
     let mut setup = WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends = api.wgpu_backends();
-    setup.power_preference = wgpu::PowerPreference::HighPerformance;
+    setup.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
+        choose_adapter(adapters, surface, gpu.as_deref(), &gpus).cloned()
+    }));
 
     // The renderer needs more than egui's defaults: compressed textures and big storage buffers.
     setup.device_descriptor = std::sync::Arc::new(|adapter| wgpu::DeviceDescriptor {
@@ -103,11 +149,15 @@ fn main() -> eframe::Result {
     log::info!("graphics API: {}", api.label());
     let transparent = config.launcher_background[3] < u8::MAX;
 
+    // Filled in while the window finds its GPU, which comes before the app is made.
+    let gpus = Arc::new(Mutex::new(Vec::new()));
+    let options = native_options(api, transparent, config.gpu.clone(), Arc::clone(&gpus));
     eframe::run_native(
         "shocora",
-        native_options(api, transparent),
+        options,
         Box::new(move |cc| {
-            Ok(Box::new(app::ShocoraApp::new(cc, config, config_path, api, args.title)?))
+            let gpus = std::mem::take(&mut *gpus.lock().unwrap_or_else(PoisonError::into_inner));
+            Ok(Box::new(app::ShocoraApp::new(cc, config, config_path, api, gpus, args.title)?))
         }),
     )
 }

@@ -5,7 +5,7 @@ use wiiu_memory::GuestPtr;
 use crate::hle::{HleContext, HleError};
 
 /// Console settings the OS reports to titles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemSettings {
     /// `CafeConsoleRegion` bit: 1 JPN, 2 USA, 4 EUR.
     pub region: u8,
@@ -72,6 +72,7 @@ fn uc_close(_ctx: &mut HleContext<'_>, _handle: i32) -> i32 {
 }
 
 /// A value written back for one setting: its width and contents.
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Setting {
     U8(u8),
     U16(u16),

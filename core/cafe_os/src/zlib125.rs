@@ -62,8 +62,10 @@ impl std::fmt::Debug for Stream {
 }
 
 /// All live streams.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct ZlibState {
+    /// Host codecs: a stream open while a state is saved does not come back.
+    #[serde(skip)]
     pub streams: HashMap<u32, Stream>,
 }
 

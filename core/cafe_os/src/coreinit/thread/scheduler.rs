@@ -14,7 +14,7 @@ use wiiu_cpu::CpuState;
 use wiiu_memory::Memory;
 
 /// What a waiting thread waits for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wait {
     /// Another thread to terminate.
     Join(u32),
@@ -39,7 +39,7 @@ pub enum Wait {
 }
 
 /// Guest-visible lifecycle of a thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadState {
     Ready,
     Running,
@@ -62,7 +62,7 @@ impl ThreadState {
 }
 
 /// A condition-variable wait in progress (survives the restart).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCond {
     pub cond: u32,
     pub mutex: u32,
@@ -72,7 +72,7 @@ pub struct PendingCond {
 }
 
 /// Host-side state of one guest thread.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ThreadRecord {
     /// Registers while not running.
     pub context: CpuState,
@@ -115,14 +115,14 @@ impl ThreadRecord {
 }
 
 /// Owner and recursion count of a locked mutex.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MutexState {
     pub owner: u32,
     pub count: u32,
 }
 
 /// How eagerly to switch away from the current thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reschedule {
     /// The current thread blocked or exited.
     Block,
@@ -155,7 +155,7 @@ mod offset {
 const CORE_COUNT: u32 = 3;
 
 /// All threads and the locks they contend on.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct Scheduler {
     pub threads: BTreeMap<u32, ThreadRecord>,
     /// `OSThread` address of the running thread.

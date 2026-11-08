@@ -3,6 +3,7 @@ mod bus;
 pub mod emu_config;
 mod load;
 mod runner;
+pub mod state;
 
 use wiiu_cafe_os::CafeOs;
 use wiiu_cpu::{CpuState, Jit};
@@ -48,6 +49,8 @@ pub struct EmuStats {
     pub compile_nanos: u64,
     /// Blocks of guest code translated.
     pub compiled_blocks: u64,
+    /// Guest instructions the interpreter ran while their code waited for translation.
+    pub interpreted: u64,
     pub gpu: GpuStats,
 }
 
@@ -134,8 +137,15 @@ impl Emulator {
             gpu: self.gpu.stats(),
             compile_nanos: self.jit.compile_nanos(),
             compiled_blocks: self.jit.compiled_blocks(),
+            interpreted: self.jit.interpreted(),
             ..self.stats
         }
+    }
+
+    /// Blocks waiting for their first translation and for optimizing (profiling).
+    #[inline]
+    pub fn jit_queue_lengths(&self) -> (usize, usize) {
+        self.jit.queue_lengths()
     }
 
     /// Register state of core `index` (for the debugger).
@@ -269,6 +279,39 @@ impl Emulator {
     #[inline]
     pub fn hle_slowest(&self, limit: usize) -> Vec<(String, u64, u64)> {
         self.os.registry.slowest(limit)
+    }
+
+    /// Every guest thread: name, priority, state and where it stopped (profiling, hangs).
+    pub fn thread_summary(&self) -> Vec<String> {
+        let scheduler = &self.os.coreinit.threads;
+        scheduler
+            .threads
+            .iter()
+            .map(|(address, record)| {
+                let name = if record.name == 0 {
+                    String::new()
+                } else {
+                    self.memory.read_c_string(record.name, 64).unwrap_or_default()
+                };
+                let current = if *address == scheduler.current {
+                    " (current)".to_owned()
+                } else if record.state == wiiu_cafe_os::coreinit::thread::ThreadState::Moribund {
+                    format!(" exit {}", record.exit_value)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{address:#010x} {name:?} prio {} {:?}{current} pc {:#010x} lr {:#010x}",
+                    record.priority, record.state, record.context.pc, record.context.lr
+                )
+            })
+            .collect()
+    }
+
+    /// What the title's sound voices are doing (profiling).
+    #[inline]
+    pub fn sound_summary(&self) -> String {
+        self.os.ax.summary()
     }
 
     /// Drains mixed audio: interleaved stereo at [`wiiu_cafe_os::sndcore2::OUTPUT_RATE`].

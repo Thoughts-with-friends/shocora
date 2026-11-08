@@ -170,6 +170,7 @@ fn read(
     match ctx.iosu.fsa.read_file(handle, len) {
         Ok(bytes) => {
             ctx.memory.write_bytes(dst.address(), &bytes)?;
+            ctx.gpu.note_cpu_write(dst.address(), bytes.len() as u32);
             Ok((bytes.len() as u32).checked_div(size).unwrap_or(0) as i32)
         }
         Err(error) => Ok(finish(Err(error), "FSReadFile", "")),

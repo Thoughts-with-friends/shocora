@@ -18,7 +18,7 @@ pub mod resource_flag {
 const FORMAT_NV12: u32 = 0x81;
 
 /// All fields of `GX2Surface` (0x74 bytes).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Gx2Surface {
     pub dim: u32,
     pub width: u32,

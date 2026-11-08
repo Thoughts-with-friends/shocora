@@ -26,7 +26,7 @@ use crate::hle::{HleContext, HleError, HleExport};
 const FLUSH_THRESHOLD: usize = 0x4_0000;
 
 /// A display list being recorded.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct DisplayList {
     pub address: u32,
     pub capacity: u32,
@@ -40,7 +40,7 @@ pub struct DisplayList {
 /// that wait returns. Display lists belong to a thread: guest threads share one host
 /// core here, so workers the console would run on other cores interrupt each other's
 /// recording, and packets must not land in the wrong list.
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Gx2State {
     commands: Vec<u32>,
     /// Display lists being recorded, by the thread recording them.

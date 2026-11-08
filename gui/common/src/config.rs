@@ -12,6 +12,8 @@ use crate::input::{KeyBindings, PadBindings};
 pub struct AppConfig {
     /// Graphics API used at the next start.
     pub graphics_api: GraphicsApi,
+    /// Name of the GPU used at the next start; a discrete one is chosen without it.
+    pub gpu: Option<String>,
     /// Last booted title or RPX.
     pub last_title: Option<PathBuf>,
     /// Root of per-title save data.
@@ -64,6 +66,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             graphics_api: GraphicsApi::default(),
+            gpu: None,
             last_title: None,
             save_dir: PathBuf::from("save"),
             fonts_dir: None,

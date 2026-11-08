@@ -28,6 +28,8 @@ pub struct Config {
     /// Least vertical blanks per flip: `2` caps the title at 30 fps, and titles asking for
     /// less than that keep their own rate.
     pub min_swap_interval: Option<u32>,
+    /// Host directory holding saved states (`<dir>/<title id>/<slot>.state`).
+    pub states_dir: PathBuf,
     /// Host directory holding per-title cheat codes (`<dir>/<title id>.txt`).
     pub cheats_dir: PathBuf,
     /// System storage (`mlc01`) searched in order for installed updates.
@@ -54,6 +56,7 @@ impl Default for Config {
             swap_interval: None,
             resolution_factor: 1,
             min_swap_interval: None,
+            states_dir: PathBuf::from("states"),
             cheats_dir: PathBuf::from("cheats"),
             mlc_dirs: wiiu_title::update::default_mlc_dirs(),
             update_dirs: wiiu_title::update::default_library_dirs(AddOnKind::Update),

@@ -62,7 +62,7 @@ pub fn write_header(
 }
 
 /// One heap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Heap {
     Expanded(ExpHeap),
     Frame(FrmHeap),
@@ -78,7 +78,7 @@ impl Heap {
 }
 
 /// All heaps of the process plus the base heap slots.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct HeapTable {
     heaps: BTreeMap<u32, Heap>,
     base: [u32; BASE_HEAP_SLOTS],

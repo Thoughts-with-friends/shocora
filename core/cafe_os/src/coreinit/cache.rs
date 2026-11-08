@@ -1,7 +1,7 @@
 //! Cache maintenance and hardware queries.
 //!
-//! The emulator has no caches, so flush/invalidate are no-ops; only
-//! `DCZeroRange` has a visible effect (it zeroes whole cache lines).
+//! The emulator has no caches. Flushes still tell the GPU which memory the CPU wrote,
+//! so it looks at those buffers again; `DCZeroRange` also zeroes whole cache lines.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError};
@@ -25,16 +25,24 @@ fn os_is_debugger_present(_ctx: &mut HleContext<'_>) -> bool {
 }
 
 #[hle_export(lib = "coreinit", name = "DCFlushRange")]
-fn dc_flush_range(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
+fn dc_flush_range(ctx: &mut HleContext<'_>, address: u32, size: u32) {
+    ctx.gpu.note_cpu_write(address, size);
+}
 
 #[hle_export(lib = "coreinit", name = "DCFlushRangeNoSync")]
-fn dc_flush_range_no_sync(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
+fn dc_flush_range_no_sync(ctx: &mut HleContext<'_>, address: u32, size: u32) {
+    ctx.gpu.note_cpu_write(address, size);
+}
 
 #[hle_export(lib = "coreinit", name = "DCStoreRange")]
-fn dc_store_range(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
+fn dc_store_range(ctx: &mut HleContext<'_>, address: u32, size: u32) {
+    ctx.gpu.note_cpu_write(address, size);
+}
 
 #[hle_export(lib = "coreinit", name = "DCStoreRangeNoSync")]
-fn dc_store_range_no_sync(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
+fn dc_store_range_no_sync(ctx: &mut HleContext<'_>, address: u32, size: u32) {
+    ctx.gpu.note_cpu_write(address, size);
+}
 
 #[hle_export(lib = "coreinit", name = "DCInvalidateRange")]
 fn dc_invalidate_range(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
@@ -49,7 +57,9 @@ fn ic_invalidate_range(_ctx: &mut HleContext<'_>, _address: u32, _size: u32) {}
 fn dc_zero_range(ctx: &mut HleContext<'_>, address: u32, size: u32) -> Result<(), HleError> {
     let start = address & !(CACHE_LINE - 1);
     let end = address.saturating_add(size).next_multiple_of(CACHE_LINE);
-    Ok(ctx.memory.fill(start, end - start, 0)?)
+    ctx.memory.fill(start, end - start, 0)?;
+    ctx.gpu.note_cpu_write(start, end - start);
+    Ok(())
 }
 
 #[hle_export(lib = "coreinit", name = "OSEnforceInorderIO")]

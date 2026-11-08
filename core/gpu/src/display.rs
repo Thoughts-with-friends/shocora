@@ -2,7 +2,7 @@
 use crate::{RenderCommand, Screen, latte::Latte};
 
 /// Display controller state.
-#[derive(Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default, Clone)]
 pub struct Display {
     flips: u64,
 }

@@ -99,7 +99,7 @@ pub struct LatteRenderer {
     samplers: HashMap<SamplerDesc, wgpu::Sampler>,
     bind_groups: HashMap<u64, wgpu::BindGroup>,
     dummy_textures: HashMap<(TextureDim, TextureKind), wgpu::TextureView>,
-    feedback_copies: HashMap<SurfaceKey, (wgpu::Texture, wgpu::TextureView)>,
+    feedback_copies: HashMap<SurfaceKey, wgpu::Texture>,
     encoder: Option<wgpu::CommandEncoder>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: Option<PassKey>,
@@ -149,6 +149,9 @@ impl std::fmt::Debug for LatteRenderer {
 
 impl LatteRenderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("wgpu device lost ({reason:?}): {message}");
+        });
         device.on_uncaptured_error(Arc::new(|error| log::error!("wgpu: {error}")));
 
         let limit = device.limits().max_storage_buffer_binding_size;

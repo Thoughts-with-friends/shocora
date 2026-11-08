@@ -33,8 +33,10 @@ pub use registry::HleRegistry;
 use wiiu_peripherals::{GamePadState, TimeBase, controller::ButtonEdges};
 
 /// All Cafe OS state that lives outside guest memory.
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct CafeOs {
+    /// Function pointers: taken over from the running title when a state is loaded.
+    #[serde(skip)]
     pub registry: HleRegistry,
     pub timebase: TimeBase,
     pub coreinit: coreinit::CoreinitState,
@@ -55,10 +57,12 @@ pub struct CafeOs {
     pub pro_controllers: [Option<GamePadState>; nn::PRO_CHANNELS],
     pub(crate) pro_edges: [ButtonEdges; nn::PRO_CHANNELS],
     /// When each channel was last read: reading again too soon finds no new sample.
+    #[serde(skip)]
     pub(crate) pro_last_read: [Option<std::time::Instant>; nn::PRO_CHANNELS],
     /// Raw panel coordinates of the last touch of the GamePad.
     pub(crate) last_touch: (u16, u16),
     /// Lines printed by `OSReport` and friends, drained by the front end.
+    #[serde(skip)]
     pub console: Vec<String>,
     /// Set by `exit`/`_Exit`.
     pub exit_code: Option<i32>,
