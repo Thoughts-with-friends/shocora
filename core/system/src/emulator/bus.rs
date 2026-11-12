@@ -45,6 +45,33 @@ impl Bus for CoreBus<'_> {
         self.timebase.ticks_since_boot()
     }
 
+    fn compare_exchange_u32(
+        &mut self,
+        address: u32,
+        expected: u32,
+        new: u32,
+    ) -> Result<bool, BusError> {
+        if !address.is_multiple_of(4) || !self.memory.is_mapped(address, 4) {
+            return Err(BusError { address });
+        }
+        // SAFETY: the word is mapped (checked above) and aligned; other cores reach it only
+        // through the same atomic operations or plain accesses of their own.
+        let word = unsafe {
+            std::sync::atomic::AtomicU32::from_ptr(
+                self.memory.host_base().add(address as usize).cast::<u32>(),
+            )
+        };
+        // Guest memory is big-endian.
+        Ok(word
+            .compare_exchange(
+                expected.to_be(),
+                new.to_be(),
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok())
+    }
+
     fn fast_memory(&mut self) -> Option<*mut u8> {
         self.jit_memory.then(|| self.memory.host_base())
     }

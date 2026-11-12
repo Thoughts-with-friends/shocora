@@ -32,6 +32,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Condvar, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     time::{Duration, Instant},
@@ -147,10 +148,31 @@ impl JobBoard {
     }
 }
 
-/// Translated code of one guest address space.
+/// Translated code of one guest address space, shared by the cores running it.
+///
+/// Like Cemu's recompiler, all cores run the same code: native code finds its way through
+/// the page table without asking anyone, and only what changes the table (new translations,
+/// invalidations) takes the lock.
 pub struct Jit {
-    module: JITModule,
+    state: Mutex<JitState>,
     enter: EnterFn,
+    /// The page table of `state`, which never moves, for lookups without the lock.
+    pages: *const Option<Box<Page>>,
+    interpreted: AtomicU64,
+    /// Waits for each translation instead of interpreting meanwhile.
+    synchronous: bool,
+}
+
+// SAFETY: native code and its page table are only changed under the lock; entries are
+// pointer-sized and written whole, so a core reading one meanwhile sees the old or the new
+// code, and code is never freed while the `Jit` lives.
+unsafe impl Send for Jit {}
+// SAFETY: see above.
+unsafe impl Sync for Jit {}
+
+/// What changes as code is translated.
+struct JitState {
+    module: JITModule,
     /// Two-level table: guest page, then instruction within the page.
     pages: Vec<Option<Box<Page>>>,
     /// Instruction count of blocks that are queued, or that failed to translate.
@@ -170,22 +192,19 @@ pub struct Jit {
     last_collect: Instant,
     /// Bumped on invalidation: translations of older code are dropped on arrival.
     generation: u64,
-    /// Waits for each translation instead of interpreting meanwhile.
-    synchronous: bool,
     /// What the first translation of new code takes in.
     first_reach: Reach,
     compiled_blocks: u64,
     compile_nanos: u64,
-    interpreted: u64,
 }
 
-// SAFETY: the module's raw code pointers are only used by the thread owning the `Jit`.
-unsafe impl Send for Jit {}
+// SAFETY: the module's raw code pointers are only handed out under the `Jit`'s lock.
+unsafe impl Send for JitState {}
 
 impl std::fmt::Debug for Jit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Jit")
-            .field("compiled_blocks", &self.compiled_blocks)
+            .field("compiled_blocks", &self.compiled_blocks())
             .finish_non_exhaustive()
     }
 }
@@ -306,9 +325,9 @@ impl Jit {
         let board = Arc::new(JobBoard::default());
         let (finished_sender, finished) = mpsc::channel();
         spawn_workers(&isa, &optimizing_isa, pages.as_ptr() as usize, &board, &finished_sender);
-        Self {
+        let table = pages.as_ptr();
+        let state = JitState {
             module,
-            enter,
             pages,
             untranslated: HashMap::new(),
             awaiting: HashMap::new(),
@@ -321,12 +340,21 @@ impl Jit {
             finished,
             last_collect: Instant::now(),
             generation: 0,
-            synchronous: std::env::var_os("SHOCORA_JIT_SYNC").is_some(),
             first_reach: Reach::Block,
             compiled_blocks: 0,
             compile_nanos: 0,
-            interpreted: 0,
+        };
+        Self {
+            state: Mutex::new(state),
+            enter,
+            pages: table,
+            interpreted: AtomicU64::new(0),
+            synchronous: std::env::var_os("SHOCORA_JIT_SYNC").is_some(),
         }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, JitState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether to wait for each translation instead of interpreting meanwhile.
@@ -337,37 +365,63 @@ impl Jit {
 
     /// Translates new code as regions right away (tests of the region translation).
     #[cfg(test)]
-    pub(crate) const fn set_regions_first(&mut self) {
-        self.first_reach = Reach::Region;
+    pub(crate) fn set_regions_first(&self) {
+        self.lock().first_reach = Reach::Region;
     }
 
     /// Host time spent translating so far, summed over the workers.
     #[inline]
     pub fn queue_lengths(&self) -> (usize, usize) {
-        let queues = self.board.queues.lock().unwrap_or_else(PoisonError::into_inner);
+        let board = Arc::clone(&self.lock().board);
+        let queues = board.queues.lock().unwrap_or_else(PoisonError::into_inner);
         (queues.first.len(), queues.optimize.len())
     }
 
     #[inline]
-    pub const fn compile_nanos(&self) -> u64 {
-        self.compile_nanos
+    pub fn compile_nanos(&self) -> u64 {
+        self.lock().compile_nanos
     }
 
     /// Guest instructions run by the interpreter while waiting for their translation.
     #[inline]
-    pub const fn interpreted(&self) -> u64 {
-        self.interpreted
+    pub fn interpreted(&self) -> u64 {
+        self.interpreted.load(Ordering::Relaxed)
     }
 
     /// Number of blocks translated so far.
     #[inline]
-    pub const fn compiled_blocks(&self) -> u64 {
-        self.compiled_blocks
+    pub fn compiled_blocks(&self) -> u64 {
+        self.lock().compiled_blocks
     }
 
     /// Forgets translations of `[address, address + size)` (self-modifying code,
     /// `ICInvalidateRange`).
-    pub fn invalidate(&mut self, address: u32, size: u32) {
+    pub fn invalidate(&self, address: u32, size: u32) {
+        self.lock().invalidate(address, size);
+    }
+
+    /// Native code for `pc`, read without the lock.
+    #[inline]
+    fn lookup(&self, pc: u32) -> Option<*const u8> {
+        // SAFETY: the table has an entry for every guest page and lives as long as `self`;
+        // see the `Sync` implementation for entries changing meanwhile. An `Option<Box<_>>`
+        // is a nullable pointer; the box stays owned by the table.
+        let page = unsafe {
+            std::ptr::read_volatile(
+                self.pages.add((pc >> PAGE_BITS) as usize).cast::<*const Page>(),
+            )
+        };
+        if page.is_null() {
+            return None;
+        }
+        // SAFETY: a page, once there, lives as long as the table.
+        let code = unsafe { (*page)[((pc >> 2) as usize) & (PAGE_ENTRIES - 1)] };
+        (!code.is_null()).then_some(code)
+    }
+}
+
+impl JitState {
+    fn invalidate(&mut self, address: u32, size: u32) {
         self.generation += 1;
         self.untranslated.clear();
         self.awaiting.clear();
@@ -536,15 +590,17 @@ impl Jit {
             }
         }
     }
+}
 
+impl Jit {
     /// Runs until an event other than [`StepEvent::Continue`] occurs or at
     /// least `budget` instructions have executed. Falls back to the interpreter
-    /// when the bus has no flat memory.
+    /// when the bus has no flat memory. Every core may run at the same time.
     ///
     /// # Errors
     /// See [`step`].
     pub fn run<B: Bus>(
-        &mut self,
+        &self,
         state: &mut CpuState,
         bus: &mut B,
         budget: u64,
@@ -552,7 +608,10 @@ impl Jit {
         let Some(memory) = bus.fast_memory() else {
             return crate::interpreter::run(state, bus, budget);
         };
-        self.collect_if_due(bus);
+        // When another core holds the lock, it takes in the translations itself.
+        if let Ok(mut jit) = self.state.try_lock() {
+            jit.collect_if_due(bus);
+        }
         let budget = budget as i64;
         let mut context =
             HelperContext { bus: std::ptr::from_mut(bus).cast(), result: None, remaining: budget };
@@ -573,13 +632,17 @@ impl Jit {
             }
             // SAFETY: `context.bus` is the live `bus`; nothing else uses it meanwhile.
             let bus = unsafe { &mut *context.bus.cast::<B>() };
-            let count = self.queue(pc, bus)?;
-            self.collect_if_due(bus);
-            if self.synchronous {
-                self.wait_for(pc);
-                if self.lookup(pc).is_some() {
-                    continue;
+            let count = {
+                let mut jit = self.lock();
+                let count = jit.queue(pc, bus)?;
+                jit.collect_if_due(bus);
+                if self.synchronous {
+                    jit.wait_for(pc);
                 }
+                count
+            };
+            if self.synchronous && self.lookup(pc).is_some() {
+                continue;
             }
             if let Some(event) = self.interpret(state, bus, count, &mut context)? {
                 return Ok((event, (budget - context.remaining) as u64));
@@ -590,29 +653,39 @@ impl Jit {
 
     /// Steps through an untranslated block until it ends or translated code is reached.
     fn interpret<B: Bus>(
-        &mut self,
+        &self,
         state: &mut CpuState,
         bus: &mut B,
         count: u32,
         context: &mut HelperContext,
     ) -> Result<Option<StepEvent>, CpuError> {
+        let mut interpreted = 0;
+        let mut result = Ok(None);
         for _ in 0..count {
             let next = state.pc.wrapping_add(4);
-            let event = step(state, bus)?;
+            let event = match step(state, bus) {
+                Ok(event) => event,
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
+            };
             context.remaining -= 1;
-            self.interpreted += 1;
+            interpreted += 1;
             if event != StepEvent::Continue {
-                return Ok(Some(event));
+                result = Ok(Some(event));
+                break;
             }
             if state.pc != next || self.lookup(state.pc).is_some() {
                 break;
             }
         }
-        Ok(None)
+        self.interpreted.fetch_add(interpreted, Ordering::Relaxed);
+        result
     }
 }
 
-impl Drop for Jit {
+impl Drop for JitState {
     fn drop(&mut self) {
         self.board.change(|queues| queues.closed = true);
     }

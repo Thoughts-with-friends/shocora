@@ -1,4 +1,5 @@
 {
+  "language.name": "English",
   "cheats.applied": "Applied ({count} valid codes)",
   "cheats.comments": "// names a code; // disabled turns off the next one.",
   "cheats.format": "One \"address value\" per line, in hexadecimal. The digits of the value decide the width written (2 digits: 8 bit, 4: 16 bit, 8: 32 bit).",
@@ -32,6 +33,10 @@
   "graphics.force60_hint": "A title made for 30 fps whose logic counts frames, such as Twilight Princess HD, then runs at up to double speed.",
   "graphics.background_shaders": "Compile shaders in the background (less stutter)",
   "graphics.background_shaders_hint": "New shaders no longer stop the game.\nWhat uses one may be missing for a moment until it is ready.",
+  "graphics.gpu_thread": "Process GPU commands on their own thread (from the next boot)",
+  "graphics.gpu_thread_hint": "Like Cemu, GPU commands are translated while the CPU goes on.",
+  "graphics.multi_core": "Multi-core CPU (from the next boot)",
+  "graphics.multi_core_hint": "Like Cemu's multi-core mode, each of the Wii U's three cores runs on a thread of its own.\nOff, they take turns on one thread: slower, but the same every time.",
   "graphics.frame_generation": "Frame generation (30 → 60 fps)",
   "graphics.frame_generation_hint": "Makes pictures between frames without changing the game speed.\nDoes not work while xBRZ is on.",
   "graphics.frame_rate": "Frame rate",

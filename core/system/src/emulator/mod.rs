@@ -2,6 +2,7 @@
 mod bus;
 pub mod emu_config;
 mod load;
+mod multi;
 mod runner;
 pub mod state;
 
@@ -45,6 +46,12 @@ pub struct EmuStats {
     pub guest_nanos: u64,
     /// Host time in HLE functions, when profiling.
     pub hle_nanos: u64,
+    /// Host time cores side by side had nothing to run, summed over the cores (profiling).
+    pub idle_nanos: u64,
+    /// Host time cores side by side waited for each other's HLE calls (profiling).
+    pub lock_nanos: u64,
+    /// Host time in translated guest code per core side by side (profiling).
+    pub core_guest_nanos: [u64; CORE_COUNT],
     /// Host time translating guest code.
     pub compile_nanos: u64,
     /// Blocks of guest code translated.
@@ -82,6 +89,8 @@ pub struct Emulator {
     audio_speed: SpeedResampler,
     /// When the next vertical blank is due.
     next_vsync: Option<std::time::Instant>,
+    /// Whether the cores run side by side now (see [`Config::multi_core`]).
+    multi_core_running: bool,
     /// Where time slices ran out, when profiling: a guest spinning on something
     /// shows up as one address taking many.
     slice_ends: std::collections::HashMap<u32, u64>,
@@ -118,6 +127,7 @@ impl Emulator {
             speed: GameSpeed::Normal,
             audio_speed: SpeedResampler::default(),
             next_vsync: None,
+            multi_core_running: false,
             slice_ends: std::collections::HashMap::new(),
         })
     }

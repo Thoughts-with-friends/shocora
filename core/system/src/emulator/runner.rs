@@ -45,6 +45,17 @@ impl Emulator {
             _ => now + frame_time,
         };
         self.next_vsync = Some(deadline + frame_time);
+        // Threads waiting for the GPU look at its progress themselves.
+        self.os.coreinit.threads.gpu_retired = self.gpu.retired_counter();
+        if self.switch_core_mode() {
+            self.run_frame_multi_core(deadline);
+            if let Some(code) = self.os.exit_code {
+                self.status = Status::Exited(code);
+            }
+            self.finish_gx2_frame();
+            self.stats.frames += 1;
+            return;
+        }
         let mut budget = self.config.instructions_per_frame;
         let mut slice = TIME_SLICE;
 
@@ -163,6 +174,18 @@ impl Emulator {
         }
         self.finish_gx2_frame();
         self.stats.frames += 1;
+    }
+
+    /// Goes over to the mode [`Config::multi_core`](super::Config::multi_core) asks for, at
+    /// a moment no guest callback borrows a core. Returns whether the cores run side by side.
+    fn switch_core_mode(&mut self) -> bool {
+        let wanted = self.config.multi_core && self.config.paced && self.config.jit;
+        if wanted != self.multi_core_running && !self.os.callbacks.active() {
+            self.os.coreinit.threads.park(&self.cores, MAIN_CORE);
+            self.os.coreinit.threads.multi_core = wanted;
+            self.multi_core_running = wanted;
+        }
+        self.multi_core_running
     }
 
     /// What happens at every vertical blank.

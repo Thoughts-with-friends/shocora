@@ -104,6 +104,10 @@ fn compress_memory(memory: &Memory) -> Result<Vec<MemoryRun>, EmuError> {
         Ok::<_, wiiu_memory::MemoryError>(done)
     };
     let parts: Vec<_> = std::thread::scope(|scope| {
+        #[allow(
+            clippy::needless_collect,
+            reason = "every worker must start before the first is joined"
+        )]
         let workers: Vec<_> = (0..THREADS).map(|_| scope.spawn(compress)).collect();
         workers.into_iter().map(std::thread::ScopedJoinHandle::join).collect()
     });
@@ -146,14 +150,32 @@ impl Emulator {
     ///
     /// # Errors
     /// Fails if no title runs or the file cannot be written. An older state in the slot stays.
-    pub fn save_state(&self, slot: u8, surfaces: Vec<TextureUpload>) -> Result<PathBuf, EmuError> {
+    pub fn save_state(
+        &mut self,
+        slot: u8,
+        surfaces: Vec<TextureUpload>,
+    ) -> Result<PathBuf, EmuError> {
         let path = self.state_path(slot)?;
+        if self.multi_core_running {
+            // Side by side, each core holds its thread in registers of its own: a state keeps
+            // them in the threads, which either mode can go on from.
+            if self.os.callbacks.active() {
+                return Err(state_error(&path, "a guest callback is running; try again"));
+            }
+            self.os.coreinit.threads.park(&self.cores, super::MAIN_CORE);
+            self.multi_core_running = false;
+        }
+        // Waits for the GPU thread, which may still write guest memory.
+        let gpu = self
+            .gpu
+            .save_state(surfaces)
+            .ok_or_else(|| state_error(&path, "the GPU thread stopped"))?;
         let machine = MachineRef {
             cores: &self.cores,
             os: &self.os,
             registry: self.os.registry.save_state(),
             iosu: &self.iosu,
-            gpu: self.gpu.save_state(surfaces),
+            gpu,
         };
         let machine = postcard::to_stdvec(&machine).map_err(|e| state_error(&path, e))?;
         let file = StateFile {
@@ -206,7 +228,9 @@ impl Emulator {
         }
         self.os.registry.restore_state(machine.registry).map_err(|e| state_error(&path, e))?;
 
-        // The file is good: from here on the machine is replaced.
+        // The file is good: from here on the machine is replaced. The GPU thread must be done
+        // with the old memory first.
+        self.gpu.wait_idle();
         let regions: Vec<_> = self.memory.regions().collect();
         for region in regions {
             self.memory.fill(region.start, region.size, 0)?;
@@ -231,6 +255,9 @@ impl Emulator {
         self.gpu.restore_state(machine.gpu, self.config.resolution_factor);
         self.audio_speed = SpeedResampler::default();
         self.next_vsync = None;
+        // States hold parked threads, or the turns of one host thread: either way, the
+        // cores go side by side again from there.
+        self.multi_core_running = false;
         Ok(path)
     }
 }

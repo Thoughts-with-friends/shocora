@@ -41,6 +41,14 @@ pub struct Config {
     pub dlc_dirs: Vec<PathBuf>,
     /// Let titles that refuse to start without an update start without one.
     pub skip_update_check: bool,
+    /// Run the GPU's command processor on a thread of its own, like Cemu: the guest goes on
+    /// while its draws are translated. Off, they are translated when the title flushes them.
+    pub gpu_thread: bool,
+    /// Run the three cores side by side, each on a host thread of its own, like Cemu's
+    /// multi-core mode. Off, they take turns on one host thread, which is deterministic
+    /// but a third as fast for a title keeping every core busy. Only with
+    /// [`Self::paced`].
+    pub multi_core: bool,
 }
 
 impl Default for Config {
@@ -62,6 +70,8 @@ impl Default for Config {
             update_dirs: wiiu_title::update::default_library_dirs(AddOnKind::Update),
             dlc_dirs: wiiu_title::update::default_library_dirs(AddOnKind::Dlc),
             skip_update_check: true,
+            gpu_thread: true,
+            multi_core: true,
         }
     }
 }

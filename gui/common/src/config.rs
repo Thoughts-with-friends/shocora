@@ -60,6 +60,11 @@ pub struct AppConfig {
     pub skip_update_check: bool,
     /// Show the GamePad's screen in a window of its own.
     pub gamepad_window: bool,
+    /// Run the console's three cores on host threads of their own, like Cemu's multi-core
+    /// mode (from the next boot).
+    pub multi_core: bool,
+    /// Translate the GPU's commands on a thread of its own (from the next boot).
+    pub gpu_thread: bool,
 }
 
 impl Default for AppConfig {
@@ -89,6 +94,8 @@ impl Default for AppConfig {
             dlc_dirs: Vec::new(),
             skip_update_check: true,
             gamepad_window: false,
+            multi_core: true,
+            gpu_thread: true,
         }
     }
 }
@@ -144,6 +151,8 @@ impl AppConfig {
             update_dirs: library_dirs(&self.update_dirs, AddOnKind::Update),
             dlc_dirs: library_dirs(&self.dlc_dirs, AddOnKind::Dlc),
             skip_update_check: self.skip_update_check,
+            multi_core: self.multi_core,
+            gpu_thread: self.gpu_thread,
             ..wiiu_emu::Config::default()
         }
     }

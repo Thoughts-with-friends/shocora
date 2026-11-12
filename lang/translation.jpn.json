@@ -1,4 +1,5 @@
 {
+  "language.name": "日本語",
   "cheats.applied": "適用しました（有効なコード: {count}）",
   "cheats.comments": "// で名前を付け、// disabled で次のコードを無効にできます。",
   "cheats.format": "「アドレス 値」を 16 進数で 1 行ずつ。値の桁数で書き込み幅が決まります（2 桁: 8bit、4 桁: 16bit、8 桁: 32bit）。",
@@ -32,6 +33,10 @@
   "graphics.force60_hint": "トワイライトプリンセス HD のように処理がフレーム数で進む 30 fps 用のタイトルは、最大で倍速になります。",
   "graphics.background_shaders": "シェーダーを裏で作る（カクつき軽減）",
   "graphics.background_shaders_hint": "新しいシェーダーの生成で止まらなくなります。\n生成が終わるまで、それを使う物が一瞬表示されないことがあります。",
+  "graphics.gpu_thread": "GPU コマンドを別スレッドで処理（次回起動から）",
+  "graphics.gpu_thread_hint": "Cemu と同じく、GPU コマンドの変換を CPU と並行して行います。",
+  "graphics.multi_core": "マルチコア CPU（次回起動から）",
+  "graphics.multi_core_hint": "Cemu のマルチコアモードと同じく、Wii U の 3 つのコアをそれぞれ別スレッドで動かします。\nオフにすると 1 スレッドで交代に動かします（遅いが動作が一定）。",
   "graphics.frame_generation": "フレーム生成（30 → 60 fps）",
   "graphics.frame_generation_hint": "ゲーム速度を変えずに、フレームの間の絵を作って表示します。\nxBRZ の使用中は働きません。",
   "graphics.frame_rate": "フレームレート",

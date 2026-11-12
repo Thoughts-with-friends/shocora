@@ -199,16 +199,16 @@ pub(super) fn execute<B: Bus>(op: Opcode, i: Instr, s: &mut CpuState, bus: &mut 
         }
         O::Stwcx => {
             let ea = ea_x(s, i);
-            // Threads time-share one host core and each keeps its reservation across a switch:
-            // like Cemu, a word changed meanwhile fails the store, or that update would be lost.
+            // Like Cemu, a reservation is the value `lwarx` read: a word changed meanwhile, by
+            // this core or another, fails the store, or that update would be lost. The compare
+            // and the store are one atomic step, as other cores may run at the same time.
             let reserved = s.reservation.take();
             let success = match reserved {
-                Some((address, value)) if address == ea => bus.read_u32(ea)? == value,
+                Some((address, value)) if address == ea => {
+                    bus.compare_exchange_u32(ea, value, s.gpr[rd])?
+                }
                 _ => false,
             };
-            if success {
-                bus.write_u32(ea, s.gpr[rd])?;
-            }
             s.set_cr_field(0, (u32::from(success) << 1) | u32::from(s.xer_so));
         }
         O::Lswi | O::Lswx | O::Stswi | O::Stswx => {

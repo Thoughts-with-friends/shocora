@@ -161,12 +161,13 @@ impl Emulator {
         self.os.gx2.forced_swap_interval = self.config.swap_interval;
         self.os.gx2.min_swap_interval = self.config.min_swap_interval.unwrap_or(0);
         self.os.coreinit.shared_data.fonts_dir.clone_from(&self.config.fonts_dir);
-        self.gpu = Gpu::new();
+        self.gpu = if self.config.gpu_thread { Gpu::threaded() } else { Gpu::new() };
         self.gpu.reset_renderer();
         self.gpu.set_resolution_factor(self.config.resolution_factor);
         self.iosu = iosu;
         self.stats = EmuStats::default();
         self.next_vsync = None;
+        self.multi_core_running = false;
 
         let boot = self.os.boot(&mut self.memory, name, rpx)?;
         start_main_thread(&mut self.cores[MAIN_CORE], &boot);

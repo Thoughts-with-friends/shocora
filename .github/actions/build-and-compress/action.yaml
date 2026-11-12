@@ -80,6 +80,11 @@ runs:
           "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe" `
           "build/${{ inputs.bin_name || inputs.app_name }}.exe"
 
+    # Translations other than English are read at run time from `lang` next to the program.
+    - name: Copy translations
+      shell: bash
+      run: cp -r lang build/lang
+
     - name: Compress Unix
       if: runner.os != 'Windows'
       shell: bash
@@ -87,7 +92,8 @@ runs:
         tar \
           -C build \
           -czf "${{ inputs.asset_name }}.tar.gz" \
-          "${{ inputs.bin_name || inputs.app_name }}"
+          "${{ inputs.bin_name || inputs.app_name }}" \
+          lang
 
     - name: Compress Windows
       if: runner.os == 'Windows'
@@ -100,5 +106,5 @@ runs:
         }
 
         Compress-Archive `
-          -Path "build/${{ inputs.bin_name || inputs.app_name }}.exe" `
+          -Path "build/${{ inputs.bin_name || inputs.app_name }}.exe", "build/lang" `
           -DestinationPath $assetName

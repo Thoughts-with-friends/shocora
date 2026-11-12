@@ -35,6 +35,10 @@
 //! * `SHOCORA_SPEED=0.5|2|3|4`: how fast the title runs.
 //! * `SHOCORA_RES=n`: draws the title's pictures `n` times larger, up to 10240 wide.
 //! * `SHOCORA_BACKGROUND_SHADERS`: compiles shaders in the background, as the GUI does.
+//! * `SHOCORA_SYNC_GPU`: runs the GPU's command processor when the title flushes, instead of
+//!   on a thread of its own.
+//! * `SHOCORA_SINGLE_CORE`: the three cores take turns on one host thread instead of running
+//!   side by side.
 //! * `SHOCORA_NO_PATCHES`: leaves titles' code as it is (no busy-loop patches).
 //! * `SHOCORA_NET_HOST="ip[/prefix],port[,password]"`: lets a second player join (with
 //!   `SHOCORA_SHOTS`); see `netclient`.
@@ -366,6 +370,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         profile: std::env::var("SHOCORA_PROFILE").is_ok_and(|value| value != "flips"),
         states_dir: std::env::var_os("SHOCORA_STATES_DIR")
             .map_or_else(|| PathBuf::from("states"), PathBuf::from),
+        gpu_thread: std::env::var_os("SHOCORA_SYNC_GPU").is_none(),
+        multi_core: std::env::var_os("SHOCORA_SINGLE_CORE").is_none(),
         ..Config::default()
     };
     let mut emu = Emulator::new(config)?;
@@ -892,10 +898,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let ms = |now: u64, before: u64| now.saturating_sub(before) / 1_000_000;
                 let (first, optimize) = emu.jit_queue_lengths();
                 println!(
-                    "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize",
+                    "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, idle {} ms, lock {} ms, GPU thread {} ms, per core {:?} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize",
                     (stats.instructions - last_stats.instructions) / 1_000_000,
                     ms(stats.guest_nanos, last_stats.guest_nanos),
                     ms(stats.hle_nanos, last_stats.hle_nanos),
+                    ms(stats.idle_nanos, last_stats.idle_nanos),
+                    ms(stats.lock_nanos, last_stats.lock_nanos),
+                    ms(stats.gpu.busy_nanos, last_stats.gpu.busy_nanos),
+                    std::array::from_fn::<u64, 3, _>(|core| ms(
+                        stats.core_guest_nanos[core],
+                        last_stats.core_guest_nanos[core]
+                    )),
                     ms(stats.compile_nanos, last_stats.compile_nanos),
                     stats.compiled_blocks - last_stats.compiled_blocks,
                 );

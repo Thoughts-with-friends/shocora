@@ -46,6 +46,24 @@ pub trait Bus {
         self.read_u32(address)
     }
 
+    /// Stores `new` at `address` if it still holds `expected`, in one step that other cores
+    /// cannot come between (`stwcx.`). Returns whether it stored.
+    ///
+    /// # Errors
+    /// Fails if `address` is not backed by memory.
+    fn compare_exchange_u32(
+        &mut self,
+        address: u32,
+        expected: u32,
+        new: u32,
+    ) -> Result<bool, BusError> {
+        let matches = self.read_u32(address)? == expected;
+        if matches {
+            self.write_u32(address, new)?;
+        }
+        Ok(matches)
+    }
+
     /// Host address of guest address 0 when the guest's memory is flat, which
     /// lets the JIT access it directly. Guest bugs that touch unmapped memory
     /// then fault in the host instead of reporting a [`BusError`].

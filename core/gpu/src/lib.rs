@@ -22,7 +22,9 @@ pub mod regs;
 pub mod render;
 pub mod shader;
 pub mod tiling;
+mod worker;
 
 pub use error::GpuError;
-pub use gpu::{Gpu, GpuState, GpuStats};
+pub use gpu::{GpuState, GpuStats};
 pub use render::{RenderBackend, RenderCommand, Screen};
+pub use worker::{Gpu, WriteNotifier};

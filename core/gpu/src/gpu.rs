@@ -1,4 +1,3 @@
-use crate::render::TextureUpload;
 use wiiu_interrupt::PendingInterrupts;
 use wiiu_memory::Memory;
 
@@ -7,6 +6,7 @@ use crate::{
     command::{CommandProcessor, executor::CpContext},
     display::Display,
     latte::Latte,
+    render::TextureUpload,
 };
 
 /// Counters exposed to the front end.
@@ -17,16 +17,20 @@ pub struct GpuStats {
     pub flips: u64,
     /// Draws that could not be issued (no shaders, geometry shaders, ...).
     pub skipped_draws: u64,
+    /// Host time the GPU thread spent on command buffers.
+    pub busy_nanos: u64,
 }
 
-/// Latte: owns the command processor and display controller.
+/// Latte itself: the command processor and display controller, run by [`Gpu`](crate::Gpu) on the
+/// emulator's thread or on one of its own.
 #[derive(Debug, Default)]
-pub struct Gpu {
+pub(crate) struct Engine {
     cp: CommandProcessor,
     display: Display,
     latte: Latte,
     interrupts: PendingInterrupts,
-    timestamp: u64,
+    /// Command buffers executed: the retired timestamp.
+    pub(crate) timestamp: u64,
 }
 
 /// What a saved state keeps of the GPU. Its caches fill again from guest memory.
@@ -35,18 +39,13 @@ pub struct GpuState {
     cp: CommandProcessor,
     display: Display,
     interrupts: PendingInterrupts,
-    timestamp: u64,
+    pub(crate) timestamp: u64,
     color_targets: [crate::latte::SurfaceWords; 8],
     depth_target: crate::latte::SurfaceWords,
     surfaces: Vec<TextureUpload>,
 }
 
-impl Gpu {
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl Engine {
     /// Asks the renderer for what the GPU drew, which guest memory does not hold. The answer
     /// comes once the commands queued so far have reached the renderer; without one, the
     /// receiver just reports its sender gone.
@@ -142,12 +141,6 @@ impl Gpu {
         self.latte.note_cpu_write(address, size);
     }
 
-    /// Drains interrupts raised since the last call.
-    #[inline]
-    pub fn take_interrupts(&mut self) -> PendingInterrupts {
-        std::mem::take(&mut self.interrupts)
-    }
-
     #[inline]
     pub const fn registers(&self) -> &crate::regs::RegisterFile {
         &self.cp.regs
@@ -159,6 +152,7 @@ impl Gpu {
             draws: self.cp.stats.draws,
             flips: self.display.flips(),
             skipped_draws: self.latte.skipped_draws,
+            busy_nanos: 0,
         }
     }
 }

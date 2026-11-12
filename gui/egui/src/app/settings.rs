@@ -94,6 +94,20 @@ impl ShocoraApp {
             self.presenter.set_background_shaders(background);
             self.save_config();
         }
+        if ui
+            .checkbox(&mut self.config.gpu_thread, tr("graphics.gpu_thread"))
+            .on_hover_text(tr("graphics.gpu_thread_hint"))
+            .changed()
+        {
+            self.save_config();
+        }
+        if ui
+            .checkbox(&mut self.config.multi_core, tr("graphics.multi_core"))
+            .on_hover_text(tr("graphics.multi_core_hint"))
+            .changed()
+        {
+            self.save_config();
+        }
         ui.separator();
         ui.label(tr("graphics.api"));
         for api in GraphicsApi::ALL {
@@ -123,11 +137,11 @@ impl ShocoraApp {
     fn general_settings(&mut self, ui: &mut egui::Ui) {
         ui.label(tr("general.language"));
         ui.horizontal(|ui| {
-            for (code, name) in lang::LANGUAGES {
+            for (code, name) in lang::languages() {
                 let chosen = self.config.language == code;
                 if ui.radio(chosen, name).clicked() && !chosen {
-                    self.config.language = code.to_owned();
-                    lang::set_language(code);
+                    lang::set_language(&code);
+                    self.config.language = code;
                     self.save_config();
                 }
             }

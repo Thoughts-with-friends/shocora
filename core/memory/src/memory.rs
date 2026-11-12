@@ -83,6 +83,17 @@ impl Memory {
         Ok(())
     }
 
+    /// Maps what `other`, a [`Self::share`] of this memory, mapped since. Its pages are
+    /// already there.
+    pub fn adopt_regions(&mut self, other: &Self) {
+        for region in &other.regions {
+            if !self.regions.contains(region) {
+                // Regions of one address space never overlap: the other handle checked.
+                let _ = self.map(*region);
+            }
+        }
+    }
+
     /// Regions currently mapped, in address order.
     #[inline]
     pub fn regions(&self) -> impl Iterator<Item = Region> + '_ {
@@ -98,8 +109,18 @@ impl Memory {
     ///
     /// Only mapped regions may be dereferenced; see [`Self::is_mapped`].
     #[inline]
-    pub const fn host_base(&self) -> *mut u8 {
+    pub fn host_base(&self) -> *mut u8 {
         self.space.base()
+    }
+
+    /// Another handle on the same guest memory, for a thread of its own (the GPU's): writes
+    /// through either are seen by both, like on the console, where Espresso and Latte share
+    /// MEM1 and MEM2. Who writes what when is up to the guest, as there.
+    ///
+    /// Regions mapped later through one handle are not known to the other.
+    #[must_use]
+    pub fn share(&self) -> Self {
+        Self { space: self.space.clone(), regions: self.regions.clone() }
     }
 
     #[inline]

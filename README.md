@@ -89,8 +89,8 @@ cargo xtask icon   # gui/egui/assets/shocora.svg -> shocora.png, shocora.ico
   - `skip_update_check = true` (default) lets titles that refuse to start without an update (e.g. *Breath of the Wild* 0.9.0) start anyway.
 - **Shader Cache**: Compiled GPU shaders are saved in `shader_cache/` to minimize stuttering on subsequent runs.
 - **Localization**: Change languages in **Settings > General**.
-  - Built-in translations: `lang/translation.eng.json` and `lang/translation.jpn.json`.
-  - Placing a custom `lang` folder in the working directory takes precedence, allowing translation edits without rebuilding.
+  - English is built into the executable and is the default and fallback. Every other language is read at run time from `lang/translation.<code>.json` in the `lang` folder next to the executable (or, failing that, in the working directory), so texts can be edited without rebuilding. A `lang/translation.eng.json` there overrides the built-in English.
+  - **Adding a language**: copy `lang/translation.eng.json` to `lang/translation.<code>.json` (e.g. `translation.fra.json`), translate the values keeping the keys (an LLM can do it), and set `"language.name"` to the language's own name. It appears in **Settings > General**; missing texts show in English.
 
 ---
 

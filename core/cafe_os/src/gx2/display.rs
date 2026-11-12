@@ -36,6 +36,7 @@ fn gx2_init(ctx: &mut HleContext<'_>, _attributes: GuestPtr<u32>) {
 #[hle_export(lib = "gx2", name = "GX2Shutdown")]
 fn gx2_shutdown(ctx: &mut HleContext<'_>) -> Result<(), HleError> {
     super::flush(ctx)?;
+    ctx.gpu.wait_idle();
     ctx.os.gx2.initialized = false;
     Ok(())
 }

@@ -16,6 +16,7 @@
 //! other thread exists.
 pub mod aoc;
 pub mod coreinit;
+pub mod fast;
 pub mod gx2;
 pub mod hle;
 pub mod nn;
@@ -152,7 +153,23 @@ impl CafeOs {
     pub fn current_thread_blocked(&self) -> bool {
         self.coreinit.threads.current_is_blocked()
     }
+
+    /// Whether a guest callback borrows `core`. Side by side, callbacks run on the main
+    /// core only; otherwise the one core there is runs them.
+    #[inline]
+    pub const fn callback_active_on(&self, core: u32) -> bool {
+        self.callbacks.active() && (!self.coreinit.threads.multi_core || core == CALLBACK_CORE)
+    }
+
+    /// Whether callbacks may start on `core`.
+    #[inline]
+    pub const fn runs_callbacks(&self, core: u32) -> bool {
+        !self.coreinit.threads.multi_core || core == CALLBACK_CORE
+    }
 }
+
+/// The core running guest callbacks (alarms, completions) when the cores run side by side.
+pub const CALLBACK_CORE: u32 = 1;
 
 impl CafeOs {
     /// Starts the next queued guest callback on `cpu`, if the core is free.
@@ -164,7 +181,10 @@ impl CafeOs {
         cpu: &mut wiiu_cpu::CpuState,
         memory: &mut wiiu_memory::Memory,
     ) -> Result<bool, wiiu_memory::MemoryError> {
-        if self.callbacks.active() || !self.callbacks.has_pending() {
+        if self.callbacks.active()
+            || !self.callbacks.has_pending()
+            || !self.runs_callbacks(cpu.core_id())
+        {
             return Ok(false);
         }
         let stub =
@@ -196,7 +216,8 @@ impl CafeOs {
         if self.callbacks.active() || self.start_callback(cpu, memory)? {
             return Ok(());
         }
-        if self.current_thread_blocked() {
+        // Blocked, or none at all after the threads were parked.
+        if !self.coreinit.threads.current_is_running() {
             self.schedule(cpu, memory, coreinit::thread::Reschedule::Block);
         }
         Ok(())

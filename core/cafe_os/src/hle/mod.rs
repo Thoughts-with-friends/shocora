@@ -72,7 +72,7 @@ pub fn dispatch(ctx: &mut HleContext<'_>, index: u32) -> HleResult {
         (ctx.cpu.gpr[3], ctx.cpu.gpr[4], ctx.cpu.fpr[1]) = arguments;
     }
     // Scheduling waits until no callback is borrowing the core.
-    if !ctx.os.callbacks.active() {
+    if !ctx.os.callback_active_on(ctx.cpu.core_id()) {
         // Blocking/yielding calls ask for a scheduling decision once they return.
         if let Some(mode) = ctx.os.coreinit.threads.take_request() {
             ctx.os.schedule(ctx.cpu, ctx.memory, mode);

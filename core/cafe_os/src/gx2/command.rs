@@ -1,8 +1,9 @@
 //! Command submission, display lists, timestamps, flips and events (port of
 //! Cemu's GX2_Command, GX2_Event and the swap logic of GX2.cpp).
 //!
-//! The GPU executes everything synchronously at flush time, so a timestamp is
-//! retired as soon as it is submitted.
+//! A flush hands the commands to the GPU, which may run on a thread of its own: a timestamp
+//! is retired once the GPU has executed its command buffer, and the CPU waits for that only
+//! where a title asks to (`GX2DrawDone`, `GX2WaitTimeStamp`).
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_gpu::command::{opcode, pm4::type3_header};
@@ -52,6 +53,31 @@ fn wake(os: &mut crate::CafeOs, queue: u32) {
     os.coreinit.threads.request(Reschedule::Priority);
 }
 
+/// Waits until the GPU has executed command buffer `timestamp`. The thread blocks, so the
+/// other threads and cores go on meanwhile; once the GPU is there, the HLE call starts over,
+/// and this returns `false`. Returns whether the thread blocked.
+fn wait_for_gpu(ctx: &mut HleContext<'_>, timestamp: u64) -> bool {
+    if ctx
+        .os
+        .coreinit
+        .threads
+        .current_mut()
+        .is_some_and(|t| matches!(t.woke_from, Some(Wait::Gpu(_))))
+    {
+        ctx.os.coreinit.threads.take_woke_from();
+    }
+    if ctx.gpu.retired_timestamp() >= timestamp {
+        return false;
+    }
+    // A callback borrows the core of a thread it must not block.
+    if ctx.os.callbacks.active() || ctx.os.coreinit.threads.current_mut().is_none() {
+        ctx.gpu.wait_timestamp(timestamp);
+        return false;
+    }
+    block(ctx, Wait::Gpu(timestamp));
+    true
+}
+
 fn notify_event(os: &mut crate::CafeOs, kind: u32) {
     let (function, user_data) =
         os.gx2.event_callbacks.get(kind as usize).copied().unwrap_or((0, 0));
@@ -98,6 +124,7 @@ fn gx2_flush(ctx: &mut HleContext<'_>) -> Result<(), HleError> {
 #[hle_export(lib = "gx2", name = "GX2DrawDone")]
 fn gx2_draw_done(ctx: &mut HleContext<'_>) -> Result<bool, HleError> {
     flush(ctx)?;
+    wait_for_gpu(ctx, ctx.gpu.submitted_timestamp());
     Ok(true)
 }
 
@@ -135,9 +162,17 @@ fn gx2_swap_scan_buffers(ctx: &mut HleContext<'_>) -> Result<(), HleError> {
             thread.woken_from_queue = None;
         }
     } else {
+        // A GPU thread frames behind holds the title back here, as a full command ring does.
+        if let Some(timestamp) = ctx.gpu.frame_wait() {
+            flush(ctx)?;
+            if wait_for_gpu(ctx, timestamp) {
+                return Ok(());
+            }
+        }
         ctx.os.gx2.flip_requests += 1;
         ctx.os.gx2.emit(opcode::HLE_SWAP_SCAN_BUFFERS, &[]);
         flush(ctx)?;
+        ctx.gpu.end_frame();
     }
     if ctx.os.gx2.flip_requests.wrapping_sub(ctx.os.gx2.flips_executed) > MAX_PENDING_FLIPS {
         block(ctx, Wait::Cond(FLIP_QUEUE));
@@ -203,20 +238,30 @@ fn gx2_get_last_submitted_time_stamp(ctx: &mut HleContext<'_>) -> u64 {
     ctx.os.gx2.timestamp
 }
 
+/// GX2 counts the command buffers it flushed, the GPU those it was given: the same ones,
+/// but the GPU's count may start elsewhere (a saved state of another build).
+fn gpu_timestamp(ctx: &HleContext<'_>, time_stamp: u64) -> u64 {
+    let offset = ctx.gpu.submitted_timestamp().wrapping_sub(ctx.os.gx2.timestamp);
+    time_stamp.wrapping_add(offset)
+}
+
 #[hle_export(lib = "gx2", name = "GX2GetRetiredTimeStamp")]
 fn gx2_get_retired_time_stamp(ctx: &mut HleContext<'_>) -> Result<u64, HleError> {
     flush(ctx)?;
-    Ok(ctx.os.gx2.timestamp)
+    let behind = ctx.gpu.submitted_timestamp().saturating_sub(ctx.gpu.retired_timestamp());
+    Ok(ctx.os.gx2.timestamp.saturating_sub(behind))
 }
 
 #[hle_export(lib = "gx2", name = "GX2WaitTimeStamp")]
-fn gx2_wait_time_stamp(ctx: &mut HleContext<'_>, _time_stamp: u64) -> Result<bool, HleError> {
+fn gx2_wait_time_stamp(ctx: &mut HleContext<'_>, time_stamp: u64) -> Result<bool, HleError> {
     flush(ctx)?;
+    wait_for_gpu(ctx, gpu_timestamp(ctx, time_stamp));
     Ok(true)
 }
 
 /// Value written when the command reaches the pipe; flushed immediately, so
-/// polling guests make progress.
+/// polling guests make progress. The GPU writes it after the commands before it, which a
+/// title may be waiting for.
 #[hle_export(lib = "gx2", name = "GX2SubmitUserTimeStamp")]
 fn gx2_submit_user_time_stamp(
     ctx: &mut HleContext<'_>,
@@ -225,10 +270,17 @@ fn gx2_submit_user_time_stamp(
     kind: u32,
     interrupt: u32,
 ) -> Result<(), HleError> {
-    flush(ctx)?;
     // MEM_WRITE stores the low dword first; titles compare the words in that order.
-    ctx.memory.write_u32(out, value as u32)?;
-    ctx.memory.write_u32(out + 4, (value >> 32) as u32)?;
+    let (low, high) = (value as u32, (value >> 32) as u32);
+    if let Some(at) = wiiu_mem_addr::effective_to_physical(out) {
+        ctx.os.gx2.emit(opcode::MEM_WRITE, &[at, 0, low, high]);
+        flush(ctx)?;
+    } else {
+        flush(ctx)?;
+        ctx.gpu.wait_idle();
+        ctx.memory.write_u32(out, low)?;
+        ctx.memory.write_u32(out + 4, high)?;
+    }
     if interrupt != 0 {
         let kind = if kind == 0 { event::TIMESTAMP_TOP } else { event::TIMESTAMP_BOTTOM };
         notify_event(ctx.os, kind);

@@ -8,6 +8,10 @@ pub enum GpuError {
     IndirectTooDeep(u32),
     #[error("physical address {0:#010x} is not backed by MEM1/MEM2")]
     BadPhysicalAddress(u32),
+    #[error("the GPU thread stopped")]
+    Stopped,
+    #[error("the GPU thread panicked: {0}")]
+    Panicked(String),
     #[error(transparent)]
     Memory(#[from] MemoryError),
 }

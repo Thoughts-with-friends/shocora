@@ -6,7 +6,7 @@ use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError};
 
-const CACHE_LINE: u32 = 32;
+pub(crate) const CACHE_LINE: u32 = 32;
 /// Retail console (`OSGetConsoleType`).
 const CONSOLE_TYPE_RETAIL: u32 = 0x0300_0050;
 /// Latte hardware version reported by `bspGetHardwareVersion`.

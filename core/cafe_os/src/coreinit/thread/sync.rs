@@ -53,13 +53,18 @@ pub(crate) fn lock(ctx: &mut HleContext<'_>, key: u32) {
 }
 
 pub(crate) fn unlock(ctx: &mut HleContext<'_>, key: u32) {
-    let me = ctx.os.coreinit.threads.current;
-    if let Some(state) = ctx.os.coreinit.threads.mutexes.get_mut(&key) {
-        if state.owner == me && state.count > 0 {
-            state.count -= 1;
-            if state.count == 0 {
-                state.owner = 0;
-                ctx.os.coreinit.threads.request(Reschedule::Priority);
+    let scheduler = &mut ctx.os.coreinit.threads;
+    let me = scheduler.current;
+    let Some(state) = scheduler.mutexes.get_mut(&key) else { return };
+    if state.owner == me && state.count > 0 {
+        state.count -= 1;
+        if state.count == 0 {
+            state.owner = 0;
+            // Most releases find nobody waiting: a scheduling decision would be wasted on them,
+            // and titles release locks a million times a second.
+            let waited = Wait::Mutex(key);
+            if scheduler.threads.values().any(|t| t.state == ThreadState::Waiting(waited)) {
+                scheduler.request(Reschedule::Priority);
             }
         }
     }

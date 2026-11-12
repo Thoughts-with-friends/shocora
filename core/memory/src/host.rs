@@ -2,7 +2,7 @@
 //!
 //! With the whole guest address space at one host base, the JIT turns a guest
 //! access into `base + address`.
-use std::ptr::NonNull;
+use std::{ptr::NonNull, sync::Arc};
 
 /// Size of the guest's address space.
 pub const ADDRESS_SPACE: usize = 1 << 32;
@@ -64,16 +64,32 @@ mod os {
     }
 }
 
-/// The reservation backing one guest address space.
+/// The 4 GiB reservation itself; released when the last [`AddressSpace`] sharing it goes.
 #[derive(Debug)]
-pub struct AddressSpace {
+struct Reservation {
     base: NonNull<u8>,
 }
 
-// SAFETY: the reservation is plain memory owned exclusively by this value.
-unsafe impl Send for AddressSpace {}
-// SAFETY: shared access only reads through `base`; writes need `&mut`.
-unsafe impl Sync for AddressSpace {}
+// SAFETY: the reservation is plain memory; who may write is decided by the owners of
+// `AddressSpace` (the emulator's CPU and the GPU thread, like the console's).
+unsafe impl Send for Reservation {}
+// SAFETY: see above.
+unsafe impl Sync for Reservation {}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        os::release(self.base.as_ptr(), ADDRESS_SPACE);
+    }
+}
+
+/// The reservation backing one guest address space.
+///
+/// Clones share the reservation: the GPU thread sees the same bytes as the CPU, as Latte
+/// and Espresso share MEM1 and MEM2 on the console.
+#[derive(Debug, Clone)]
+pub struct AddressSpace {
+    reservation: Arc<Reservation>,
+}
 
 impl AddressSpace {
     /// Reserves the address space. Nothing is accessible until [`Self::commit`].
@@ -85,12 +101,12 @@ impl AddressSpace {
     pub fn new() -> Self {
         let base = NonNull::new(os::reserve(ADDRESS_SPACE))
             .expect("cannot reserve the guest address space");
-        Self { base }
+        Self { reservation: Arc::new(Reservation { base }) }
     }
 
     #[inline]
-    pub const fn base(&self) -> *mut u8 {
-        self.base.as_ptr()
+    pub fn base(&self) -> *mut u8 {
+        self.reservation.base.as_ptr()
     }
 
     /// Makes `[start, start + size)` readable and writable (zeroed on first commit).
@@ -102,7 +118,7 @@ impl AddressSpace {
         let first = start as usize & !(PAGE - 1);
         let last = (start as usize + size as usize + PAGE - 1) & !(PAGE - 1);
         // SAFETY: stays inside the 4 GiB reservation.
-        let address = unsafe { self.base.as_ptr().add(first) };
+        let address = unsafe { self.base().add(first) };
         assert!(os::commit(address, last - first), "cannot commit {size:#x} bytes of guest memory");
     }
 }
@@ -110,11 +126,5 @@ impl AddressSpace {
 impl Default for AddressSpace {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Drop for AddressSpace {
-    fn drop(&mut self) {
-        os::release(self.base.as_ptr(), ADDRESS_SPACE);
     }
 }

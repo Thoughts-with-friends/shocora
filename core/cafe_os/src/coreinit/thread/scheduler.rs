@@ -1,7 +1,11 @@
 //! Cooperative scheduler for guest threads.
 //!
-//! All guest threads share the emulated main core's register file: the
-//! scheduler saves the running thread's [`CpuState`] and loads another one.
+//! On a single host thread, all guest threads share the emulated main core's register file:
+//! the scheduler saves the running thread's [`CpuState`] and loads another one, and the three
+//! cores take turns. With [`Scheduler::multi_core`], each core runs on a host thread of its
+//! own, like Cemu's multi-core mode: every core has its own register file and current thread,
+//! and runs only the threads that belong to it. The scheduler is then used under a lock,
+//! by one core at a time, between [`Scheduler::enter_core`] and [`Scheduler::leave_core`].
 //!
 //! Blocking calls are *restartable*: an HLE function that must wait records a
 //! [`Wait`], rewinds the PC onto its call stub and asks for a reschedule. When
@@ -36,6 +40,8 @@ pub enum Wait {
     Cond(u32),
     /// Every core in `mask` to reach an `OSRendezvous`.
     Rendezvous { rendezvous: u32, mask: u32 },
+    /// The GPU to execute a command buffer (`GX2DrawDone`, timestamps, a full queue).
+    Gpu(u64),
 }
 
 /// Guest-visible lifecycle of a thread.
@@ -163,16 +169,80 @@ pub struct Scheduler {
     pub mutexes: HashMap<u32, MutexState>,
     pending: Option<Reschedule>,
     run_counter: u64,
+    /// The current thread of each core (0: none), when they run side by side.
+    #[serde(default)]
+    pub cores: [u32; CORE_COUNT as usize],
+    /// Whether the cores run side by side, each on a host thread of its own.
+    #[serde(skip)]
+    pub multi_core: bool,
+    /// Counts scheduling requests: a change means a thread may have become runnable, which
+    /// idle cores want to hear about.
+    #[serde(skip)]
+    pub requests: u64,
+    /// The GPU's retired timestamp, for [`Wait::Gpu`]; without it, the GPU is never behind.
+    #[serde(skip)]
+    pub gpu_retired: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 
 impl Scheduler {
     /// Registers the thread that is already running on the core.
     pub fn adopt_running(&mut self, thread: u32, priority: i32) {
         let mut record = ThreadRecord::new(CpuState::new(1), priority);
+        let core = record.context.core_id();
         record.state = ThreadState::Running;
         record.suspend_count = 0;
         self.threads.insert(thread, record);
         self.current = thread;
+        if let Some(slot) = self.cores.get_mut(core as usize) {
+            *slot = thread;
+        }
+    }
+
+    /// Makes `core`'s current thread the current one, for what this core does next.
+    #[inline]
+    pub fn enter_core(&mut self, core: u32) {
+        if self.multi_core {
+            self.current = self.cores.get(core as usize).copied().unwrap_or(0);
+        }
+    }
+
+    /// Remembers the current thread as `core`'s.
+    #[inline]
+    pub fn leave_core(&mut self, core: u32) {
+        if self.multi_core {
+            if let Some(slot) = self.cores.get_mut(core as usize) {
+                *slot = self.current;
+            }
+        }
+    }
+
+    /// Puts the registers of every running thread back into its record, so that no thread
+    /// is current: the form a switch between one host thread and three starts from, and
+    /// that saved states of side-by-side cores keep. `cpus` are the cores' registers; on one
+    /// host thread, `main_core`'s are the running thread's.
+    pub fn park(&mut self, cpus: &[CpuState], main_core: usize) {
+        let running: Vec<(u32, usize)> = if self.multi_core {
+            self.cores.iter().enumerate().map(|(core, thread)| (*thread, core)).collect()
+        } else {
+            vec![(self.current, main_core)]
+        };
+        for (thread, core) in running {
+            if let (Some(record), Some(cpu)) = (self.threads.get_mut(&thread), cpus.get(core)) {
+                record.context = cpu.clone();
+                if record.state == ThreadState::Running {
+                    record.state = ThreadState::Ready;
+                }
+            }
+        }
+        self.cores = [0; CORE_COUNT as usize];
+        self.current = 0;
+        self.multi_core = false;
+    }
+
+    /// Whether the current thread is there and running.
+    #[inline]
+    pub fn current_is_running(&self) -> bool {
+        self.threads.get(&self.current).is_some_and(|t| t.state == ThreadState::Running)
     }
 
     #[inline]
@@ -182,6 +252,7 @@ impl Scheduler {
 
     /// Asks for a scheduling decision after the current HLE call.
     pub fn request(&mut self, mode: Reschedule) {
+        self.requests = self.requests.wrapping_add(1);
         self.pending = Some(match (self.pending, mode) {
             (Some(Reschedule::Block), _) | (_, Reschedule::Block) => Reschedule::Block,
             (Some(Reschedule::Yield), _) | (_, Reschedule::Yield) => Reschedule::Yield,
@@ -228,6 +299,9 @@ impl Scheduler {
                 read(semaphore + offset::SEMAPHORE_COUNT).cast_signed() > 0
             }
             Wait::Cond(_) => false,
+            Wait::Gpu(timestamp) => self.gpu_retired.as_ref().is_none_or(|retired| {
+                retired.load(std::sync::atomic::Ordering::Acquire) >= timestamp
+            }),
             Wait::Rendezvous { rendezvous, mask } => (0..3)
                 .filter(|core| mask & (1 << core) != 0)
                 .all(|core| read(rendezvous + 4 * core) != 0),
@@ -254,12 +328,15 @@ impl Scheduler {
         let current_runnable =
             self.threads.get(&current).is_some_and(|t| t.state == ThreadState::Running);
         let current_core = cpu.core_id();
-        // The most important other runnable thread of `core`.
+        let multi_core = self.multi_core;
+        // The most important other runnable thread of `core`. Side by side, the other cores'
+        // current threads are theirs.
         let best_on = |core: Option<u32>| {
             self.threads
                 .iter()
                 .filter(|(address, record)| {
                     **address != current
+                        && !(multi_core && self.cores.contains(address))
                         && core.is_none_or(|c| record.context.core_id() == c)
                         && self.runnable(record, memory, now)
                 })
@@ -272,8 +349,18 @@ impl Scheduler {
             && self.threads.get(&current).is_some_and(|t| self.runnable(t, memory, now));
 
         let same_core = best_on(Some(current_core));
+        // Side by side, a core runs only its own threads: round-robin among those of equal
+        // priority, and the others' cores take care of theirs.
+        let mode = match mode {
+            Reschedule::Yield if multi_core && !current_runnable => Reschedule::Block,
+            mode => mode,
+        };
         let next = match mode {
             Reschedule::Block if current_runnable => None,
+            Reschedule::Block if multi_core => {
+                same_core.filter(|(_, p)| !(current_resumable && *p >= current_priority))
+            }
+            Reschedule::Yield if multi_core => same_core.filter(|(_, p)| *p <= current_priority),
             Reschedule::Block => {
                 // Stay on the core if it has work; otherwise any core may run.
                 let candidate = same_core.or_else(|| best_on(None));
@@ -413,6 +500,35 @@ mod tests {
         assert!(s.current_is_blocked());
         assert_eq!(s.schedule(&mut cpu, &memory, 100, Reschedule::Block), Outcome::Kept);
         assert_eq!(s.take_woke_from(), Some(Wait::Sleep(100)));
+    }
+
+    #[test]
+    fn side_by_side_cores_keep_their_own_threads() {
+        let (mut s, mut core1, memory) = setup();
+        s.multi_core = true;
+        s.cores[1] = s.current;
+        let main = s.current;
+        spawn(&mut s, 0x300, 16, 0x2);
+        let mut record = ThreadRecord::new(CpuState::new(0), 16);
+        record.state = ThreadState::Ready;
+        record.suspend_count = 0;
+        s.threads.insert(0x200, record);
+        // Core 1 round-robins among its own threads only.
+        s.enter_core(1);
+        assert_eq!(s.schedule(&mut core1, &memory, 0, Reschedule::Yield), Outcome::Switched);
+        assert_eq!(s.current, 0x300);
+        s.leave_core(1);
+        // Core 0 picks up its thread, and never one another core is running.
+        let mut core0 = CpuState::new(0);
+        s.enter_core(0);
+        assert_eq!(s.current, 0);
+        assert_eq!(s.schedule(&mut core0, &memory, 0, Reschedule::Block), Outcome::Switched);
+        assert_eq!(s.current, 0x200);
+        s.leave_core(0);
+        assert_eq!(s.cores, [0x200, 0x300, 0]);
+        s.enter_core(1);
+        assert_eq!(s.schedule(&mut core1, &memory, 0, Reschedule::Yield), Outcome::Switched);
+        assert_eq!(s.current, main);
     }
 
     #[test]
