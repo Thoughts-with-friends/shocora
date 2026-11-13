@@ -40,6 +40,54 @@ impl Default for KeyBindings {
     }
 }
 
+/// Every action a key or a controller button can be bound to, in the order settings list them.
+pub const ACTIONS: [&str; 21] = [
+    "a",
+    "b",
+    "x",
+    "y",
+    "l",
+    "r",
+    "zl",
+    "zr",
+    "plus",
+    "minus",
+    "home",
+    "up",
+    "down",
+    "left",
+    "right",
+    "stick_l",
+    "stick_r",
+    "stick_up",
+    "stick_down",
+    "stick_left",
+    "stick_right",
+];
+
+/// Controller buttons that can be bound, by their names in [`PadBindings`].
+const BUTTON_NAMES: [&str; 19] = [
+    "South",
+    "East",
+    "North",
+    "West",
+    "C",
+    "Z",
+    "LeftTrigger",
+    "LeftTrigger2",
+    "RightTrigger",
+    "RightTrigger2",
+    "Select",
+    "Start",
+    "Mode",
+    "LeftThumb",
+    "RightThumb",
+    "DPadUp",
+    "DPadDown",
+    "DPadLeft",
+    "DPadRight",
+];
+
 /// Button action names and their VPAD bits.
 const BUTTONS: [(&str, VpadButtons); 17] = [
     ("a", VpadButtons::A),
@@ -229,6 +277,16 @@ impl Controllers {
         changes
     }
 
+    /// The name of a button held on any controller, for binding it to an action.
+    pub fn pressed_button(&self) -> Option<&'static str> {
+        let gilrs = self.gilrs.as_ref()?;
+        gilrs.gamepads().find_map(|(_, pad)| {
+            BUTTON_NAMES
+                .into_iter()
+                .find(|name| button_from_name(name).is_some_and(|button| pad.is_pressed(button)))
+        })
+    }
+
     /// The combined state of every connected controller.
     pub fn gamepad(&self, bindings: &PadBindings) -> GamePadState {
         let Some(gilrs) = &self.gilrs else { return GamePadState::default() };
@@ -280,6 +338,15 @@ mod tests {
         assert_eq!(pad(0.1, -0.1).left_stick, Stick::default());
         assert_eq!(pad(0.0, 1.0).left_stick, Stick { x: 0.0, y: 1.0 });
         assert!(pad(1.0, 0.0).left_stick.x <= 1.0);
+    }
+
+    #[test]
+    fn every_bindable_name_is_known() {
+        assert!(BUTTON_NAMES.iter().all(|name| button_from_name(name).is_some()));
+        let defaults = KeyBindings::default();
+        assert!(defaults.0.keys().all(|action| ACTIONS.contains(&action.as_str())));
+        let defaults = PadBindings::default();
+        assert!(defaults.0.keys().all(|action| ACTIONS.contains(&action.as_str())));
     }
 
     #[test]

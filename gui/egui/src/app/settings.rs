@@ -9,6 +9,49 @@ fn scaled_size(factor: u32, width: u32, height: u32) -> String {
     format!("{} x {}", width * factor, height * factor)
 }
 
+/// What a binding being changed waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BindingDevice {
+    Keyboard,
+    Controller,
+}
+
+/// How an action shows in the bindings table.
+fn action_label(action: &str) -> String {
+    let fixed = match action {
+        "a" => "A",
+        "b" => "B",
+        "x" => "X",
+        "y" => "Y",
+        "l" => "L",
+        "r" => "R",
+        "zl" => "ZL",
+        "zr" => "ZR",
+        "plus" => "+",
+        "minus" => "−",
+        "home" => "HOME",
+        "up" => "↑",
+        "down" => "↓",
+        "left" => "←",
+        "right" => "→",
+        _ => "",
+    };
+    if !fixed.is_empty() {
+        return fixed.to_owned();
+    }
+    let (stick, rest) = action.split_at(action.find('_').unwrap_or(action.len()));
+    let stick_name = tr("input.left_stick");
+    match (stick, rest) {
+        ("stick", "_l") => format!("{stick_name} {}", tr("input.stick_press")),
+        ("stick", "_r") => format!("{} {}", tr("input.right_stick"), tr("input.stick_press")),
+        ("stick", "_up") => format!("{stick_name} ↑"),
+        ("stick", "_down") => format!("{stick_name} ↓"),
+        ("stick", "_left") => format!("{stick_name} ←"),
+        ("stick", "_right") => format!("{stick_name} →"),
+        _ => action.to_owned(),
+    }
+}
+
 /// The pages of the settings window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsTab {
@@ -69,7 +112,18 @@ impl ShocoraApp {
         }
     }
 
+    /// While joined to a host, the pictures are the host's: its graphics settings apply.
     fn graphics_settings(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.netplay, Netplay::Guest(_)) {
+            ui.colored_label(ui.visuals().warn_fg_color, tr("settings.guest_graphics_note"));
+            ui.separator();
+            ui.add_enabled_ui(false, |ui| self.graphics_controls(ui));
+        } else {
+            self.graphics_controls(ui);
+        }
+    }
+
+    fn graphics_controls(&mut self, ui: &mut egui::Ui) {
         self.resolution_settings(ui);
         ui.separator();
         self.upscale_menu(ui);
@@ -147,14 +201,25 @@ impl ShocoraApp {
             }
         });
         ui.separator();
+        if ui.checkbox(&mut self.config.gamepad_window, tr("menu.gamepad_window")).changed() {
+            self.save_config();
+        }
+        ui.separator();
         ui.label(tr("general.speed")).on_hover_text(tr("general.speed_hint"));
-        ui.horizontal(|ui| {
-            for speed in GameSpeed::ALL {
-                if ui.radio(self.speed == speed, speed.label()).clicked() && self.speed != speed {
-                    self.speed = speed;
-                    self.console.send(ConsoleCommand::Speed(speed));
+        let guest = matches!(self.netplay, Netplay::Guest(_));
+        if guest {
+            ui.colored_label(ui.visuals().warn_fg_color, tr("settings.guest_speed_note"));
+        }
+        ui.add_enabled_ui(!guest, |ui| {
+            ui.horizontal(|ui| {
+                for speed in GameSpeed::ALL {
+                    if ui.radio(self.speed == speed, speed.label()).clicked() && self.speed != speed
+                    {
+                        self.speed = speed;
+                        self.console.send(ConsoleCommand::Speed(speed));
+                    }
                 }
-            }
+            });
         });
         ui.separator();
         if ui.button(tr("general.fonts_folder")).clicked() {
@@ -216,22 +281,101 @@ impl ShocoraApp {
         self.log.push(tr("log.add_on_folders").to_owned());
     }
 
-    fn input_settings(&self, ui: &mut egui::Ui) {
+    /// The bindings, changed by clicking one and pressing the key or button to use. They are
+    /// this PC's own: a guest's apply to the second player it plays.
+    fn input_settings(&mut self, ui: &mut egui::Ui) {
         ui.label(tr("input.speed_keys"));
         ui.label(tr("input.edit_hint"));
+        if matches!(self.netplay, Netplay::Guest(_)) {
+            ui.label(tr("input.guest_note"));
+        }
+        self.capture_binding(ui.ctx());
         ui.separator();
+        let mut chosen = None;
+        let mut cleared = None;
         egui::Grid::new("bindings").striped(true).show(ui, |ui| {
             ui.strong(tr("input.action"));
             ui.strong(tr("input.keyboard"));
             ui.strong(tr("input.controller"));
             ui.end_row();
-            for (action, key) in &self.config.key_bindings.0 {
-                ui.label(action);
-                ui.label(key);
-                ui.label(self.config.pad_bindings.0.get(action).map_or("-", String::as_str));
+            for action in ACTIONS {
+                ui.label(action_label(action));
+                for (device, bindings) in [
+                    (BindingDevice::Keyboard, &self.config.key_bindings.0),
+                    (BindingDevice::Controller, &self.config.pad_bindings.0),
+                ] {
+                    ui.horizontal(|ui| {
+                        let waiting = self.binding_capture == Some((action, device));
+                        let text = if waiting {
+                            match device {
+                                BindingDevice::Keyboard => tr("input.press_key"),
+                                BindingDevice::Controller => tr("input.press_button"),
+                            }
+                        } else {
+                            bindings.get(action).map_or("-", String::as_str)
+                        };
+                        if ui.selectable_label(waiting, text).clicked() {
+                            chosen = Some((action, device));
+                        }
+                        if bindings.contains_key(action)
+                            && ui.small_button("✖").on_hover_text(tr("input.clear")).clicked()
+                        {
+                            cleared = Some((action, device));
+                        }
+                    });
+                }
                 ui.end_row();
             }
         });
+        if let Some(choice) = chosen {
+            self.binding_capture = (self.binding_capture != Some(choice)).then_some(choice);
+        }
+        if let Some((action, device)) = cleared {
+            match device {
+                BindingDevice::Keyboard => self.config.key_bindings.0.remove(action),
+                BindingDevice::Controller => self.config.pad_bindings.0.remove(action),
+            };
+            self.save_config();
+        }
+        ui.separator();
+        if ui.button(tr("input.reset")).clicked() {
+            self.config.key_bindings = KeyBindings::default();
+            self.config.pad_bindings = PadBindings::default();
+            self.binding_capture = None;
+            self.save_config();
+        }
+    }
+
+    /// Takes the key or controller button pressed for the binding being changed. Esc keeps
+    /// the old one.
+    fn capture_binding(&mut self, ctx: &egui::Context) {
+        let Some((action, device)) = self.binding_capture else { return };
+        let key = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key),
+                _ => None,
+            })
+        });
+        if key == Some(egui::Key::Escape) {
+            self.binding_capture = None;
+            return;
+        }
+        let name = match device {
+            BindingDevice::Keyboard => key.map(|key| key.name().to_owned()),
+            BindingDevice::Controller => self.controllers.pressed_button().map(str::to_owned),
+        };
+        let Some(name) = name else {
+            // Waiting: look again at the next frame even without new input.
+            ctx.request_repaint();
+            return;
+        };
+        let bindings = match device {
+            BindingDevice::Keyboard => &mut self.config.key_bindings.0,
+            BindingDevice::Controller => &mut self.config.pad_bindings.0,
+        };
+        bindings.insert(action.to_owned(), name);
+        self.binding_capture = None;
+        self.save_config();
     }
 
     /// The settings window, with one tab per subject.
@@ -253,6 +397,9 @@ impl ShocoraApp {
             });
         });
         self.settings_tab = open.then_some(tab);
+        if self.settings_tab != Some(SettingsTab::Input) {
+            self.binding_capture = None;
+        }
     }
 }
 

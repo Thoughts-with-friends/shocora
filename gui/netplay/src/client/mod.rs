@@ -110,6 +110,11 @@ impl Client {
         self.state.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// Gives the first player's rights back to the host.
+    pub fn return_player1(&self) {
+        let _ = self.shared.send(&Message::ReturnPlayer1);
+    }
+
     /// Sends the controller's state to the host.
     pub fn set_input(&self, input: GuestInput) {
         *self.shared.input.lock().unwrap_or_else(PoisonError::into_inner) = input;
@@ -279,10 +284,15 @@ fn receive(
     loop {
         match protocol::read_message(reading)? {
             Message::Status(status) => events.status(status),
-            Message::Video(display, jpeg) => match protocol::decode_frame(display, &jpeg) {
-                Ok(frame) => events.frame(frame),
-                Err(error) => log::warn!("netplay: bad picture: {error}"),
-            },
+            Message::Video(display, jpeg) => {
+                match protocol::decode_frame(display, &jpeg) {
+                    Ok(frame) => events.frame(frame),
+                    Err(error) => log::warn!("netplay: bad picture: {error}"),
+                }
+                // The host sends the next picture of this screen only now: pictures never
+                // pile up on the way, so what shows is close to what the host has.
+                shared.send(&Message::FrameShown(display))?;
+            }
             Message::Audio(samples) => events.audio(&samples),
             Message::Ping(value) => shared.send(&Message::Pong(value))?,
             Message::Pong(sent) => {

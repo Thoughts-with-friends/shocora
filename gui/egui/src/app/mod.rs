@@ -6,7 +6,7 @@ use shocora_game_library::{GameLibrary, LEGACY_PATH, legacy_rom_dirs};
 use shocora_gui_common::{
     config::AppConfig,
     console::{Console, ConsoleCommand},
-    input::{Controllers, merge},
+    input::{ACTIONS, Controllers, KeyBindings, PadBindings, merge},
 };
 use shocora_netplay::{
     DEFAULT_PORT, FrameRate, HostConfig, HostState, HostStatus, LinkState, Refusal,
@@ -65,6 +65,8 @@ pub struct ShocoraApp {
     last_gamepad: GamePadState,
     /// The settings window's page, while it is open.
     settings_tab: Option<SettingsTab>,
+    /// The binding waiting for a key or a controller button, in the input settings.
+    binding_capture: Option<(&'static str, BindingDevice)>,
     /// How fast the title runs. Back to normal at the next start of the program.
     speed: GameSpeed,
     /// The controller's speed button was down at the last look: a press changes it once.
@@ -145,6 +147,7 @@ impl ShocoraApp {
             show_log: true,
             last_gamepad: GamePadState::default(),
             settings_tab: None,
+            binding_capture: None,
             speed: GameSpeed::Normal,
             speed_button_down: false,
             controllers: Controllers::new(),
@@ -257,7 +260,10 @@ impl eframe::App for ShocoraApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pull_emulator_state();
-        let in_menu = self.title.is_none() && !self.boot_pending;
+        // A guest shows the host's title, whatever runs here.
+        let in_menu = self.title.is_none()
+            && !self.boot_pending
+            && !matches!(self.netplay, Netplay::Guest(_));
         let ctx = ui.ctx().clone();
         // Before the input is read: its window adds touches and keys.
         self.gamepad_window(&ctx, in_menu);

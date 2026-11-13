@@ -75,6 +75,13 @@ impl ShocoraApp {
             Netplay::Guest(guest) => {
                 if guest.status().is_some_and(|status| status.player1) {
                     ui.label(tr("netplay.you_are_player1"));
+                    if ui
+                        .button(tr("netplay.return_player1"))
+                        .on_hover_text(tr("netplay.return_player1_hint"))
+                        .clicked()
+                    {
+                        guest.return_player1();
+                    }
                 } else {
                     let mut to_gamepad = guest.to_gamepad();
                     if ui

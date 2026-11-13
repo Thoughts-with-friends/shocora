@@ -151,6 +151,10 @@ impl HostEvents for HostLink {
         status.player1 = self.control.player1();
         status
     }
+
+    fn return_player1(&self) {
+        self.control.mix(|mixer| mixer.player1 = false);
+    }
 }
 
 /// Starts letting a second player in. `tv` and `gamepad` are where its pictures come from.
@@ -237,6 +241,11 @@ impl Guest {
     pub fn set_to_gamepad(&mut self, to_gamepad: bool) {
         self.input.to_gamepad = to_gamepad;
         self.client.set_input(self.input);
+    }
+
+    /// Gives the first player's rights back to the host.
+    pub fn return_player1(&self) {
+        self.client.return_player1();
     }
 }
 

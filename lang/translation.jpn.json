@@ -51,7 +51,7 @@
   "graphics.xbrz_unavailable": "3D 解像度を上げている間は使いません。",
   "input.action": "操作",
   "input.controller": "コントローラー",
-  "input.edit_hint": "割り当ての変更は shocora.toml を編集してください（次回起動から）。",
+  "input.edit_hint": "割り当てをクリックしてから、使いたいキーまたはコントローラーのボタンを押してください。Esc で取り消し。",
   "input.keyboard": "キーボード",
   "input.speed_keys": "Tab または左スティック押し込み: ゲーム速度の切り替え",
   "launcher.background_color": "背景色",
@@ -146,5 +146,17 @@
   "status.speed": "速度 {speed}",
   "status.speed_hint": "クリック、Tab、左スティック押し込みで 1x → 2x → 3x → 4x → 0.5x と切り替え",
   "status.xbrz_hint": "クリックで画面の拡大方法を切り替え",
-  "status.xbrz_off": "xBRZ オフ"
+  "status.xbrz_off": "xBRZ オフ",
+  "input.clear": "この割り当てを外す",
+  "input.guest_note": "この割り当てはこの PC 専用です。2P として参加中は、ホストのゲームを操作します。",
+  "input.left_stick": "左スティック",
+  "input.press_button": "ボタンを押してください…",
+  "input.press_key": "キーを押してください…",
+  "input.reset": "既定の割り当てに戻す",
+  "input.right_stick": "右スティック",
+  "input.stick_press": "（押し込み）",
+  "netplay.return_player1": "1Pの権限を戻す",
+  "netplay.return_player1_hint": "ホストが再び1Pとして操作し、あなたは2Pに戻ります。",
+  "settings.guest_graphics_note": "ホストに参加中：画面はホストが描画しているため、ホストのグラフィック設定が使われます。ここでは変更できません。",
+  "settings.guest_speed_note": "ホストに参加中：ゲーム速度はホストの設定です。"
 }

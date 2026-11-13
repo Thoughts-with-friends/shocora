@@ -4,7 +4,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
         Arc, Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::JoinHandle,
@@ -30,6 +30,10 @@ const TICK: Duration = Duration::from_millis(5);
 const AUDIO_CHUNK: usize = protocol::AUDIO_RATE as usize / 50 * 2;
 /// Frames of sound the emulator may be ahead before it is dropped: a second.
 const AUDIO_QUEUE: usize = 60;
+/// Pictures of one screen on their way to the guest at most. More would wait in the network's
+/// buffers: the guest would see the game later and later, and its input would seem to lag.
+/// The newest picture waits for its turn instead, and older ones are dropped.
+const PICTURES_IN_FLIGHT: u8 = 1;
 /// How often the guest hears about the host's state.
 const STATUS_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -43,6 +47,8 @@ pub trait HostEvents: Send + Sync + 'static {
     fn take_frames(&self) -> Vec<Frame>;
     /// What the guest's status bar shows.
     fn status(&self) -> HostStatus;
+    /// The guest gives the first player's rights back.
+    fn return_player1(&self) {}
 }
 
 /// Where a host listens and whom it lets in.
@@ -120,6 +126,10 @@ struct Session {
     last_ping: Option<Instant>,
     /// When the guest last heard about the host, and whether it was the first player then.
     last_status: Option<(Instant, bool)>,
+    /// Pictures of each screen sent and not yet taken in by the guest, by [`Display`].
+    in_flight: Arc<[AtomicU8; 2]>,
+    /// The newest picture of each screen waiting for its turn.
+    waiting: [Option<Frame>; 2],
 }
 
 impl Session {
@@ -312,15 +322,17 @@ fn open<E: HostEvents>(
     check_password(&mut stream, &config.password)?;
     let writer = Arc::new(Mutex::new(stream));
     let alive = Arc::new(AtomicBool::new(true));
+    let in_flight: Arc<[AtomicU8; 2]> = Arc::default();
     let started = Instant::now();
     set_state(state, LinkState::Connected { peer: peer.to_string(), round_trip: None });
     let reader = std::thread::Builder::new().name("shocora-net-read".into()).spawn({
         let (writer, alive) = (Arc::clone(&writer), Arc::clone(&alive));
         let (events, state) = (Arc::clone(events), Arc::clone(state));
+        let in_flight = Arc::clone(&in_flight);
         move || {
-            if let Err(error) =
-                listen(&mut reading, &writer, events.as_ref(), &state, peer, started)
-            {
+            let link =
+                Link { writer: &writer, state: &state, in_flight: &in_flight, peer, started };
+            if let Err(error) = listen(&mut reading, &link, events.as_ref()) {
                 log::info!("netplay: lost the guest: {error}");
             }
             alive.store(false, Ordering::Relaxed);
@@ -335,34 +347,44 @@ fn open<E: HostEvents>(
         audio: Vec::new(),
         last_ping: None,
         last_status: None,
+        in_flight,
+        waiting: [None, None],
     })
+}
+
+/// What the reading side of a session needs.
+struct Link<'a> {
+    writer: &'a Mutex<TcpStream>,
+    state: &'a Mutex<LinkState>,
+    in_flight: &'a [AtomicU8; 2],
+    peer: SocketAddr,
+    started: Instant,
 }
 
 /// Handles what the guest sends until the connection ends. The read timeout makes silence an
 /// error, so a guest that vanished without a word is noticed too.
-fn listen(
-    reading: &mut TcpStream,
-    writer: &Mutex<TcpStream>,
-    events: &impl HostEvents,
-    state: &Mutex<LinkState>,
-    peer: SocketAddr,
-    started: Instant,
-) -> io::Result<()> {
+fn listen(reading: &mut TcpStream, link: &Link<'_>, events: &impl HostEvents) -> io::Result<()> {
     loop {
         match protocol::read_message(reading)? {
             Message::Input(input) => events.input(Some(input)),
             Message::Ping(value) => {
-                let mut stream = writer.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut stream = link.writer.lock().unwrap_or_else(PoisonError::into_inner);
                 protocol::write_message(&mut *stream, &Message::Pong(value))?;
             }
             Message::Pong(sent) => {
                 let round_trip =
-                    Duration::from_nanos(protocol::nanos(started).saturating_sub(sent));
-                set_state(
-                    state,
-                    LinkState::Connected { peer: peer.to_string(), round_trip: Some(round_trip) },
+                    Duration::from_nanos(protocol::nanos(link.started).saturating_sub(sent));
+                let peer = link.peer.to_string();
+                set_state(link.state, LinkState::Connected { peer, round_trip: Some(round_trip) });
+            }
+            Message::FrameShown(display) => {
+                let _ = link.in_flight[display as usize].try_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |count| count.checked_sub(1),
                 );
             }
+            Message::ReturnPlayer1 => events.return_player1(),
             _ => {}
         }
     }
@@ -383,6 +405,16 @@ fn pump(session: &mut Session, sound: &[Vec<i16>], events: &impl HostEvents) -> 
         session.send(&Message::Audio(chunk))?;
     }
     for frame in events.take_frames() {
+        let slot = frame.display as usize;
+        session.waiting[slot] = Some(frame);
+    }
+    // A picture only goes once the guest has the last one: what waits is always the newest.
+    for slot in 0..2 {
+        if session.in_flight[slot].load(Ordering::Acquire) >= PICTURES_IN_FLIGHT {
+            continue;
+        }
+        let Some(frame) = session.waiting[slot].take() else { continue };
+        session.in_flight[slot].fetch_add(1, Ordering::AcqRel);
         session.send(&Message::Video(frame.display, protocol::encode_frame(&frame)?))?;
     }
     let status = events.status();

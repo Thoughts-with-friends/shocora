@@ -51,7 +51,7 @@
   "graphics.xbrz_unavailable": "Not used while the 3D resolution is raised.",
   "input.action": "Action",
   "input.controller": "Controller",
-  "input.edit_hint": "To change the bindings, edit shocora.toml (from the next start).",
+  "input.edit_hint": "Click a binding, then press the key or controller button to use. Esc cancels.",
   "input.keyboard": "Keyboard",
   "input.speed_keys": "Tab or pressing the left stick: change the game speed",
   "launcher.background_color": "Background color",
@@ -146,5 +146,17 @@
   "status.speed": "Speed {speed}",
   "status.speed_hint": "Click, Tab or press the left stick to cycle 1x → 2x → 3x → 4x → 0.5x",
   "status.xbrz_hint": "Click to change the screen upscaling",
-  "status.xbrz_off": "xBRZ off"
+  "status.xbrz_off": "xBRZ off",
+  "input.clear": "Remove this binding",
+  "input.guest_note": "These bindings are this PC's own: as player 2 they drive the host's game.",
+  "input.left_stick": "Left stick",
+  "input.press_button": "Press a button…",
+  "input.press_key": "Press a key…",
+  "input.reset": "Back to the default bindings",
+  "input.right_stick": "Right stick",
+  "input.stick_press": "(press)",
+  "netplay.return_player1": "Give player 1's rights back",
+  "netplay.return_player1_hint": "The host plays as player 1 again, and you go back to player 2.",
+  "settings.guest_graphics_note": "Joined to a host: the pictures are drawn by the host, so its graphics settings apply. They cannot be changed here.",
+  "settings.guest_speed_note": "Joined to a host: the game speed is the host's."
 }

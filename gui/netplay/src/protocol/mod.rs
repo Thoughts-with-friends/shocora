@@ -22,7 +22,7 @@ pub const AUDIO_RATE: u32 = 16_000;
 /// Rate of the sound the emulator produces.
 const INPUT_AUDIO_RATE: u32 = 48_000;
 /// Bumped when the messages change: both sides must speak the same version.
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 /// Anything longer did not come from a peer speaking this protocol.
 const MAX_PAYLOAD: usize = 4 << 20;
 /// Largest picture a guest decodes.
@@ -45,6 +45,8 @@ mod tag {
     pub const WELCOME: u8 = 9;
     pub const REFUSED: u8 = 10;
     pub const STATUS: u8 = 11;
+    pub const FRAME_SHOWN: u8 = 12;
+    pub const RETURN_PLAYER1: u8 = 13;
 }
 
 /// Bytes of the random value a host greets a guest with.
@@ -164,6 +166,10 @@ pub enum Message {
     Welcome,
     Refused(Refusal),
     Status(HostStatus),
+    /// The guest has taken in a picture of this screen: the host may send the next one.
+    FrameShown(Display),
+    /// The guest gives the first player's rights back to the host.
+    ReturnPlayer1,
 }
 
 /// What a ping carries: its time of sending on the clock of the side that sends it.
@@ -216,6 +222,9 @@ mod tests {
             Message::Welcome,
             Message::Refused(Refusal::Network),
             Message::Refused(Refusal::WrongPassword),
+            Message::FrameShown(Display::Tv),
+            Message::FrameShown(Display::GamePad),
+            Message::ReturnPlayer1,
         ] {
             assert_eq!(round_trip(&message), message);
         }

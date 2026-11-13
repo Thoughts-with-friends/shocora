@@ -382,3 +382,72 @@ fn addresses_get_the_default_port() {
     assert_eq!(with_port(" 192.168.0.2 "), format!("192.168.0.2:{DEFAULT_PORT}"));
     assert_eq!(with_port("192.168.0.2:1234"), "192.168.0.2:1234");
 }
+
+/// A host whose title draws a new picture of each screen all the time.
+struct BusyHost {
+    returned: Mutex<mpsc::Sender<()>>,
+}
+
+impl HostEvents for BusyHost {
+    fn input(&self, _input: Option<GuestInput>) {}
+
+    fn streaming(&self, _wanted: bool) {}
+
+    fn take_frames(&self) -> Vec<Frame> {
+        [Display::Tv, Display::GamePad]
+            .map(|display| Frame { display, width: 8, height: 8, rgba: vec![0; 8 * 8 * 4] })
+            .to_vec()
+    }
+
+    fn status(&self) -> HostStatus {
+        HostStatus::default()
+    }
+
+    fn return_player1(&self) {
+        let _ = self.returned.lock().unwrap().send(());
+    }
+}
+
+/// Plays the guest by hand: greets the host and returns the connection.
+fn join_by_hand(port: u16) -> std::net::TcpStream {
+    let mut stream = std::net::TcpStream::connect((LOOPBACK, port)).unwrap();
+    stream.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+    protocol::write_message(&mut stream, &Message::Hello).unwrap();
+    assert_eq!(protocol::read_message(&mut stream).unwrap(), Message::Hello);
+    let Message::Challenge(challenge) = protocol::read_message(&mut stream).unwrap() else {
+        panic!("no challenge");
+    };
+    let answer = protocol::answer(&challenge, "");
+    protocol::write_message(&mut stream, &Message::Answer(answer)).unwrap();
+    assert_eq!(protocol::read_message(&mut stream).unwrap(), Message::Welcome);
+    stream
+}
+
+/// The pictures of each screen that arrive before the host falls silent.
+fn pictures_until_quiet(stream: &mut std::net::TcpStream) -> [usize; 2] {
+    let mut counts = [0; 2];
+    while let Ok(message) = protocol::read_message(stream) {
+        if let Message::Video(display, _) = message {
+            counts[display as usize] += 1;
+        }
+    }
+    counts
+}
+
+#[test]
+fn a_new_picture_waits_until_the_guest_has_the_last_one() {
+    let (returned_tx, returned) = mpsc::channel();
+    let config = HostConfig::new("127.0.0.1/8", 0, "").unwrap();
+    let host = Host::start(config, BusyHost { returned: Mutex::new(returned_tx) }).unwrap();
+    let mut stream = join_by_hand(host.port());
+
+    // However fast the title draws, one picture of each screen is on its way at a time.
+    assert_eq!(pictures_until_quiet(&mut stream), [1, 1]);
+    // Taking in the TV's picture lets exactly the newest one of it come.
+    protocol::write_message(&mut stream, &Message::FrameShown(Display::Tv)).unwrap();
+    assert_eq!(pictures_until_quiet(&mut stream), [1, 0]);
+
+    // The guest can give the first player's rights back.
+    protocol::write_message(&mut stream, &Message::ReturnPlayer1).unwrap();
+    assert_eq!(returned.recv_timeout(PATIENCE), Ok(()));
+}

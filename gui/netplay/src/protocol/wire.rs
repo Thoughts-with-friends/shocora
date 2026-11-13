@@ -169,6 +169,8 @@ pub fn write_message(out: &mut impl Write, message: &Message) -> io::Result<()> 
         Message::Refused(Refusal::Network) => (tag::REFUSED, vec![0]),
         Message::Refused(Refusal::WrongPassword) => (tag::REFUSED, vec![1]),
         Message::Status(status) => (tag::STATUS, encode_status(status)),
+        Message::FrameShown(display) => (tag::FRAME_SHOWN, vec![*display as u8]),
+        Message::ReturnPlayer1 => (tag::RETURN_PLAYER1, Vec::new()),
     };
     let length = u32::try_from(payload.len()).map_err(|_| invalid("message too long"))?;
     let mut packet = Vec::with_capacity(5 + payload.len());
@@ -229,6 +231,12 @@ pub fn read_message(input: &mut impl Read) -> io::Result<Message> {
         }
         tag::WELCOME => Ok(Message::Welcome),
         tag::STATUS => decode_status(&payload).map(Message::Status),
+        tag::FRAME_SHOWN => match payload.as_slice() {
+            [0] => Ok(Message::FrameShown(Display::Tv)),
+            [1] => Ok(Message::FrameShown(Display::GamePad)),
+            _ => Err(invalid("bad picture acknowledgement")),
+        },
+        tag::RETURN_PLAYER1 => Ok(Message::ReturnPlayer1),
         tag::REFUSED => match payload.as_slice() {
             [0] => Ok(Message::Refused(Refusal::Network)),
             [1] => Ok(Message::Refused(Refusal::WrongPassword)),
