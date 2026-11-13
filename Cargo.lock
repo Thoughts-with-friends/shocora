@@ -5029,6 +5029,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "log",
+ "region",
  "serde",
  "thiserror 2.0.21",
 ]

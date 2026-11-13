@@ -89,14 +89,11 @@ pub struct ThreadRecord {
     pub exit_value: i32,
     pub detached: bool,
     pub name: u32,
-    pub specific: [u32; 16],
     /// The wait that just ended, for the restarted HLE call.
     pub woke_from: Option<Wait>,
     pub pending_cond: Option<PendingCond>,
     /// Set by `OSWakeupThread`; lets the restarted `OSSleepThread` return.
     pub woken_from_queue: Option<u32>,
-    /// This thread's copy of the RPX's TLS block (0 until `__tls_get_addr`).
-    pub tls_block: u32,
     last_run: u64,
 }
 
@@ -110,11 +107,9 @@ impl ThreadRecord {
             exit_value: 0,
             detached: false,
             name: 0,
-            specific: [0; 16],
             woke_from: None,
             pending_cond: None,
             woken_from_queue: None,
-            tls_block: 0,
             last_run: 0,
         }
     }
@@ -125,6 +120,20 @@ impl ThreadRecord {
 pub struct MutexState {
     pub owner: u32,
     pub count: u32,
+    /// A thread may wait for it: set when one blocks on it, cleared once a release finds
+    /// nobody waiting. Releases of locks nobody waits for skip looking through every thread.
+    #[serde(default)]
+    pub contended: bool,
+}
+
+impl MutexState {
+    pub const FREE: Self = Self { owner: 0, count: 0, contended: false };
+
+    /// Taken by `owner`, `count` times; whether threads wait stays as it was.
+    pub const fn take(&mut self, owner: u32, count: u32) {
+        self.owner = owner;
+        self.count = count;
+    }
 }
 
 /// How eagerly to switch away from the current thread.
@@ -381,7 +390,7 @@ impl Scheduler {
         match next {
             Some(thread) => {
                 if let Some(old) = self.threads.get_mut(&current) {
-                    old.context = cpu.clone();
+                    old.context.clone_from(cpu);
                     if old.state == ThreadState::Running {
                         old.state = ThreadState::Ready;
                     }
@@ -392,7 +401,7 @@ impl Scheduler {
                     }
                     new.state = ThreadState::Running;
                     new.last_run = counter;
-                    *cpu = new.context.clone();
+                    cpu.clone_from(&new.context);
                 }
                 self.current = thread;
                 Outcome::Switched

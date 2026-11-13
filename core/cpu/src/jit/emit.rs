@@ -1591,14 +1591,14 @@ impl Job {
         Self { optimized: true, counter: 0, ..self }
     }
 
-    /// Where the quick translation counts its runs.
-    pub(super) fn counter_address(&self) -> *const u32 {
-        self.counter as *const u32
-    }
-
     /// Has the quick translation count its runs at `counter`, a `u32` that outlives the code.
     pub(super) fn count_runs_at(&mut self, counter: *mut u32) {
         self.counter = counter as usize;
+    }
+
+    /// The lowest address and the one after the highest instruction.
+    pub(super) const fn range(&self) -> (u32, u32) {
+        self.range
     }
 
     /// Whether the region has code in `[start, end)`.

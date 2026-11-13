@@ -370,11 +370,14 @@ impl EmuThread {
         shared.cheats_path = self.emulator.cheats_path();
     }
 
+    /// Emulation Start: runs the emulator until the UI thread drops its handle.
     fn run(mut self, repaint: &dyn Fn()) {
         let (mut fps_flips, mut fps_start, mut fps) = (0_u64, Instant::now(), 0.0_f32);
         let (mut painted_flips, mut painted_at) = (0_u64, Instant::now());
+
+        // Main emulator loop
         loop {
-            // `run_frame` paces a running guest; otherwise wait for something to do.
+            // Console commands are handled at the end of each frame.
             let command = if self.running() {
                 self.rx.try_recv().map_err(|error| match error {
                     TryRecvError::Empty => RecvTimeoutError::Timeout,
@@ -383,6 +386,7 @@ impl EmuThread {
             } else {
                 self.rx.recv_timeout(IDLE_POLL)
             };
+
             match command {
                 Ok(command) => {
                     self.handle(command);
@@ -402,6 +406,7 @@ impl EmuThread {
                     profile.report(&self.emulator);
                 }
             }
+
             let elapsed = fps_start.elapsed();
             if elapsed >= Duration::from_secs(1) {
                 let flips = self.emulator.stats().gpu.flips;

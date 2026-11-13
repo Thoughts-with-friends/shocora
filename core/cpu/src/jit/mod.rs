@@ -24,6 +24,7 @@
 //! guest memory through [`Bus::fast_memory`]. Every instruction `emit` does not
 //! know falls back to one [`step`] of the reference interpreter, so the JIT
 //! is an optimisation only: both must behave identically.
+mod code_memory;
 mod emit;
 
 use std::{
@@ -68,10 +69,39 @@ const COLLECT_INTERVAL: Duration = Duration::from_millis(1);
 /// Runs after which a block is optimized. Most blocks run a handful of times (start-up,
 /// loading); optimizing all of them doubled the time spent translating for no gain.
 const HOT_RUNS: u32 = 1000;
+/// Quick translations kept before they are all let go at the next safe moment. Most of them
+/// ran a few times while the title loaded; what still runs is translated again. Their code
+/// took most of the gigabyte the JIT used in Breath of the Wild.
+const QUICK_CODE_BUDGET: usize = 256 << 20;
 /// How often the run counters are looked at.
 const HOT_SCAN_INTERVAL: Duration = Duration::from_millis(50);
 /// Run counters per allocation; they never move, as translated code holds their address.
 const COUNTER_CHUNK: usize = 4096;
+/// Candidates looked at per scan: a title has hundreds of thousands of blocks, and going
+/// through all of them every scan took a core's time.
+const HOT_SCAN_BATCH: usize = 16384;
+/// Calls of [`Jit::run`] between looks at the clock for collecting and scanning: a core
+/// calls it after every HLE call, millions of times a second.
+const HOUSEKEEPING_CALLS: u32 = 64;
+
+/// A quickly translated block waiting to become hot: what it takes to find it again.
+#[derive(Clone, Copy)]
+struct Candidate {
+    pc: u32,
+    range: (u32, u32),
+    counter: *const u32,
+}
+
+impl Candidate {
+    const fn overlaps(&self, start: u32, end: u32) -> bool {
+        self.range.0 < end && start < self.range.1
+    }
+}
+
+thread_local! {
+    /// Calls of [`Jit::run`] on this thread, for [`HOUSEKEEPING_CALLS`].
+    static RUN_CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 /// What a block's helper calls need besides the registers.
 pub(crate) struct HelperContext {
@@ -170,19 +200,46 @@ unsafe impl Send for Jit {}
 // SAFETY: see above.
 unsafe impl Sync for Jit {}
 
+/// An installed region: where its code is, and whether it is a quick translation.
+struct Installed {
+    range: (u32, u32),
+    entries: Vec<u32>,
+    code: *const u8,
+    quick: bool,
+}
+
+/// A module whose code lives in [`code_memory::CodeMemory`].
+fn new_module(isa: &OwnedTargetIsa) -> JITModule {
+    let mut builder =
+        JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
+    builder.memory_provider(Box::new(code_memory::CodeMemory::default()));
+    JITModule::new(builder)
+}
+
 /// What changes as code is translated.
 struct JitState {
+    /// Optimized code, and the way in: kept for good.
     module: JITModule,
+    /// Quick translations, let go of as a whole when they take too much memory.
+    quick: JITModule,
+    quick_isa: OwnedTargetIsa,
+    /// Bytes of code in `quick`.
+    quick_bytes: usize,
+    /// Bytes of code in `module`.
+    optimized_bytes: usize,
     /// Two-level table: guest page, then instruction within the page.
     pages: Vec<Option<Box<Page>>>,
     /// Instruction count of blocks that are queued, or that failed to translate.
     untranslated: HashMap<u32, u32>,
-    /// Blocks being translated for the first time, to optimize once they are hot.
-    awaiting: HashMap<u32, Job>,
+    /// Blocks being translated for the first time, to optimize once they are hot. Only what
+    /// finds them again is kept, not their decoded instructions.
+    awaiting: HashMap<u32, Candidate>,
     /// Quickly translated blocks and where they count their runs, until they become hot.
-    candidates: Vec<(Job, *const u32)>,
-    /// Code range and entries of every installed region, to forget them when code changes.
-    installed: Vec<((u32, u32), Vec<u32>)>,
+    candidates: Vec<Candidate>,
+    /// Where the next hot scan goes on in `candidates`.
+    scan_cursor: usize,
+    /// Every installed region, to forget them when code changes.
+    installed: Vec<Installed>,
     /// Storage of the run counters.
     counters: Vec<Box<[u32; COUNTER_CHUNK]>>,
     counters_used: usize,
@@ -199,6 +256,7 @@ struct JitState {
 }
 
 // SAFETY: the module's raw code pointers are only handed out under the `Jit`'s lock.
+#[allow(clippy::non_send_fields_in_send_ty, reason = "the raw pointers are code and counters")]
 unsafe impl Send for JitState {}
 
 impl std::fmt::Debug for Jit {
@@ -315,10 +373,8 @@ impl Jit {
     pub fn new() -> Self {
         let isa = host_isa("none");
         let optimizing_isa = host_isa("speed");
-        let mut module = JITModule::new(JITBuilder::with_isa(
-            Arc::clone(&isa),
-            cranelift_module::default_libcall_names(),
-        ));
+        let mut module = new_module(&isa);
+        let quick = new_module(&isa);
         let enter = compile_enter(&mut module, &isa);
         let pages: Vec<Option<Box<Page>>> =
             (0..1_usize << (32 - PAGE_BITS)).map(|_| None).collect();
@@ -328,10 +384,15 @@ impl Jit {
         let table = pages.as_ptr();
         let state = JitState {
             module,
+            quick,
+            quick_isa: Arc::clone(&isa),
+            quick_bytes: 0,
+            optimized_bytes: 0,
             pages,
             untranslated: HashMap::new(),
             awaiting: HashMap::new(),
             candidates: Vec::new(),
+            scan_cursor: 0,
             installed: Vec::new(),
             counters: Vec::new(),
             counters_used: 0,
@@ -400,6 +461,20 @@ impl Jit {
         self.lock().invalidate(address, size);
     }
 
+    /// Lets go of quick translations if they take too much memory. Returns whether it did.
+    ///
+    /// # Safety
+    /// No core may be running translated code meanwhile (between frames).
+    pub unsafe fn release_cold_code(&self) -> bool {
+        self.lock().release_quick_code()
+    }
+
+    /// Bytes of translated code: quick translations, then optimized code.
+    pub fn code_bytes(&self) -> (usize, usize) {
+        let state = self.lock();
+        (state.quick_bytes, state.optimized_bytes)
+    }
+
     /// Native code for `pc`, read without the lock.
     #[inline]
     fn lookup(&self, pc: u32) -> Option<*const u8> {
@@ -425,10 +500,8 @@ impl JitState {
         self.generation += 1;
         self.untranslated.clear();
         self.awaiting.clear();
-        self.candidates.retain_mut(|(job, _)| {
-            job.set_generation(self.generation);
-            !job.overlaps(address, address.saturating_add(size))
-        });
+        self.candidates
+            .retain(|candidate| !candidate.overlaps(address, address.saturating_add(size)));
         let end = address.saturating_add(size);
         // What is waiting for optimizing elsewhere is still good, and would otherwise stay slow.
         let generation = self.generation;
@@ -439,10 +512,10 @@ impl JitState {
             });
         });
         let mut stale = Vec::new();
-        self.installed.retain(|(range, entries)| {
-            let overlaps = range.0 < end && address < range.1;
+        self.installed.retain(|installed| {
+            let overlaps = installed.range.0 < end && address < installed.range.1;
             if overlaps {
-                stale.extend_from_slice(entries);
+                stale.extend_from_slice(&installed.entries);
             }
             !overlaps
         });
@@ -477,8 +550,14 @@ impl JitState {
             return None;
         };
         let signature = block_signature(self.module.isa().pointer_type());
-        let id = self.module.declare_anonymous_function(&signature).ok()?;
-        self.module.define_function_bytes(id, translated.alignment, code, &[]).ok()?;
+        let module = if translated.optimized { &mut self.module } else { &mut self.quick };
+        let id = module.declare_anonymous_function(&signature).ok()?;
+        module.define_function_bytes(id, translated.alignment, code, &[]).ok()?;
+        if translated.optimized {
+            self.optimized_bytes += code.len();
+        } else {
+            self.quick_bytes += code.len();
+        }
         Some(id)
     }
 
@@ -492,25 +571,27 @@ impl JitState {
         }
         let defined: Vec<_> =
             batch.into_iter().filter_map(|t| Some((self.define(&t)?, t))).collect();
-        if let Err(error) = self.module.finalize_definitions() {
+        if let Err(error) =
+            self.module.finalize_definitions().and_then(|()| self.quick.finalize_definitions())
+        {
             log::error!("JIT: cannot make code executable: {error}");
             return;
         }
         for (id, Translated { pc, entries, range, optimized, .. }) in defined {
-            let code = self.module.get_finalized_function(id);
+            let module = if optimized { &self.module } else { &self.quick };
+            let code = module.get_finalized_function(id);
             // A return address that already has code keeps it, unless this is optimized code.
             for &entry in &entries {
                 if entry == pc || optimized || self.lookup(entry).is_none() {
                     self.insert(entry, code);
                 }
             }
-            self.installed.push((range, entries));
+            self.installed.push(Installed { range, entries, code, quick: !optimized });
             if !optimized {
                 self.untranslated.remove(&pc);
                 self.compiled_blocks += 1;
-                if let Some(job) = self.awaiting.remove(&pc) {
-                    let counter = job.counter_address();
-                    self.candidates.push((job, counter));
+                if let Some(candidate) = self.awaiting.remove(&pc) {
+                    self.candidates.push(candidate);
                 }
             }
         }
@@ -521,16 +602,27 @@ impl JitState {
     fn optimize_hot_blocks<B: Bus>(&mut self, bus: &mut B) {
         self.last_hot_scan = Instant::now();
         let mut hot_pcs = Vec::new();
-        self.candidates.retain(|(job, counter)| {
-            // SAFETY: counters live as long as the `Jit`; only this thread runs the code
-            // that writes them.
-            let runs = unsafe { counter.read() };
-            if runs < HOT_RUNS {
-                return true;
+        // A batch at a time, going round: a block that turns hot waits a few scans at most.
+        if self.scan_cursor >= self.candidates.len() {
+            self.scan_cursor = 0;
+        }
+        let mut index = self.scan_cursor;
+        let end = (index + HOT_SCAN_BATCH).min(self.candidates.len());
+        let mut end_index = end;
+        while index < end_index {
+            let candidate = self.candidates[index];
+            // SAFETY: counters live as long as the `Jit`; a racing increment from another
+            // core only makes the count late.
+            let runs = unsafe { candidate.counter.read_volatile() };
+            if runs >= HOT_RUNS {
+                hot_pcs.push(candidate.pc);
+                self.candidates.swap_remove(index);
+                end_index = end_index.min(self.candidates.len());
+            } else {
+                index += 1;
             }
-            hot_pcs.push(job.pc);
-            false
-        });
+        }
+        self.scan_cursor = index;
         let generation = self.generation;
         let hot: Vec<_> = hot_pcs
             .into_iter()
@@ -571,12 +663,49 @@ impl JitState {
             return Ok(*count);
         }
         let mut job = emit::decode_block::<B>(pc, bus, self.generation, self.first_reach)?;
-        job.count_runs_at(self.new_counter());
+        let counter = self.new_counter();
+        job.count_runs_at(counter);
         let count = job.instructions.len() as u32;
         self.untranslated.insert(pc, count);
-        self.awaiting.insert(pc, job.clone());
+        self.awaiting.insert(pc, Candidate { pc, range: job.range(), counter });
         self.board.change(|queues| queues.first.push_back(job));
         Ok(count)
+    }
+
+    /// Lets go of every quick translation once they take more than [`QUICK_CODE_BUDGET`].
+    /// Returns whether it did.
+    fn release_quick_code(&mut self) -> bool {
+        if self.quick_bytes <= QUICK_CODE_BUDGET {
+            return false;
+        }
+        let mut released = Vec::new();
+        self.installed.retain_mut(|installed| {
+            if installed.quick {
+                released.push((std::mem::take(&mut installed.entries), installed.code));
+            }
+            !installed.quick
+        });
+        for (entries, code) in released {
+            for at in entries {
+                // Entries optimized code took over since stay.
+                if let Some(page) = &mut self.pages[(at >> PAGE_BITS) as usize] {
+                    let slot = &mut page[((at >> 2) as usize) & (PAGE_ENTRIES - 1)];
+                    if *slot == code {
+                        *slot = std::ptr::null();
+                    }
+                }
+            }
+        }
+        // They count runs of code that is gone; blocks translated again count anew.
+        self.candidates.clear();
+        self.scan_cursor = 0;
+        let old = std::mem::replace(&mut self.quick, new_module(&self.quick_isa));
+        // SAFETY: the caller guarantees that no core runs translated code, and the page
+        // table no longer leads to any of it.
+        unsafe { old.free_memory() };
+        log::info!("JIT: let go of {} MB of quick translations", self.quick_bytes >> 20);
+        self.quick_bytes = 0;
+        true
     }
 
     /// Waits until the block at `pc` is translated, or known not to translate.
@@ -609,8 +738,14 @@ impl Jit {
             return crate::interpreter::run(state, bus, budget);
         };
         // When another core holds the lock, it takes in the translations itself.
-        if let Ok(mut jit) = self.state.try_lock() {
-            jit.collect_if_due(bus);
+        let calls = RUN_CALLS.with(|calls| {
+            calls.set(calls.get().wrapping_add(1));
+            calls.get()
+        });
+        if calls.is_multiple_of(HOUSEKEEPING_CALLS) {
+            if let Ok(mut jit) = self.state.try_lock() {
+                jit.collect_if_due(bus);
+            }
         }
         let budget = budget as i64;
         let mut context =

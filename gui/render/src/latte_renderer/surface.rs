@@ -182,6 +182,9 @@ impl LatteRenderer {
     }
 
     pub(super) fn upload(&mut self, upload: &TextureUpload) {
+        if self.upload_in_frame(upload) {
+            return;
+        }
         // `write_texture` happens before recorded commands that use the old contents.
         self.submit();
         let format = wgpu_format(upload.key.format);
@@ -223,6 +226,106 @@ impl LatteRenderer {
             );
         }
         let _ = surface_id;
+    }
+
+    /// Records the upload among the frame's commands, through the staging ring, as Cemu
+    /// uploads in its command buffer: submitting all that came before for every texture
+    /// took most of the render thread's time. Returns `false` when the upload does not fit
+    /// (it then goes the old way).
+    fn upload_in_frame(&mut self, upload: &TextureUpload) -> bool {
+        const ROW_ALIGN: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
+        const OFFSET_ALIGN: u64 = 512;
+        let format = wgpu_format(upload.key.format);
+        if format.has_depth_aspect() || format.has_stencil_aspect() {
+            return false;
+        }
+        let block = format.block_dimensions();
+        let block_bytes = u64::from(format.block_copy_size(None).unwrap_or(4));
+        // Each level: (rows of blocks, packed row bytes, padded row bytes, layers).
+        let levels: Vec<(u64, u64, u64, u64)> = upload
+            .mips
+            .iter()
+            .map(|mip| {
+                let row = u64::from(mip.width.div_ceil(block.0)) * block_bytes;
+                let rows = u64::from(mip.height.div_ceil(block.1));
+                (rows, row, row.next_multiple_of(ROW_ALIGN), u64::from(mip.layers.max(1)))
+            })
+            .collect();
+        let total: u64 = levels
+            .iter()
+            .map(|(rows, _, padded, layers)| {
+                (rows * padded * layers).next_multiple_of(OFFSET_ALIGN)
+            })
+            .sum();
+        if total == 0 || total > UPLOAD_RING_SIZE / 2 {
+            return false;
+        }
+        // Data shorter than its size says goes the old way, which copes with it.
+        if upload.mips.iter().zip(&levels).any(|(mip, (rows, row, _, layers))| {
+            !mip.data.is_empty() && (mip.data.len() as u64) < rows * row * layers
+        }) {
+            return false;
+        }
+        if self.upload_cursor + total > UPLOAD_RING_SIZE {
+            self.submit();
+        }
+        let mip_count = upload.mips.len() as u32;
+        self.uploaded.insert(upload.key);
+        let texture = self.surface(upload.key, upload.dim, mip_count).texture.clone();
+        self.end_pass();
+        let queue = self.queue.clone();
+        let ring = self.upload_ring.clone();
+        for (level, (mip, &(rows, row, padded, layers))) in
+            upload.mips.iter().zip(&levels).enumerate()
+        {
+            let level = level as u32;
+            if level >= texture.mip_level_count() || mip.data.is_empty() {
+                continue;
+            }
+            let size = rows * padded * layers;
+            let offset = self.upload_cursor;
+            self.upload_cursor += size.next_multiple_of(OFFSET_ALIGN);
+            let Some(size) = wgpu::BufferSize::new(size) else { continue };
+            if let Some(mut view) = queue.write_buffer_with(&ring, offset, size) {
+                if padded == row {
+                    view.copy_from_slice(&mip.data[..size.get() as usize]);
+                } else {
+                    for (index, source) in mip
+                        .data
+                        .chunks_exact(row as usize)
+                        .take((rows * layers) as usize)
+                        .enumerate()
+                    {
+                        let at = index * padded as usize;
+                        view.slice(at..at + row as usize).copy_from_slice(source);
+                    }
+                }
+            } else {
+                continue;
+            }
+            self.encoder().copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &ring,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset,
+                        bytes_per_row: Some(padded as u32),
+                        rows_per_image: Some(rows as u32),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: mip.width.next_multiple_of(block.0),
+                    height: mip.height.next_multiple_of(block.1),
+                    depth_or_array_layers: mip.layers.max(1),
+                },
+            );
+        }
+        true
     }
 
     pub(super) fn clear(

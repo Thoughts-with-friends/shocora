@@ -33,6 +33,7 @@
 //! * `SHOCORA_TOUCH="frame,x,y,frames"`: touches the GamePad's screen (854 x 480 pixels).
 //! * `SHOCORA_MIN_SWAP_INTERVAL=n`: at least `n` vertical blanks per flip (2 caps at 30 fps).
 //! * `SHOCORA_SPEED=0.5|2|3|4`: how fast the title runs.
+//! * `SHOCORA_NORMAL_SPEED_AT=frame`: back to normal speed at that frame (after `SHOCORA_SPEED`).
 //! * `SHOCORA_RES=n`: draws the title's pictures `n` times larger, up to 10240 wide.
 //! * `SHOCORA_BACKGROUND_SHADERS`: compiles shaders in the background, as the GUI does.
 //! * `SHOCORA_SYNC_GPU`: runs the GPU's command processor when the title flushes, instead of
@@ -523,6 +524,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             status.instructions = emu.stats().instructions;
             status.fps = flip_rates.last().map_or(0.0, |rate| *rate as f32);
         }
+        // SHOCORA_NORMAL_SPEED_AT=frame: back to normal speed, after a quick start.
+        if std::env::var("SHOCORA_NORMAL_SPEED_AT").ok().and_then(|at| at.parse().ok())
+            == Some(frame)
+        {
+            emu.set_speed(GameSpeed::Normal);
+            println!("normal speed at frame {frame}");
+        }
         // SHOCORA_RESET_AT=frame: the reset the GUI offers.
         if std::env::var("SHOCORA_RESET_AT").ok().and_then(|at| at.parse().ok()) == Some(frame) {
             emu.reset()?;
@@ -897,13 +905,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if profile {
                 let ms = |now: u64, before: u64| now.saturating_sub(before) / 1_000_000;
                 let (first, optimize) = emu.jit_queue_lengths();
+                let (quick_mb, optimized_mb) = {
+                    let (quick, optimized) = emu.jit_code_bytes();
+                    (quick >> 20, optimized >> 20)
+                };
                 println!(
-                    "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, idle {} ms, lock {} ms, GPU thread {} ms, per core {:?} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize",
+                    "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, idle {} ms, lock {} ms, fast {} ms, other {} ms, GPU thread {} ms, per core {:?} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize; code {quick_mb} MB quick, {optimized_mb} MB optimized",
                     (stats.instructions - last_stats.instructions) / 1_000_000,
                     ms(stats.guest_nanos, last_stats.guest_nanos),
                     ms(stats.hle_nanos, last_stats.hle_nanos),
                     ms(stats.idle_nanos, last_stats.idle_nanos),
                     ms(stats.lock_nanos, last_stats.lock_nanos),
+                    ms(stats.fast_nanos, last_stats.fast_nanos),
+                    ms(stats.core_nanos, last_stats.core_nanos).saturating_sub(
+                        ms(stats.guest_nanos, last_stats.guest_nanos)
+                            + ms(stats.hle_nanos, last_stats.hle_nanos)
+                            + ms(stats.idle_nanos, last_stats.idle_nanos)
+                            + ms(stats.fast_nanos, last_stats.fast_nanos)
+                    ),
                     ms(stats.gpu.busy_nanos, last_stats.gpu.busy_nanos),
                     std::array::from_fn::<u64, 3, _>(|core| ms(
                         stats.core_guest_nanos[core],

@@ -139,6 +139,9 @@ impl LatteRenderer {
         }
         self.presented.clear();
         self.flips += 1;
+        if self.flips.is_multiple_of(600) && std::env::var_os("SHOCORA_PROFILE").is_some() {
+            self.report_memory();
+        }
         self.frame_draws = 0;
         if self.bind_groups.len() > MAX_BIND_GROUPS {
             self.bind_groups.clear();

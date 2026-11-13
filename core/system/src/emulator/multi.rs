@@ -38,6 +38,8 @@ use super::{CORE_COUNT, Emulator, Status, bus::CoreBus};
 
 /// A core with nothing to run looks again this often, for sleeps and alarms that are due.
 const IDLE_WAIT: Duration = Duration::from_micros(500);
+/// Turns of a core's loop between looks at the clock for the vertical blank.
+const DEADLINE_TURNS: u32 = 16;
 
 /// What the cores share, behind the machine lock.
 struct Machine<'a> {
@@ -80,6 +82,8 @@ struct CoreReport {
     guest_nanos: u64,
     hle_nanos: u64,
     idle_nanos: u64,
+    fast_nanos: u64,
+    core_nanos: u64,
     crash: Option<String>,
 }
 
@@ -171,6 +175,8 @@ impl Emulator {
             self.stats.guest_nanos += report.guest_nanos;
             self.stats.hle_nanos += report.hle_nanos;
             self.stats.idle_nanos += report.idle_nanos;
+            self.stats.fast_nanos += report.fast_nanos;
+            self.stats.core_nanos += report.core_nanos;
             if let Some(nanos) = self.stats.core_guest_nanos.get_mut(report.core) {
                 *nanos += report.guest_nanos;
             }
@@ -191,12 +197,34 @@ fn run_core(
     memory: &mut Memory,
     setup: CoreSetup<'_, '_>,
 ) -> CoreReport {
+    let started = setup.profile.then(Instant::now);
+    let mut report = run_core_until(core, cpu, memory, setup);
+    if let Some(started) = started {
+        report.core_nanos = started.elapsed().as_nanos() as u64;
+    }
+    report
+}
+
+fn run_core_until(
+    core: u32,
+    cpu: &mut CpuState,
+    memory: &mut Memory,
+    setup: CoreSetup<'_, '_>,
+) -> CoreReport {
     let shared = setup.shared;
     let mut report = CoreReport { core: core as usize, ..CoreReport::default() };
     let mut slice = TIME_SLICE;
     // The scheduler has a look before anything runs: the core may have nothing to do.
     let mut reschedule = true;
-    while !shared.stop.load(Ordering::Relaxed) && Instant::now() < setup.deadline {
+    // The clock is looked at every few turns: a turn is often one short HLE call, and the
+    // clock cost as much as the call.
+    let mut turns = 0_u32;
+    while !shared.stop.load(Ordering::Relaxed) {
+        turns = turns.wrapping_add(1);
+        if (reschedule || turns.is_multiple_of(DEADLINE_TURNS)) && Instant::now() >= setup.deadline
+        {
+            break;
+        }
         if reschedule {
             let timer = setup.profile.then(Instant::now);
             match find_work(core, cpu, memory, setup) {
@@ -249,17 +277,26 @@ fn run_core(
                 if let Some(call) =
                     setup.fast.get(index).filter(|call| !call.writes() || setup.writes.is_some())
                 {
+                    let timer = setup.profile.then(Instant::now);
                     let mut written = |address, size| {
                         if let Some(writes) = setup.writes {
                             writes.note(address, size);
                         }
                     };
-                    if let Err(error) = fast::run(call, cpu, memory, &setup.timebase, &mut written)
-                    {
-                        let message = format!("{error} (lr {:#010x})", cpu.lr);
-                        return stop_with(shared, report, message);
+                    match fast::run(call, cpu, memory, &setup.timebase, &mut written) {
+                        Err(error) => {
+                            let message = format!("{error} (lr {:#010x})", cpu.lr);
+                            return stop_with(shared, report, message);
+                        }
+                        Ok(done) => {
+                            if let Some(timer) = timer {
+                                report.fast_nanos += timer.elapsed().as_nanos() as u64;
+                            }
+                            if done {
+                                continue;
+                            }
+                        }
                     }
-                    continue;
                 }
                 match locked_call(core, index, cpu, memory, setup, &mut report) {
                     Err(message) => return stop_with(shared, report, message),

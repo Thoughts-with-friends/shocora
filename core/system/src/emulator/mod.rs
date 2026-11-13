@@ -50,6 +50,11 @@ pub struct EmuStats {
     pub idle_nanos: u64,
     /// Host time cores side by side waited for each other's HLE calls (profiling).
     pub lock_nanos: u64,
+    /// Host time cores side by side spent in lock-free HLE calls (profiling).
+    pub fast_nanos: u64,
+    /// Host time of the cores side by side from their start to the vertical blank, summed
+    /// over the cores (profiling): what guest, HLE, idle and fast calls leave is overhead.
+    pub core_nanos: u64,
     /// Host time in translated guest code per core side by side (profiling).
     pub core_guest_nanos: [u64; CORE_COUNT],
     /// Host time translating guest code.
@@ -105,12 +110,32 @@ impl std::fmt::Debug for Emulator {
     }
 }
 
+/// Asks Windows for 1 ms timers, as Cemu does: by default a wait with a timeout (an idle core
+/// looking for sleeps and alarms that are due) lasts up to 15.6 ms, which late-wakes guest
+/// threads by whole frames. Once per process; elsewhere timers are fine already.
+fn fine_timers() {
+    #[cfg(windows)]
+    {
+        #[link(name = "winmm")]
+        unsafe extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        // SAFETY: a plain Win32 call without pointers; the period is never ended, which the
+        // system does itself when the process exits.
+        ONCE.call_once(|| unsafe {
+            timeBeginPeriod(1);
+        });
+    }
+}
+
 impl Emulator {
     /// Creates a powered-on console with nothing loaded.
     ///
     /// # Errors
     /// Fails if the guest address space cannot be mapped.
     pub fn new(config: Config) -> Result<Self, EmuError> {
+        fine_timers();
         Ok(Self {
             boot_source: None,
             cheats: Vec::new(),
@@ -156,6 +181,12 @@ impl Emulator {
     #[inline]
     pub fn jit_queue_lengths(&self) -> (usize, usize) {
         self.jit.queue_lengths()
+    }
+
+    /// Bytes of translated code: quick translations, then optimized code.
+    #[inline]
+    pub fn jit_code_bytes(&self) -> (usize, usize) {
+        self.jit.code_bytes()
     }
 
     /// Register state of core `index` (for the debugger).

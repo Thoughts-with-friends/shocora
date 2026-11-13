@@ -6,6 +6,7 @@ use wiiu_peripherals::TimeBase;
 /// Memory plus the timebase, as seen by one core.
 pub struct CoreBus<'a> {
     pub memory: &'a mut Memory,
+    /// The timebase: the guest's time, which is not the same as the host's.
     pub timebase: TimeBase,
     /// Lets the JIT address guest memory directly.
     pub jit_memory: bool,
@@ -54,6 +55,7 @@ impl Bus for CoreBus<'_> {
         if !address.is_multiple_of(4) || !self.memory.is_mapped(address, 4) {
             return Err(BusError { address });
         }
+
         // SAFETY: the word is mapped (checked above) and aligned; other cores reach it only
         // through the same atomic operations or plain accesses of their own.
         let word = unsafe {
@@ -61,6 +63,7 @@ impl Bus for CoreBus<'_> {
                 self.memory.host_base().add(address as usize).cast::<u32>(),
             )
         };
+
         // Guest memory is big-endian.
         Ok(word
             .compare_exchange(
@@ -72,6 +75,7 @@ impl Bus for CoreBus<'_> {
             .is_ok())
     }
 
+    /// The JIT can access memory directly, so it can skip the bus.
     fn fast_memory(&mut self) -> Option<*mut u8> {
         self.jit_memory.then(|| self.memory.host_base())
     }

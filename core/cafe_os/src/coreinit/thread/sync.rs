@@ -33,10 +33,9 @@ enum Lock {
 
 fn try_lock(ctx: &mut HleContext<'_>, key: u32) -> Lock {
     let me = ctx.os.coreinit.threads.current;
-    let state =
-        ctx.os.coreinit.threads.mutexes.entry(key).or_insert(MutexState { owner: 0, count: 0 });
+    let state = ctx.os.coreinit.threads.mutexes.entry(key).or_insert(MutexState::FREE);
     if state.count == 0 {
-        *state = MutexState { owner: me, count: 1 };
+        state.take(me, 1);
         Lock::Acquired
     } else if state.owner == me {
         state.count += 1;
@@ -48,8 +47,16 @@ fn try_lock(ctx: &mut HleContext<'_>, key: u32) -> Lock {
 
 pub(crate) fn lock(ctx: &mut HleContext<'_>, key: u32) {
     if try_lock(ctx, key) == Lock::Contended {
-        block(ctx, Wait::Mutex(key));
+        wait_for_mutex(ctx, key);
     }
+}
+
+/// Blocks the current thread until `key` is free.
+fn wait_for_mutex(ctx: &mut HleContext<'_>, key: u32) {
+    if let Some(state) = ctx.os.coreinit.threads.mutexes.get_mut(&key) {
+        state.contended = true;
+    }
+    block(ctx, Wait::Mutex(key));
 }
 
 pub(crate) fn unlock(ctx: &mut HleContext<'_>, key: u32) {
@@ -62,9 +69,13 @@ pub(crate) fn unlock(ctx: &mut HleContext<'_>, key: u32) {
             state.owner = 0;
             // Most releases find nobody waiting: a scheduling decision would be wasted on them,
             // and titles release locks a million times a second.
-            let waited = Wait::Mutex(key);
-            if scheduler.threads.values().any(|t| t.state == ThreadState::Waiting(waited)) {
-                scheduler.request(Reschedule::Priority);
+            if state.contended {
+                let waited = Wait::Mutex(key);
+                if scheduler.threads.values().any(|t| t.state == ThreadState::Waiting(waited)) {
+                    scheduler.request(Reschedule::Priority);
+                } else if let Some(state) = scheduler.mutexes.get_mut(&key) {
+                    state.contended = false;
+                }
             }
         }
     }
@@ -174,27 +185,23 @@ fn wait_cond(ctx: &mut HleContext<'_>, cond: u32, mutex: u32) {
     match pending {
         Some(p) if p.cond == cond && p.signaled => {
             let me = ctx.os.coreinit.threads.current;
-            let state = ctx
-                .os
-                .coreinit
-                .threads
-                .mutexes
-                .entry(p.mutex)
-                .or_insert(MutexState { owner: 0, count: 0 });
+            let state = ctx.os.coreinit.threads.mutexes.entry(p.mutex).or_insert(MutexState::FREE);
             if state.count == 0 {
-                *state = MutexState { owner: me, count: p.count.max(1) };
+                state.take(me, p.count.max(1));
                 if let Some(thread) = ctx.os.coreinit.threads.current_mut() {
                     thread.pending_cond = None;
                 }
             } else {
-                block(ctx, Wait::Mutex(p.mutex));
+                wait_for_mutex(ctx, p.mutex);
             }
         }
         _ => {
             let me = ctx.os.coreinit.threads.current;
             let count = match ctx.os.coreinit.threads.mutexes.get_mut(&mutex) {
                 Some(state) if state.owner == me => {
-                    std::mem::replace(state, MutexState { owner: 0, count: 0 }).count
+                    let count = state.count;
+                    state.take(0, 0);
+                    count
                 }
                 _ => 1,
             };

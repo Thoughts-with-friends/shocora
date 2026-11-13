@@ -70,18 +70,7 @@ impl RenderBackend for LatteRenderer {
             match command {
                 RenderCommand::ClearScreen { screen, color } => self.clear_screen(*screen, *color),
                 RenderCommand::ArenaWrite { offset, bytes } => {
-                    // Writes must cover whole words: vertex data and indices often end mid-word.
-                    // The padding lands in the gap `arena_reserve` leaves before the next entry.
-                    let padded = (bytes.len() as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
-                    if u64::from(*offset) + padded <= self.arena.size() {
-                        if padded == bytes.len() as u64 {
-                            self.queue.write_buffer(&self.arena, u64::from(*offset), bytes);
-                        } else {
-                            let mut whole = bytes.to_vec();
-                            whole.resize(padded as usize, 0);
-                            self.queue.write_buffer(&self.arena, u64::from(*offset), &whole);
-                        }
-                    }
+                    self.write_arena(u64::from(*offset), bytes);
                 }
                 RenderCommand::ArenaWrap => {
                     self.arena_wraps += 1;

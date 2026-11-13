@@ -56,7 +56,7 @@ fn create(
     record.detached = attr & ATTR_DETACHED != 0;
 
     // A thread created again at the same address starts with fresh TLS.
-    if let Some(old) = ctx.os.coreinit.threads.threads.get(&thread).map(|r| r.tls_block) {
+    if let Some(old) = ctx.os.coreinit.threads.threads.get(&thread).map(|r| r.context.tls_block) {
         if old != 0 {
             if let Some(heap) = ctx.os.coreinit.heaps.default_heap_mut() {
                 heap.free(old);
@@ -249,10 +249,8 @@ fn tls_get_addr(ctx: &mut HleContext<'_>, index: GuestPtr<u32>) -> Result<u32, H
     let Some(image) = ctx.os.coreinit.tls_image.filter(|image| image.module_index == module) else {
         return Err(HleError::Fatal(format!("__tls_get_addr: no TLS module {module}")));
     };
-    let thread = ctx.os.coreinit.threads.current;
-    let Some(block) = ctx.os.coreinit.threads.threads.get(&thread).map(|r| r.tls_block) else {
-        return Err(HleError::Fatal(format!("__tls_get_addr: unknown thread {thread:#010x}")));
-    };
+    // The block travels with the running thread's registers.
+    let block = ctx.cpu.tls_block;
     if block != 0 {
         return Ok(block + offset);
     }
@@ -262,7 +260,7 @@ fn tls_get_addr(ctx: &mut HleContext<'_>, index: GuestPtr<u32>) -> Result<u32, H
         None => ctx.os.registry.allocate_data(size, 0x20),
     };
     ctx.memory.copy_within(block, image.start, image.size)?;
-    with_thread(ctx, thread, |record| record.tls_block = block)?;
+    ctx.cpu.tls_block = block;
     Ok(block + offset)
 }
 
@@ -313,19 +311,12 @@ fn os_is_thread_suspended(ctx: &mut HleContext<'_>, thread: u32) -> bool {
 
 #[hle_export(lib = "coreinit", name = "OSGetThreadSpecific")]
 fn os_get_thread_specific(ctx: &mut HleContext<'_>, slot: u32) -> u32 {
-    ctx.os
-        .coreinit
-        .threads
-        .current_mut()
-        .and_then(|t| t.specific.get(slot as usize).copied())
-        .unwrap_or(0)
+    ctx.cpu.thread_specific.get(slot as usize).copied().unwrap_or(0)
 }
 
 #[hle_export(lib = "coreinit", name = "OSSetThreadSpecific")]
 fn os_set_thread_specific(ctx: &mut HleContext<'_>, slot: u32, value: u32) {
-    if let Some(entry) =
-        ctx.os.coreinit.threads.current_mut().and_then(|t| t.specific.get_mut(slot as usize))
-    {
+    if let Some(entry) = ctx.cpu.thread_specific.get_mut(slot as usize) {
         *entry = value;
     }
 }

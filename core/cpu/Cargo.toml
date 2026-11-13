@@ -18,6 +18,7 @@ cranelift-jit = "0.137"
 cranelift-module = "0.137"
 cranelift-native = "0.137"
 log = { workspace = true }
+region = "3"
 serde = { workspace = true }
 thiserror = { workspace = true }
 

@@ -36,26 +36,34 @@ impl Emulator {
         if self.status != Status::Running {
             return;
         }
+
         crate::cheat::apply(&self.cheats, &mut self.memory);
+
         // Vertical blanks come as often as the guest's time says.
         let frame_time = self.config.frame_time * 2 / self.speed.halves();
         let now = Instant::now();
+
         let deadline = match self.next_vsync {
             Some(vsync) if now < vsync + frame_time * MAX_LAG_FRAMES => vsync,
             _ => now + frame_time,
         };
         self.next_vsync = Some(deadline + frame_time);
+
         // Threads waiting for the GPU look at its progress themselves.
         self.os.coreinit.threads.gpu_retired = self.gpu.retired_counter();
+
         if self.switch_core_mode() {
             self.run_frame_multi_core(deadline);
             if let Some(code) = self.os.exit_code {
                 self.status = Status::Exited(code);
             }
+
             self.finish_gx2_frame();
             self.stats.frames += 1;
             return;
         }
+
+        // Frame budget: Next VSync counts per frame
         let mut budget = self.config.instructions_per_frame;
         let mut slice = TIME_SLICE;
 
@@ -65,14 +73,17 @@ impl Emulator {
             return;
         }
 
+        // Frame loop: run the main core until the next vertical blank.
         while budget > 0 {
             if self.os.exit_code.is_some() {
                 break;
             }
+
             if self.os.frame_done {
                 if !self.config.paced || Instant::now() >= deadline {
                     break;
                 }
+
                 // Sleeps, like Cemu's waiting threads: spinning through every idle moment would
                 // keep a whole core at full load for nothing.
                 if deadline.saturating_duration_since(Instant::now()) > IDLE_POLL + SPIN_MARGIN {
@@ -80,6 +91,8 @@ impl Emulator {
                 } else {
                     wait_until(deadline);
                 }
+
+                // Housekeeping: check for expired sleeps, alarms, and the like.
                 if let Err(error) =
                     self.os.begin_frame(&mut self.cores[MAIN_CORE], &mut self.memory)
                 {
@@ -88,18 +101,23 @@ impl Emulator {
                 }
                 continue;
             }
+
             let timer = self.config.profile.then(Instant::now);
             let result = {
+                // Bus: CPU accesses to memory and peripherals, plus the timebase.
                 let mut bus = CoreBus {
                     memory: &mut self.memory,
                     timebase: self.os.timebase,
                     jit_memory: self.config.jit,
                 };
+                // The JIT can access memory directly.
                 self.jit.run(&mut self.cores[MAIN_CORE], &mut bus, budget.min(slice))
             };
+
             if let Some(timer) = timer {
                 self.stats.guest_nanos += timer.elapsed().as_nanos() as u64;
             }
+
             let (event, executed) = match result {
                 Ok(outcome) => outcome,
                 Err(error) => {
@@ -107,6 +125,7 @@ impl Emulator {
                     return;
                 }
             };
+
             self.stats.instructions += executed;
             budget = budget.saturating_sub(executed);
             slice = slice.saturating_sub(executed);
@@ -119,6 +138,7 @@ impl Emulator {
                         if self.config.profile {
                             *self.slice_ends.entry(self.cores[MAIN_CORE].pc).or_insert(0) += 1;
                         }
+
                         if let Err(error) =
                             self.os.end_time_slice(&mut self.cores[MAIN_CORE], &mut self.memory)
                         {
@@ -127,6 +147,7 @@ impl Emulator {
                         }
                     }
                 }
+
                 StepEvent::HleCall(index) => {
                     self.stats.hle_calls += 1;
                     let timer = self.config.profile.then(Instant::now);
@@ -137,16 +158,19 @@ impl Emulator {
                         gpu: &mut self.gpu,
                         iosu: &mut self.iosu,
                     };
+
                     if let Err(error) = dispatch(&mut ctx, index) {
                         self.crash(format!("{error} (lr {:#010x})", self.cores[MAIN_CORE].lr));
                         return;
                     }
+
                     if let Some(timer) = timer {
                         let nanos = timer.elapsed().as_nanos() as u64;
                         self.stats.hle_nanos += nanos;
                         self.os.registry.note_time(index, nanos);
                     }
                 }
+
                 StepEvent::SystemCall => {
                     self.crash(format!(
                         "unsupported syscall at {:#010x}",
@@ -154,6 +178,7 @@ impl Emulator {
                     ));
                     return;
                 }
+
                 StepEvent::Trap => {
                     self.crash(format!(
                         "trap at {:#010x}",
@@ -167,11 +192,13 @@ impl Emulator {
                 break;
             }
         }
+
         if let Some(code) = self.os.exit_code {
             self.status = Status::Exited(code);
         } else if self.config.paced {
             wait_until(deadline);
         }
+
         self.finish_gx2_frame();
         self.stats.frames += 1;
     }
@@ -190,8 +217,12 @@ impl Emulator {
 
     /// What happens at every vertical blank.
     fn finish_gx2_frame(&mut self) {
+        // SAFETY: between frames no core runs translated code: side by side, the cores'
+        // threads have ended; on one thread, `run_frame` has left the JIT.
+        unsafe { self.jit.release_cold_code() };
         self.os.vsync();
     }
+
     fn crash_on_cpu_error(&mut self, error: &CpuError) {
         let pc = self.cores[MAIN_CORE].pc;
         let context = self

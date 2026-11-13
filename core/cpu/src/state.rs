@@ -41,7 +41,7 @@ impl Fpr {
 }
 
 /// Register file of one core.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 pub struct CpuState {
     pub gpr: [u32; 32],
     pub fpr: [Fpr; 32],
@@ -65,6 +65,62 @@ pub struct CpuState {
     pub reservation: Option<(u32, u32)>,
     /// Every other SPR, indexed by SPR number.
     pub spr: Vec<u32>,
+    /// The running thread's `OSSetThreadSpecific` slots. They travel with the registers, so
+    /// a core reads them without asking the scheduler, as Cafe OS reads its current thread.
+    pub thread_specific: [u32; 16],
+    /// The running thread's copy of the TLS image (0 until `__tls_get_addr` makes one).
+    pub tls_block: u32,
+}
+
+impl Clone for CpuState {
+    fn clone(&self) -> Self {
+        let mut copy = Self::new(0);
+        copy.clone_from(self);
+        copy
+    }
+
+    /// Copies into the SPR storage already there: threads switch cores' registers often,
+    /// and a fresh allocation each time cost more than the copy.
+    fn clone_from(&mut self, source: &Self) {
+        let Self {
+            gpr,
+            fpr,
+            pc,
+            lr,
+            ctr,
+            cr,
+            xer_so,
+            xer_ov,
+            xer_ca,
+            xer_byte_count,
+            fpscr,
+            msr,
+            gqr,
+            sr,
+            reservation,
+            spr,
+            thread_specific,
+            tls_block,
+        } = source;
+        self.gpr = *gpr;
+        self.fpr = *fpr;
+        self.pc = *pc;
+        self.lr = *lr;
+        self.ctr = *ctr;
+        self.cr = *cr;
+        self.xer_so = *xer_so;
+        self.xer_ov = *xer_ov;
+        self.xer_ca = *xer_ca;
+        self.xer_byte_count = *xer_byte_count;
+        self.fpscr = *fpscr;
+        self.msr = *msr;
+        self.gqr = *gqr;
+        self.sr = *sr;
+        self.reservation = *reservation;
+        self.spr.clone_from(spr);
+        self.thread_specific = *thread_specific;
+        self.tls_block = *tls_block;
+    }
 }
 
 impl CpuState {
@@ -92,6 +148,8 @@ impl CpuState {
             sr: [0; 16],
             reservation: None,
             spr,
+            thread_specific: [0; 16],
+            tls_block: 0,
         }
     }
 

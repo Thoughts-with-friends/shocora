@@ -23,26 +23,37 @@ impl Emulator {
     pub fn load_title(&mut self, path: &Path) -> Result<(), EmuError> {
         let mut info = TitleSource::open(path)?;
         let notices = self.apply_update(&mut info)?;
+
+        // The RPX is the title's entry point, and the volumes are its file system.
         let rpx = std::fs::read(&info.rpx_path)
             .map_err(|source| EmuError::Io { path: info.rpx_path.clone(), source })?;
+
+        // The volumes are mounted read-only, except for `/vol/save` which is writable.
         let vfs = self.mount_volumes(&info)?;
+
+        // The RPX is the title's entry point, and the volumes are its file system.
         let name = info
             .rpx_path
             .file_name()
             .map_or_else(|| "main.rpx".into(), |n| n.to_string_lossy().into_owned());
+
+        // The title's RPX is loaded into memory and the main thread is started.
         self.boot(&name, &rpx, Iosu::new(vfs))?;
         self.os.aoc = info
             .dlc
             .iter()
             .map(|dlc| AocTitle { title_id: dlc.title_id, version: dlc.version })
             .collect();
+
         // Shown in the window's log: the first thing to look at when a title will not start.
         self.os.console.extend(notices);
         self.title = Some(info);
         self.boot_source = Some(BootSource::Title(path.to_owned()));
+
         if let Err(error) = self.reload_cheats() {
             log::warn!("{error}");
         }
+
         Ok(())
     }
 
@@ -51,28 +62,34 @@ impl Emulator {
     /// over and why.
     fn apply_update(&self, info: &mut TitleInfo) -> Result<Vec<String>, EmuError> {
         let Some(title_id) = info.meta.title_id else { return Ok(Vec::new()) };
+
         let root = match &info.source {
             TitleSource::Directory(root) => Some(root.clone()),
             TitleSource::Rpx(_) => None,
         };
+
         let config = &self.config;
         let find = |kind, libraries: &[std::path::PathBuf]| {
             update::find_add_on(kind, title_id, root.as_deref(), libraries, &config.mlc_dirs)
         };
+
         let updates = find(AddOnKind::Update, &config.update_dirs);
         let dlc = find(AddOnKind::Dlc, &config.dlc_dirs);
+
         let mut notices: Vec<String> = updates
             .rejected
             .iter()
             .chain(&dlc.rejected)
             .map(|(dir, problem)| format!("[shocora] ignored: {}: {problem}", dir.display()))
             .collect();
+
         if let Some(dir) = updates.found {
             let base = info.clone();
             *info = base.with_update(&dir)?;
             let version = info.meta.title_version.unwrap_or(0);
             notices.push(format!("[shocora] update v{version}: {}", dir.display()));
         }
+
         if let Some(dir) = dlc.found {
             let version = dlc.version.unwrap_or(0);
             notices.push(format!("[shocora] DLC v{version}: {}", dir.display()));
@@ -82,9 +99,11 @@ impl Emulator {
                 version: u16::try_from(version).unwrap_or(u16::MAX),
             });
         }
+
         for notice in &notices {
             log::info!("{notice}");
         }
+
         Ok(notices)
     }
 
@@ -121,8 +140,10 @@ impl Emulator {
                 .fold(Overlay::new(), |overlay, dir| overlay.layer(HostDirectory::read_only(dir)))
                 .layer(HostDirectory::read_only(base))
         };
+
         let mut vfs = Vfs::new();
         vfs.mount("/vol/code", volume(&info.code_dir, "code"))?;
+
         if let Some(content) = &info.content_dir {
             let mut content = volume(content, "content");
             let gate = info.meta.title_id.and_then(update::version_gate);
@@ -134,16 +155,22 @@ impl Emulator {
             }
             vfs.mount("/vol/content", content)?;
         }
+
         if let Some(meta) = &info.meta_dir {
             vfs.mount("/vol/meta", volume(meta, "meta"))?;
         }
+
         if let Some(dlc) = &info.dlc {
             let aoc = AocTitle { title_id: dlc.title_id, version: dlc.version };
             vfs.mount(&aoc.path(), HostDirectory::read_only(dlc.dir.join("content")))?;
         }
+
         let title_id =
             info.meta.title_id.map_or_else(|| "homebrew".to_owned(), |id| format!("{id:016x}"));
+
+        // The title's save data is writable, and is stored in the host's `save` folder.
         vfs.mount("/vol/save", HostDirectory::writable(self.config.save_dir.join(title_id)))?;
+
         Ok(vfs)
     }
 
@@ -151,9 +178,11 @@ impl Emulator {
     fn boot(&mut self, name: &str, rpx: &[u8], iosu: Iosu) -> Result<(), EmuError> {
         let gamepad = self.os.gamepad;
         let pro_controllers = self.os.pro_controllers;
+
         self.memory = Memory::with_game_layout()?;
         self.cores = (0..CORE_COUNT as u32).map(CpuState::new).collect();
         self.jit = wiiu_cpu::Jit::new();
+
         self.os = CafeOs::new();
         self.os.timebase.set_speed(self.speed);
         self.os.gamepad = gamepad;
@@ -161,18 +190,25 @@ impl Emulator {
         self.os.gx2.forced_swap_interval = self.config.swap_interval;
         self.os.gx2.min_swap_interval = self.config.min_swap_interval.unwrap_or(0);
         self.os.coreinit.shared_data.fonts_dir.clone_from(&self.config.fonts_dir);
+
         self.gpu = if self.config.gpu_thread { Gpu::threaded() } else { Gpu::new() };
         self.gpu.reset_renderer();
         self.gpu.set_resolution_factor(self.config.resolution_factor);
+
+        // IOSU means "I/O and system utilities":
+        // the Wii U's OS, which is not the same as the host's.
         self.iosu = iosu;
+
         self.stats = EmuStats::default();
         self.next_vsync = None;
         self.multi_core_running = false;
 
         let boot = self.os.boot(&mut self.memory, name, rpx)?;
         start_main_thread(&mut self.cores[MAIN_CORE], &boot);
+
         self.gpu.blank_screens();
         self.status = Status::Running;
+
         Ok(())
     }
 }
@@ -181,12 +217,14 @@ impl Emulator {
 fn start_main_thread(cpu: &mut CpuState, boot: &BootInfo) {
     cpu.pc = boot.entry;
     cpu.lr = boot.return_address;
+
     cpu.gpr[1] = boot.stack_pointer;
     cpu.gpr[2] = boot.sda2_base;
     cpu.gpr[13] = boot.sda_base;
     cpu.gpr[3] = boot.args[0];
     cpu.gpr[4] = boot.args[1];
     cpu.gpr[5] = boot.args[2];
+
     // Paired-single quantisation presets coreinit installs (UGQR2..=5).
     cpu.gqr[2] = 0x0004_0004;
     cpu.gqr[3] = 0x0005_0005;

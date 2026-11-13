@@ -34,6 +34,13 @@ pub enum FastCall {
     Tick,
     /// `OSGetSystemTick`.
     SystemTick,
+    /// `OSGetThreadSpecific(slot)`: the running thread's slot, kept with its registers.
+    GetSpecific,
+    /// `OSSetThreadSpecific(slot, value)`.
+    SetSpecific,
+    /// `__tls_get_addr(tls_index*)` once the thread has its block; the first call, which
+    /// makes the block, takes the lock.
+    TlsAddress,
 }
 
 impl FastCall {
@@ -44,7 +51,7 @@ impl FastCall {
     }
 }
 
-const FUNCTIONS: [(&str, FastCall); 19] = [
+const FUNCTIONS: [(&str, FastCall); 22] = [
     ("memcpy", FastCall::Copy),
     ("memmove", FastCall::Copy),
     ("OSBlockMove", FastCall::Copy),
@@ -64,6 +71,9 @@ const FUNCTIONS: [(&str, FastCall); 19] = [
     ("OSGetSystemTime", FastCall::SystemTime),
     ("OSGetTick", FastCall::Tick),
     ("OSGetSystemTick", FastCall::SystemTick),
+    ("OSGetThreadSpecific", FastCall::GetSpecific),
+    ("OSSetThreadSpecific", FastCall::SetSpecific),
+    ("__tls_get_addr", FastCall::TlsAddress),
 ];
 
 /// Which HLE indices are such functions.
@@ -93,6 +103,7 @@ impl FastCalls {
 }
 
 /// Runs `call` for the core in `cpu`; `written` hears of what reached memory the GPU reads.
+/// Returns `false` when the call needs its locked version after all.
 ///
 /// # Errors
 /// Fails like the locked version when the guest passes memory it does not have.
@@ -102,7 +113,7 @@ pub fn run(
     memory: &mut Memory,
     timebase: &TimeBase,
     written: &mut dyn FnMut(u32, u32),
-) -> Result<(), MemoryError> {
+) -> Result<bool, MemoryError> {
     let [a, b, c] = [cpu.gpr[3], cpu.gpr[4], cpu.gpr[5]];
     match call {
         FastCall::Copy => {
@@ -126,8 +137,22 @@ pub fn run(
         FastCall::SystemTime => set_u64(cpu, timebase.ticks_since_boot()),
         FastCall::Tick => cpu.gpr[3] = timebase.ticks_since_epoch() as u32,
         FastCall::SystemTick => cpu.gpr[3] = timebase.ticks_since_boot() as u32,
+        FastCall::GetSpecific => {
+            cpu.gpr[3] = cpu.thread_specific.get(a as usize).copied().unwrap_or(0);
+        }
+        FastCall::SetSpecific => {
+            if let Some(slot) = cpu.thread_specific.get_mut(a as usize) {
+                *slot = b;
+            }
+        }
+        FastCall::TlsAddress => {
+            if cpu.tls_block == 0 {
+                return Ok(false);
+            }
+            cpu.gpr[3] = cpu.tls_block.wrapping_add(memory.read_u32(a.wrapping_add(4))?);
+        }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// A 64-bit return value, as the locked versions return it.

@@ -65,6 +65,9 @@ pub use thread::*;
 /// Size the shader prelude reads through the dynamic binding.
 const PARAMS_BINDING_SIZE: u64 = 340;
 
+/// Staging space for texture uploads recorded into the frame's commands.
+const UPLOAD_RING_SIZE: u64 = 32 << 20;
+
 /// Address of the surfaces standing in for attachments of the wrong size.
 const STAND_IN_ADDRESS: u32 = 0xFFFF_F000;
 
@@ -78,6 +81,14 @@ pub struct LatteRenderer {
     arena: wgpu::Buffer,
     arena_layout: wgpu::BindGroupLayout,
     arena_group: wgpu::BindGroup,
+    /// Texels on their way to textures: written with the queue, copied by the encoder, so an
+    /// upload lands between the draws around it without submitting what came before.
+    upload_ring: wgpu::Buffer,
+    /// Where the next upload goes in `upload_ring`; back to 0 on every submit.
+    upload_cursor: u64,
+    /// Arena writes that follow each other, gathered into one queue write: a frame has
+    /// thousands of small ones, and each queue write has a cost of its own.
+    arena_pending: (u64, Vec<u8>),
     surfaces: HashMap<SurfaceKey, HostSurface>,
     next_surface_id: u64,
     /// Filled from several threads at once when pipelines are compiled.
@@ -162,6 +173,13 @@ impl LatteRenderer {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::INDEX
                 | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let upload_ring = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shocora uploads"),
+            size: UPLOAD_RING_SIZE,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -277,6 +295,9 @@ impl LatteRenderer {
             arena,
             arena_layout,
             arena_group,
+            upload_ring,
+            upload_cursor: 0,
+            arena_pending: (0, Vec::new()),
             surfaces: HashMap::new(),
             next_surface_id: 1,
             modules: Arc::default(),
@@ -381,6 +402,41 @@ impl LatteRenderer {
         })
     }
 
+    /// Writes `bytes` to the arena at `offset`, after the writes gathered so far if it
+    /// continues them. The queue applies its writes before the next submitted commands, so
+    /// gathering them until then changes nothing for the draws.
+    fn write_arena(&mut self, offset: u64, bytes: &[u8]) {
+        /// Gaps of padding between entries are filled in rather than starting over.
+        const MAX_GAP: u64 = 256;
+        const MAX_PENDING: usize = 4 << 20;
+        let (start, pending) = &mut self.arena_pending;
+        let end = *start + pending.len() as u64;
+        if pending.is_empty() {
+            *start = offset;
+        } else if offset < end || offset - end > MAX_GAP || pending.len() > MAX_PENDING {
+            self.flush_arena();
+            self.arena_pending.0 = offset;
+        } else {
+            pending.resize((offset - *start) as usize, 0);
+        }
+        self.arena_pending.1.extend_from_slice(bytes);
+    }
+
+    fn flush_arena(&mut self) {
+        let (start, pending) = &mut self.arena_pending;
+        if pending.is_empty() {
+            return;
+        }
+        // Writes must cover whole words: vertex data and indices often end mid-word. The
+        // padding lands in the gap `arena_reserve` leaves before the next entry.
+        let padded = (pending.len() as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+        pending.resize(padded as usize, 0);
+        if *start + padded <= self.arena.size() {
+            self.queue.write_buffer(&self.arena, *start, pending);
+        }
+        pending.clear();
+    }
+
     fn end_pass(&mut self) {
         self.pass = None;
         self.pass_key = None;
@@ -389,9 +445,42 @@ impl LatteRenderer {
     /// Submits everything recorded so far.
     pub fn submit(&mut self) {
         self.end_pass();
+        self.flush_arena();
         if let Some(encoder) = self.encoder.take() {
             self.queue.submit([encoder.finish()]);
         }
+        // The queue's writes of the next commands come after these in the queue's order.
+        self.upload_cursor = 0;
+    }
+}
+
+impl LatteRenderer {
+    /// What the renderer holds, for finding where memory goes (`SHOCORA_PROFILE`).
+    fn report_memory(&self) {
+        let bytes = |texture: &wgpu::Texture| -> u64 {
+            let size = texture.size();
+            let format = texture.format();
+            let block = format.block_dimensions();
+            let per_block = u64::from(format.block_copy_size(None).unwrap_or(4));
+            let base = u64::from(size.width.div_ceil(block.0))
+                * u64::from(size.height.div_ceil(block.1))
+                * u64::from(size.depth_or_array_layers)
+                * per_block;
+            if texture.mip_level_count() > 1 { base * 4 / 3 } else { base }
+        };
+        let surface_bytes: u64 = self.surfaces.values().map(|s| bytes(&s.texture)).sum();
+        let feedback_bytes: u64 = self.feedback_copies.values().map(bytes).sum();
+        println!(
+            "renderer at flip {}: {} surfaces {} MB, {} feedback copies {} MB, {} pipelines, {} shader modules, {} bind groups",
+            self.flips,
+            self.surfaces.len(),
+            surface_bytes >> 20,
+            self.feedback_copies.len(),
+            feedback_bytes >> 20,
+            self.pipelines.len(),
+            self.modules.lock().unwrap_or_else(PoisonError::into_inner).len(),
+            self.bind_groups.len(),
+        );
     }
 }
 
