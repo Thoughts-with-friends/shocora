@@ -1,6 +1,7 @@
 //! `vpad.rpl`: the Wii U GamePad.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
+use wiiu_peripherals::Motion;
 
 use crate::hle::{HleContext, HleError, HleExport};
 
@@ -13,8 +14,31 @@ mod offset {
     pub const RELEASE: u32 = 0x08;
     pub const LEFT_STICK: u32 = 0x0C;
     pub const RIGHT_STICK: u32 = 0x14;
+    /// `VPADAccStatus` (`acc`, `magnitude`, `variation`, `vertical`), then `gyro` at 0x38
+    /// and `angle` at 0x44.
+    pub const ACC: u32 = 0x1C;
     /// Three `VPADTPData`: the raw sample and two filtered ones.
     pub const TOUCH: [u32; 3] = [0x52, 0x5A, 0x62];
+    /// `VPADDirection`: the GamePad's X, Y and Z axes.
+    pub const DIRECTION: u32 = 0x6C;
+}
+
+/// Writes the motion fields of a `VPADStatus` at `base`.
+fn write_motion(ctx: &mut HleContext<'_>, base: u32, motion: &Motion) -> Result<(), HleError> {
+    let mut floats = Vec::with_capacity(27);
+    floats.extend(motion.acc);
+    floats.extend([motion.acc_magnitude, motion.acc_variation]);
+    floats.extend(motion.acc_vertical);
+    floats.extend(motion.gyro);
+    floats.extend(motion.angle);
+    // `acc` through `angle` are contiguous.
+    for (index, value) in (0_u32..).zip(floats) {
+        ctx.memory.write_f32(base + offset::ACC + index * 4, value)?;
+    }
+    for (index, value) in (0_u32..).zip(motion.direction.into_iter().flatten()) {
+        ctx.memory.write_f32(base + offset::DIRECTION + index * 4, value)?;
+    }
+    Ok(())
 }
 
 /// `VPADTPData::validity`.
@@ -97,6 +121,7 @@ fn vpad_read(
         ctx.memory.write_f32(base + at, stick.x)?;
         ctx.memory.write_f32(base + at + 4, stick.y)?;
     }
+    write_motion(ctx, base, &pad.motion.unwrap_or(Motion::REST))?;
     // Coordinates stay after the finger leaves: some titles read them then.
     if let Some((x, y)) = pad.touch {
         ctx.os.last_touch = panel_from_screen(x, y);
@@ -175,6 +200,28 @@ mod tests {
         env.call("vpad", "VPADRead", &[0, SCRATCH, 1, 0]);
         assert_eq!(word(&env, raw), 2033);
         assert_eq!((word(&env, raw + 4), word(&env, raw + 6)), (0, 3));
+    }
+
+    /// Intent: without a motion source the GamePad reads as Cemu reports it (lying still,
+    /// axes the identity), and a source's sample reaches the title at wut's offsets.
+    /// Pass: direction X axis is (1,0,0) at rest; a sample's gyro and direction come back.
+    #[test]
+    fn motion_reaches_the_title() {
+        let mut env = TestEnv::new();
+        env.call("vpad", "VPADRead", &[0, SCRATCH, 1, 0]);
+        let float = |env: &TestEnv, at: u32| env.memory.read_f32(SCRATCH + at).unwrap();
+        assert_eq!(float(&env, offset::DIRECTION), 1.0);
+        assert_eq!(float(&env, offset::DIRECTION + 0x10), 1.0);
+        assert_eq!(float(&env, offset::ACC + 0x14), 1.0);
+
+        let mut motion = wiiu_peripherals::Motion::REST;
+        motion.gyro = [0.25, -0.5, 0.0];
+        motion.direction[2] = [0.0, -1.0, 0.0];
+        env.os.gamepad.motion = Some(motion);
+        env.call("vpad", "VPADRead", &[0, SCRATCH, 1, 0]);
+        let gyro = offset::ACC + 0x1C;
+        assert_eq!((float(&env, gyro), float(&env, gyro + 4)), (0.25, -0.5));
+        assert_eq!(float(&env, offset::DIRECTION + 0x1C), -1.0);
     }
 
     #[test]

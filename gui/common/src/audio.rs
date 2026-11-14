@@ -8,7 +8,10 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use cpal::{
@@ -26,6 +29,26 @@ const MAX_RATE_CHANGE: f32 = 0.005;
 const FADE_OUT: f32 = 0.995;
 
 type Queue = Arc<Mutex<VecDeque<i16>>>;
+
+/// Output gain shared with the UI, as `f32` bits: a change is heard from the next device
+/// buffer on.
+#[derive(Debug, Clone)]
+pub struct Volume(Arc<AtomicU32>);
+
+impl Volume {
+    /// A gain of `value` (`0.0` silent, `1.0` as the title mixed it).
+    pub fn new(value: f32) -> Self {
+        Self(Arc::new(AtomicU32::new(value.clamp(0.0, 1.0).to_bits())))
+    }
+
+    pub fn set(&self, value: f32) {
+        self.0.store(value.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
 
 /// Turns queued stereo samples into a steady stream at the device's rate.
 #[derive(Debug, Clone)]
@@ -89,13 +112,14 @@ impl Playback {
         queue: &mut VecDeque<i16>,
         data: &mut [T],
         channels: usize,
+        gain: f32,
         convert: impl Fn(f32) -> T,
     ) {
         let step = self.adjusted_step(queue.len() / 2);
         for frame in data.chunks_mut(channels) {
             let stereo = self.next_frame(queue, step);
             for (channel, slot) in frame.iter_mut().enumerate() {
-                *slot = convert(stereo[channel.min(1)]);
+                *slot = convert(stereo[channel.min(1)] * gain);
             }
         }
     }
@@ -114,10 +138,10 @@ impl std::fmt::Debug for AudioOutput {
 }
 
 impl AudioOutput {
-    /// Opens the default output device.
-    pub fn open(input_rate: u32) -> Self {
+    /// Opens the default output device, playing at `volume`.
+    pub fn open(input_rate: u32, volume: Volume) -> Self {
         let queue = Queue::default();
-        let stream = Self::open_stream(input_rate, &queue);
+        let stream = Self::open_stream(input_rate, &queue, volume);
         if let Err(error) = &stream {
             log::warn!("no audio output: {error}");
         }
@@ -127,6 +151,7 @@ impl AudioOutput {
     fn open_stream(
         input_rate: u32,
         queue: &Queue,
+        volume: Volume,
     ) -> Result<cpal::Stream, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or("no default output device")?;
@@ -136,12 +161,13 @@ impl AudioOutput {
         let mut playback = Playback::new(input_rate as f32 / config.sample_rate as f32);
         let on_error = |error| log::warn!("audio stream: {error}");
         let queue = Arc::clone(queue);
+        let float_volume = volume.clone();
         let stream = match supported.sample_format() {
             SampleFormat::I16 => device.build_output_stream(
                 &config,
                 move |data: &mut [i16], _: &_| {
                     let mut guard = queue.lock().unwrap_or_else(PoisonError::into_inner);
-                    playback.fill(&mut guard, data, channels, |sample| {
+                    playback.fill(&mut guard, data, channels, volume.get(), |sample| {
                         (sample.clamp(-1.0, 1.0) * 32767.0) as i16
                     });
                 },
@@ -152,7 +178,7 @@ impl AudioOutput {
                 &config,
                 move |data: &mut [f32], _: &_| {
                     let mut guard = queue.lock().unwrap_or_else(PoisonError::into_inner);
-                    playback.fill(&mut guard, data, channels, |sample| sample);
+                    playback.fill(&mut guard, data, channels, float_volume.get(), |sample| sample);
                 },
                 on_error,
                 None,
@@ -209,6 +235,7 @@ mod tests {
             playback.next_frame(&mut queue, 1.0);
         }
         assert!(!playback.playing);
+
         let first = playback.next_frame(&mut queue, 1.0)[0];
         let later = (0..1000).fold(first, |_, _| playback.next_frame(&mut queue, 1.0)[0]);
         assert!(first > 0.4 && later < 0.01, "{first} then {later}");

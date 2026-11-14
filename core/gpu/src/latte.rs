@@ -36,7 +36,12 @@ pub const STREAM_REGION_BASE: u32 = ARENA_SIZE - STREAM_REGION_SIZE;
 /// Alignment of draw parameter blocks (`min_storage_buffer_offset_alignment`).
 const PARAMS_ALIGN: u32 = 256;
 /// Size of `DrawParams` in the shader prelude.
-const PARAMS_SIZE: usize = 32 + 4 * 16 * 4 + 36 + 16;
+/// Bytes of the draw parameters the shader prelude reads (`DrawParams`).
+pub const PARAMS_SIZE: usize = 32 + 4 * 16 * 4 + 36 + 16 + 4 * PS_SAMPLERS;
+/// Pixel shader sampler units, whose LOD bias the shaders read from the draw parameters.
+const PS_SAMPLERS: usize = 18;
+/// First draw parameter word of the pixel samplers' LOD biases.
+const PARAM_PS_LOD_BIAS: usize = 85;
 /// Texture contents are re-checked once per this many frames at most.
 const TEXTURE_RECHECK_FRAMES: u64 = 2;
 /// Frames a vertex or uniform buffer is trusted without looking at it again, unless the
@@ -737,7 +742,25 @@ impl Latte {
             log::debug!("texture at {:#010x} outside mapped memory", words.address);
             return;
         };
-        let hash = texture_hash(base, addrlib::is_compressed(words.format & 0x3F));
+        let compressed = addrlib::is_compressed(words.format & 0x3F);
+        let mut hash = texture_hash(base, compressed);
+        // The smaller levels live elsewhere and are often streamed in after the largest:
+        // looking only at that one kept garbage mips, seen as black or striped ground
+        // whenever the camera moved (BotW).
+        if mip_count > 1 && mip_base != 0 {
+            let chain = mip_chain_size(words, dim, mip_count);
+            let mips = wiiu_mem_addr::physical_to_effective(mip_base).and_then(|effective| {
+                memory
+                    .slice(
+                        masked_address(effective, words.tile_mode) & !0xFF,
+                        chain.min(0x0400_0000),
+                    )
+                    .ok()
+            });
+            if let Some(mips) = mips {
+                hash ^= texture_hash(mips, compressed).rotate_left(17);
+            }
+        }
         if let Some(known) = self.textures.get_mut(&key) {
             known.last_check = frame;
             if known.content_hash == hash {
@@ -1529,6 +1552,13 @@ impl Latte {
                 params[word] |= 1 << unit;
             }
         }
+        // The sampler's LOD bias (signed 6.6 in the top of word 1): titles sharpen textures
+        // with a negative one, which the host sampler has no field for.
+        for unit in 0..PS_SAMPLERS {
+            let word1 = regs.get(base::SAMPLER + unit as u32 * 3 + 1);
+            let bias = (word1.cast_signed() >> 20) as f32 / 64.0;
+            params[PARAM_PS_LOD_BIAS + unit] = bias.to_bits();
+        }
         let params_bytes: Vec<u8> = params.iter().flat_map(|w| w.to_le_bytes()).collect();
         let params_offset = self.arena_write_unique(&params_bytes, PARAMS_ALIGN);
 
@@ -1932,6 +1962,40 @@ fn sampled_hash(bytes: &[u8]) -> u64 {
         at += step;
     }
     hash
+}
+
+/// Bytes from the first mip level after the largest to the end of the last one, laid out as
+/// [`decode_mips`] reads them.
+fn mip_chain_size(words: &SurfaceWords, dim: TextureDim, mip_count: u32) -> u32 {
+    let (mut offset, mut previous_size) = (0_u32, 0_u32);
+    let mut last_tile = words.tile_mode;
+    let mut macro_stopped = false;
+    for level in 1..mip_count {
+        let info = addrlib::gx2_surface_info(
+            words.format,
+            words.width,
+            words.height,
+            words.depth.max(1),
+            gx2_dim(dim),
+            words.tile_mode,
+            words.aa,
+            level,
+            false,
+            false,
+        );
+        if level > 1 {
+            let stop = tile_mode::is_macro_tiled(last_tile)
+                && !tile_mode::is_macro_tiled(info.hw_tile_mode);
+            if stop && !macro_stopped {
+                macro_stopped = true;
+                offset += words.address & 0x700;
+            }
+            offset = (offset + previous_size).next_multiple_of(info.base_align.max(1));
+        }
+        last_tile = info.hw_tile_mode;
+        previous_size = info.surf_size as u32;
+    }
+    offset.saturating_add(previous_size).max(1)
 }
 
 fn decode_mips(

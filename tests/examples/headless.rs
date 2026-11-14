@@ -10,6 +10,7 @@
 //! * `SHOCORA_SHOTS="dir,every"`: render on the GPU and save the TV/GamePad image
 //!   every `every` flips. Files stay outside the repository unless you say otherwise.
 //! * `SHOCORA_PRESS="frame,button,frames;..."`: scripted GamePad input.
+//! * `SHOCORA_STICK="frame,x,y,frames;..."`: tilts the left stick (`x`, `y` in -1..1).
 //! * `SHOCORA_UNPACED`: do not wait for real time between frames.
 //! * `SHOCORA_PROFILE`: flips per second and where the host time goes. `SHOCORA_PROFILE=flips`
 //!   leaves out the timers around every HLE call, which cost time themselves.
@@ -461,6 +462,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let render_sender = render_thread.as_ref().and_then(|thread| thread.sender());
     let presses = parse_presses(&std::env::var("SHOCORA_PRESS").unwrap_or_default());
+    let sticks: Vec<(u64, f32, f32, u64)> = std::env::var("SHOCORA_STICK")
+        .unwrap_or_default()
+        .split(';')
+        .filter_map(|item| {
+            let parts: Vec<&str> = item.split(',').map(str::trim).collect();
+            let [at, x, y, length] = parts[..] else { return None };
+            Some((at.parse().ok()?, x.parse().ok()?, y.parse().ok()?, length.parse().ok()?))
+        })
+        .collect();
 
     // SHOCORA_CAPTURE="flip,dir,min_pixels": see `capture_frame`.
     let capture = std::env::var("SHOCORA_CAPTURE").ok().and_then(|text| {
@@ -553,6 +563,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .fold(0, |bits, p| bits | p.button);
         let guest = *second_player.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut pad = GamePadState::from_button_bits(held);
+        if let Some(&(_, x, y, _)) =
+            sticks.iter().find(|&&(at, _, _, length)| frame >= at && frame < at + length)
+        {
+            pad.left_stick = wiiu_emu::Stick { x, y };
+        }
 
         // SHOCORA_TOUCH="frame,x,y,frames": a finger on the GamePad's screen.
         pad.touch = std::env::var("SHOCORA_TOUCH").ok().and_then(|text| {

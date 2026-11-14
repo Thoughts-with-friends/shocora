@@ -17,9 +17,10 @@ impl ShocoraApp {
     pub(super) fn screens(&mut self, ui: &mut egui::Ui) {
         let views = Screen::ALL.map(|screen| self.presenter.view(screen));
         let shown = [true, !self.config.gamepad_window];
-        let (touch, double_clicked) = show_screens(ui, views, shown);
-        self.touch = touch;
-        if double_clicked {
+        let input = show_screens(ui, views, shown);
+        self.touch = input.touch;
+        self.motion.tilt = input.tilt;
+        if input.double_clicked {
             toggle_fullscreen(ui.ctx());
         }
     }
@@ -27,6 +28,7 @@ impl ShocoraApp {
     /// The GamePad's screen in a window of its own, while a title runs and the user wants it.
     pub(super) fn gamepad_window(&mut self, ctx: &egui::Context, in_menu: bool) {
         self.window_touch = None;
+        self.motion.window_tilt = None;
         self.window_keys = GamePadState::default();
         if !self.config.gamepad_window || in_menu {
             return;
@@ -42,18 +44,17 @@ impl ShocoraApp {
             .with_inner_size([width as f32, height as f32])
             .with_min_inner_size([width as f32 / 4.0, height as f32 / 4.0]);
         let bindings = &self.config.key_bindings;
-        let (touch, keys, closed) = ctx.show_viewport_immediate(
+        let (input, keys, closed) = ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("shocora gamepad"),
             builder,
             |ui, _class| {
                 let ctx = ui.ctx().clone();
-                let mut touch = None;
+                let mut input = ScreenInput::default();
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
                     .show(ui, |ui| {
-                        let (at, double_clicked) = show_screens(ui, [None, view], [false, true]);
-                        touch = at;
-                        if double_clicked {
+                        input = show_screens(ui, [None, view], [false, true]);
+                        if input.double_clicked {
                             toggle_fullscreen(&ctx);
                         }
                     });
@@ -65,10 +66,11 @@ impl ShocoraApp {
                     })
                 });
                 let closed = ctx.input(|input| input.viewport().close_requested());
-                (touch, keys, closed)
+                (input, keys, closed)
             },
         );
-        self.window_touch = touch;
+        self.window_touch = input.touch;
+        self.motion.window_tilt = input.tilt;
         self.window_keys = keys;
         if closed {
             self.config.gamepad_window = false;
@@ -102,14 +104,24 @@ pub(super) fn fullscreen_hotkeys(ctx: &egui::Context) {
     }
 }
 
+/// What the mouse did on the screens.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ScreenInput {
+    /// Where the left button touches the GamePad's screen, in its pixels.
+    pub touch: Option<(u16, u16)>,
+    /// Where the right button holds the GamePad's screen, `0.0..=1.0` across it: the
+    /// GamePad tilts that way (Cemu's mouse motion).
+    pub tilt: Option<(f32, f32)>,
+    /// The TV's screen was double-clicked.
+    pub double_clicked: bool,
+}
+
 /// The screens marked in `shown` side by side, scaled to fit while keeping aspect ratio.
-/// Returns where the mouse touches the GamePad's screen, and whether the TV's was
-/// double-clicked.
 pub(super) fn show_screens(
     ui: &mut egui::Ui,
     views: [Option<ScreenView>; 2],
     shown: [bool; 2],
-) -> (Option<(u16, u16)>, bool) {
+) -> ScreenInput {
     let available = ui.available_size();
     let sizes = [0, 1].map(|index| {
         if !shown[index] {
@@ -129,8 +141,7 @@ pub(super) fn show_screens(
     let max_height = sizes.iter().map(|s| s.y).fold(1.0, f32::max);
     let scale = ((available.x - spacing) / total_width).min(available.y / max_height).max(0.01);
 
-    let mut touch = None;
-    let mut double_clicked = false;
+    let mut input = ScreenInput::default();
     // Centered as a whole: `horizontal_centered` only centers vertically.
     let used_width = total_width.mul_add(scale, spacing);
     let left = ((available.x - used_width) / 2.0).max(0.0);
@@ -148,7 +159,18 @@ pub(super) fn show_screens(
                 Some(view) if screen == Screen::Drc => {
                     let response =
                         ui.add(egui::Image::new((view.texture, size)).sense(egui::Sense::drag()));
-                    touch = touch_position(&response);
+                    input.touch = held_at(&response, egui::PointerButton::Primary).map(|(x, y)| {
+                        let (width, height) = Screen::Drc.default_size();
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            clippy::cast_precision_loss
+                        )]
+                        let at =
+                            ((x * (width - 1) as f32) as u16, (y * (height - 1) as f32) as u16);
+                        at
+                    });
+                    input.tilt = held_at(&response, egui::PointerButton::Secondary);
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
@@ -156,7 +178,7 @@ pub(super) fn show_screens(
                 Some(view) => {
                     let response =
                         ui.add(egui::Image::new((view.texture, size)).sense(egui::Sense::click()));
-                    double_clicked |= response.double_clicked();
+                    input.double_clicked |= response.double_clicked();
                 }
                 None => {
                     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -176,18 +198,18 @@ pub(super) fn show_screens(
             }
         }
     });
-    (touch, double_clicked)
+    input
 }
 
-/// Where the mouse button holds `response`, in pixels of the GamePad's screen. A drag that
-/// leaves the picture keeps touching its edge, like a finger at the rim of the screen.
-fn touch_position(response: &egui::Response) -> Option<(u16, u16)> {
+/// Where `button` holds `response`, `0.0..=1.0` across it. A drag that leaves the picture
+/// keeps holding its edge, like a finger at the rim of the screen.
+fn held_at(response: &egui::Response, button: egui::PointerButton) -> Option<(f32, f32)> {
+    let down = response.ctx.input(|input| input.pointer.button_down(button));
     let position =
-        response.interact_pointer_pos().filter(|_| response.is_pointer_button_down_on())?;
-    let (width, height) = Screen::Drc.default_size();
+        response.interact_pointer_pos().filter(|_| down && response.is_pointer_button_down_on())?;
     let rect = response.rect;
-    let x = ((position.x - rect.left()) / rect.width()).clamp(0.0, 1.0) * (width - 1) as f32;
-    let y = ((position.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * (height - 1) as f32;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Some((x as u16, y as u16))
+    Some((
+        ((position.x - rect.left()) / rect.width()).clamp(0.0, 1.0),
+        ((position.y - rect.top()) / rect.height()).clamp(0.0, 1.0),
+    ))
 }

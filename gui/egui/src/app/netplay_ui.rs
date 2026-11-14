@@ -37,7 +37,12 @@ impl ShocoraApp {
 
     fn join(&mut self, ctx: &egui::Context) {
         self.stop_netplay();
-        match netplay::join(&self.config.netplay_host, &self.netplay_password, ctx.clone()) {
+        match netplay::join(
+            &self.config.netplay_host,
+            &self.netplay_password,
+            self.volume.clone(),
+            ctx.clone(),
+        ) {
             Ok(guest) => {
                 self.netplay = Netplay::Guest(guest);
                 self.netplay_error = None;
@@ -147,8 +152,10 @@ impl ShocoraApp {
             return;
         }
         let shown = [true, !self.config.gamepad_window];
-        let (touch, double_clicked) = show_screens(ui, views, shown);
-        self.touch = touch;
+        let input = show_screens(ui, views, shown);
+        self.touch = input.touch;
+        self.motion.tilt = input.tilt;
+        let double_clicked = input.double_clicked;
         if double_clicked {
             toggle_fullscreen(ui.ctx());
         }

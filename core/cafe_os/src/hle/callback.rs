@@ -54,16 +54,21 @@ impl Callbacks {
         if self.saved.is_some() || self.stack_top == 0 {
             return false;
         }
+
         let Some(call) = self.queue.pop_front() else { return false };
         let saved = cpu.clone();
+
         cpu.pc = call.function;
         cpu.lr = return_stub;
         cpu.gpr[1] = self.stack_top - 0x20;
+
         for (i, arg) in call.args.iter().take(8).enumerate() {
             cpu.gpr[3 + i] = *arg;
         }
+
         self.saved = Some(saved);
         self.generation += 1;
+
         true
     }
 
@@ -84,12 +89,16 @@ mod tests {
     fn saves_and_restores_registers() {
         let mut callbacks = Callbacks { stack_top: 0x8000, ..Callbacks::default() };
         let mut cpu = CpuState { pc: 0x1234, ..CpuState::default() };
+
         cpu.gpr[3] = 7;
         callbacks.push(GuestCall { function: 0x4000, args: vec![1, 2] });
+
         assert!(callbacks.begin(&mut cpu, 0x5000));
         assert_eq!((cpu.pc, cpu.lr, cpu.gpr[3], cpu.gpr[4]), (0x4000, 0x5000, 1, 2));
         assert!(!callbacks.begin(&mut cpu, 0x5000), "one callback at a time");
+
         callbacks.finish(&mut cpu);
+
         assert_eq!((cpu.pc, cpu.gpr[3]), (0x1234, 7));
         assert!(!callbacks.active());
     }

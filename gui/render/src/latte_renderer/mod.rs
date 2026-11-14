@@ -63,7 +63,7 @@ pub use screens::*;
 use surface::*;
 pub use thread::*;
 /// Size the shader prelude reads through the dynamic binding.
-const PARAMS_BINDING_SIZE: u64 = 340;
+const PARAMS_BINDING_SIZE: u64 = wiiu_gpu::latte::PARAMS_SIZE as u64;
 
 /// Staging space for texture uploads recorded into the frame's commands.
 const UPLOAD_RING_SIZE: u64 = 32 << 20;

@@ -49,6 +49,7 @@ pub(super) fn decode_input(payload: &[u8]) -> io::Result<GuestInput> {
             left_stick: Stick { x: axis(4)?, y: axis(8)? },
             right_stick: Stick { x: axis(12)?, y: axis(16)? },
             touch,
+            ..GamePadState::default()
         },
         to_gamepad: to_gamepad != 0,
     })

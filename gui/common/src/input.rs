@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 use gilrs::{Axis, Button, EventType, Gilrs};
 use wiiu_peripherals::{GamePadState, VpadButtons, controller::Stick};
 
+/// The action that holds the microphone open; it has no VPAD bit.
+const MIC: &str = "mic";
+
 /// Directions of the left stick.
 const STICK_KEYS: [&str; 4] = ["stick_up", "stick_down", "stick_left", "stick_right"];
 
@@ -35,13 +38,14 @@ impl Default for KeyBindings {
             ("stick_down", "K"),
             ("stick_left", "J"),
             ("stick_right", "L"),
+            ("mic", "M"),
         ];
         Self(pairs.into_iter().map(|(a, k)| (a.to_owned(), k.to_owned())).collect())
     }
 }
 
 /// Every action a key or a controller button can be bound to, in the order settings list them.
-pub const ACTIONS: [&str; 21] = [
+pub const ACTIONS: [&str; 26] = [
     "a",
     "b",
     "x",
@@ -63,7 +67,22 @@ pub const ACTIONS: [&str; 21] = [
     "stick_down",
     "stick_left",
     "stick_right",
+    "mic",
+    "tilt_up",
+    "tilt_down",
+    "tilt_left",
+    "tilt_right",
 ];
+
+/// Actions that tip the GamePad: forward (top edge down), back, left and right.
+const TILT_ACTIONS: [&str; 4] = ["tilt_up", "tilt_down", "tilt_left", "tilt_right"];
+
+/// The tilt the held actions ask for: `x` leans right, `y` tips the top edge up.
+fn tilt_from(down: impl Fn(&str) -> bool) -> Stick {
+    let [up, dn, lf, rt] = TILT_ACTIONS.map(down);
+    let axis = |neg: bool, pos: bool| f32::from(i8::from(pos) - i8::from(neg));
+    Stick { x: axis(lf, rt), y: axis(dn, up) }
+}
 
 /// Controller buttons that can be bound, by their names in [`PadBindings`].
 const BUTTON_NAMES: [&str; 19] = [
@@ -110,6 +129,11 @@ const BUTTONS: [(&str, VpadButtons); 17] = [
 ];
 
 impl KeyBindings {
+    /// The tilt asked for by the held keys.
+    pub fn tilt(&self, is_down: impl Fn(&str) -> bool) -> Stick {
+        tilt_from(|action| self.0.get(action).is_some_and(|key| is_down(key)))
+    }
+
     /// Builds a GamePad sample from `is_down(key_name)`.
     pub fn gamepad(&self, is_down: impl Fn(&str) -> bool) -> GamePadState {
         let down = |action: &str| self.0.get(action).is_some_and(|key| is_down(key));
@@ -122,6 +146,7 @@ impl KeyBindings {
         GamePadState {
             held,
             left_stick: Stick { x: axis(lf, rt), y: axis(dn, up) },
+            mic: f32::from(u8::from(down(MIC))),
             ..GamePadState::default()
         }
     }
@@ -216,7 +241,8 @@ impl PadBindings {
             held,
             left_stick: apply_dead_zone(axis(Axis::LeftStickX), axis(Axis::LeftStickY)),
             right_stick: apply_dead_zone(axis(Axis::RightStickX), axis(Axis::RightStickY)),
-            touch: None,
+            mic: f32::from(u8::from(down(MIC))),
+            ..GamePadState::default()
         }
     }
 }
@@ -233,6 +259,8 @@ pub fn merge(a: GamePadState, b: GamePadState) -> GamePadState {
         left_stick: stronger(a.left_stick, b.left_stick),
         right_stick: stronger(a.right_stick, b.right_stick),
         touch: a.touch.or(b.touch),
+        motion: a.motion.or(b.motion),
+        mic: a.mic.max(b.mic),
     }
 }
 
@@ -284,6 +312,18 @@ impl Controllers {
             BUTTON_NAMES
                 .into_iter()
                 .find(|name| button_from_name(name).is_some_and(|button| pad.is_pressed(button)))
+        })
+    }
+
+    /// The tilt asked for by buttons held on any controller.
+    pub fn tilt(&self, bindings: &PadBindings) -> Stick {
+        let Some(gilrs) = &self.gilrs else { return Stick::default() };
+        gilrs.gamepads().fold(Stick::default(), |tilt, (_, pad)| {
+            let held = tilt_from(|action| {
+                let button = bindings.0.get(action).and_then(|name| button_from_name(name));
+                button.is_some_and(|button| pad.is_pressed(button))
+            });
+            stronger(tilt, held)
         })
     }
 
@@ -359,5 +399,25 @@ mod tests {
         let both = merge(keyboard, controller);
         assert_eq!(both.held, VpadButtons::A | VpadButtons::B);
         assert_eq!(both.right_stick.x, 1.0);
+    }
+
+    /// Intent: tilt actions are read apart from the buttons, opposite ones cancel.
+    /// Pass: a bound up key tips up; up and down together stay level.
+    #[test]
+    fn tilt_keys_tip_the_gamepad() {
+        let mut bindings = KeyBindings::default();
+        bindings.0.insert("tilt_up".to_owned(), "T".to_owned());
+        bindings.0.insert("tilt_down".to_owned(), "G".to_owned());
+        assert_eq!(bindings.tilt(|key| key == "T"), Stick { x: 0.0, y: 1.0 });
+        assert_eq!(bindings.tilt(|key| key == "T" || key == "G"), Stick::default());
+    }
+
+    /// Intent: the MIC action is not a button: it opens the microphone instead.
+    /// Pass: its key sets `mic` to 1 and no VPAD bit; merging keeps the louder source.
+    #[test]
+    fn the_mic_key_opens_the_microphone() {
+        let pad = KeyBindings::default().gamepad(|key| key == "M");
+        assert_eq!((pad.held, pad.mic), (VpadButtons::empty(), 1.0));
+        assert_eq!(merge(GamePadState::default(), pad).mic, 1.0);
     }
 }

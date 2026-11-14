@@ -1,4 +1,5 @@
 //! Controller state as the OS input libraries (VPAD, KPAD) report it.
+use crate::motion::Motion;
 
 bitflags::bitflags! {
     /// `VPAD_BUTTON_*` bits of the Wii U GamePad.
@@ -84,6 +85,8 @@ impl GamePadState {
             left_stick: Stick { x: 0.0, y: 0.0 },
             right_stick: Stick { x: 0.0, y: 0.0 },
             touch: None,
+            motion: None,
+            mic: 0.0,
         }
     }
 }
@@ -96,6 +99,12 @@ pub struct GamePadState {
     pub right_stick: Stick,
     /// Touch position in GamePad screen pixels (854x480), if touched.
     pub touch: Option<(u16, u16)>,
+    /// Motion from a host source; `None` reports the GamePad at rest.
+    #[serde(default)]
+    pub motion: Option<Motion>,
+    /// Loudness the microphone hears, `0.0..=1.0` (0 is silence).
+    #[serde(default)]
+    pub mic: f32,
 }
 
 /// Tracks edges between samples (`trigger` / `release` in `VPADStatus`).
@@ -124,7 +133,7 @@ mod tests {
             held: VpadButtons::A,
             left_stick: Stick { x: -0.8, y: 0.2 },
             right_stick: Stick { x: 0.0, y: -1.0 },
-            touch: None,
+            ..GamePadState::default()
         };
         assert_eq!(
             pad.held_with_stick_directions(),

@@ -25,11 +25,13 @@ mod cheats;
 mod input;
 mod library;
 mod menu;
+mod motion;
 mod netplay_ui;
 mod screens;
 mod settings;
 mod status_bar;
 use cheats::*;
+use motion::MotionInput;
 use screens::*;
 use settings::*;
 use status_bar::*;
@@ -85,8 +87,12 @@ pub struct ShocoraApp {
     /// What the GamePad's own window adds: its touch and the keys held while it has focus.
     window_touch: Option<(u16, u16)>,
     window_keys: GamePadState,
+    /// Microphone and motion sensors.
+    motion: MotionInput,
     /// The cheat editor's text, while it is open.
     cheats: Option<CheatEditor>,
+    /// Sound volume, shared with whatever plays sound.
+    volume: shocora_gui_common::audio::Volume,
     /// Where the running title's cheat codes are kept.
     cheats_path: Option<PathBuf>,
     /// What the backdrop picture's path field shows while being edited.
@@ -114,21 +120,28 @@ impl ShocoraApp {
 
         crate::fonts::setup_custom_fonts(&ctx, None::<std::path::PathBuf>);
         let render = presenter.sender().ok_or("the render thread is not running")?;
+        let volume = shocora_gui_common::audio::Volume::new(f32::from(config.volume) / 100.0);
         let console =
-            Console::spawn(config.emulator_config(), render, move || ctx.request_repaint())?;
+            Console::spawn(config.emulator_config(), volume.clone(), render, move || {
+                ctx.request_repaint();
+            })?;
         lang::set_language(&config.language);
+
         let picture_path = config
             .launcher_image
             .as_ref()
             .map_or_else(String::new, |path| path.display().to_string());
+
         presenter.set_frame_generation(config.frame_generation);
         presenter.set_background_shaders(config.background_shaders);
+
         let mut app = Self {
             netplay: Netplay::Off,
             netplay_error: None,
             netplay_password: String::new(),
             netplay_network: String::new(),
             cheats: None,
+            volume,
             cheats_path: None,
             picture_path,
             console,
@@ -159,12 +172,16 @@ impl ShocoraApp {
             touch: None,
             window_touch: None,
             window_keys: GamePadState::default(),
+            motion: MotionInput::default(),
         };
+
         app.adopt_old_rom_list();
         app.reload_library();
+
         if let Some(path) = boot {
             app.boot(path);
         }
+
         Ok(app)
     }
 

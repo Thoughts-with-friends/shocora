@@ -76,8 +76,8 @@ enum BootSource {
 /// A Wii U.
 pub struct Emulator {
     boot_source: Option<BootSource>,
-    /// Applied at every frame.
-    cheats: Vec<crate::cheat::Cheat>,
+    /// Writes of the enabled cheats, applied at every frame.
+    cheats: Vec<(u32, crate::cheat::CheatValue)>,
     pub config: Config,
     memory: Memory,
     cores: Vec<CpuState>,
@@ -245,9 +245,10 @@ impl Emulator {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(error) => return Err(format!("{}: {error}", path.display())),
         };
-        self.cheats =
+        let cheats =
             crate::cheat::parse(&text).map_err(|error| format!("{}: {error}", path.display()))?;
-        Ok(self.cheats.len())
+        self.cheats = crate::cheat::enabled_writes(&cheats);
+        Ok(cheats.iter().filter(|cheat| cheat.enabled).count())
     }
 
     /// Feeds the latest GamePad sample.

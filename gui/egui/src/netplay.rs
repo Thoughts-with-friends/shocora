@@ -2,7 +2,11 @@
 use std::sync::{Arc, Mutex, PoisonError, mpsc::Sender};
 
 use eframe::egui;
-use shocora_gui_common::{audio::AudioOutput, console::ConsoleCommand, input::merge};
+use shocora_gui_common::{
+    audio::{AudioOutput, Volume},
+    console::ConsoleCommand,
+    input::merge,
+};
 use shocora_netplay::{
     Client, ClientEvents, Display, Frame, GuestInput, Host, HostConfig, HostEvents, HostStatus,
     protocol,
@@ -281,7 +285,12 @@ impl ClientEvents for GuestLink {
 ///
 /// # Errors
 /// Fails if the link's thread cannot start.
-pub fn join(address: &str, password: &str, repaint: egui::Context) -> std::io::Result<Guest> {
+pub fn join(
+    address: &str,
+    password: &str,
+    volume: Volume,
+    repaint: egui::Context,
+) -> std::io::Result<Guest> {
     let pictures = Pictures::default();
     let status = Arc::default();
     let client = Client::start(address, password, {
@@ -290,7 +299,7 @@ pub fn join(address: &str, password: &str, repaint: egui::Context) -> std::io::R
             pictures,
             status,
             // The output upsamples to what the device runs at.
-            audio: AudioOutput::open(protocol::AUDIO_RATE),
+            audio: AudioOutput::open(protocol::AUDIO_RATE, volume),
             repaint,
         }
     })?;

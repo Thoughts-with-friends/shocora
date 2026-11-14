@@ -20,6 +20,7 @@ pub mod fast;
 pub mod gx2;
 pub mod h264;
 pub mod hle;
+pub mod mic;
 pub mod nn;
 pub mod patches;
 pub mod proc_ui;
@@ -75,11 +76,15 @@ pub struct CafeOs {
     /// Movie decoders waiting for their output callback to return.
     #[serde(default)]
     pub h264: h264::H264State,
+    /// The GamePad's microphone.
+    #[serde(default)]
+    pub mic: mic::MicState,
 }
 
 impl CafeOs {
     pub fn new() -> Self {
         let mut registry = HleRegistry::new();
+
         registry.register_functions(coreinit::EXPORTS);
         registry.register_functions(coreinit::thread::EXPORTS);
         registry.register_data(coreinit::DATA_EXPORTS);
@@ -96,7 +101,9 @@ impl CafeOs {
         registry.register_functions(aoc::EXPORTS);
         registry.register_functions(sndcore2::EXPORTS);
         registry.register_functions(h264::EXPORTS);
+        registry.register_functions(mic::EXPORTS);
         registry.register_functions(patches::EXPORTS);
+
         Self {
             registry,
             timebase: TimeBase::new(),
@@ -119,6 +126,7 @@ impl CafeOs {
             frame_done: false,
             aoc: Vec::new(),
             h264: h264::H264State::default(),
+            mic: mic::MicState::default(),
         }
     }
 
@@ -199,8 +207,9 @@ impl CafeOs {
         Ok(self.callbacks.begin(cpu, stub))
     }
 
-    /// Queues handlers of alarms that are due.
+    /// Queues handlers of alarms that are due, and of GPU interrupts that came.
     pub fn fire_due_alarms(&mut self) {
+        self.fire_gpu_interrupts();
         let now = self.timebase.ticks_since_epoch();
         for call in self.coreinit.alarms.fire_due(now) {
             self.callbacks.push(call);

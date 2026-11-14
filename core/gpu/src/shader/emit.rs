@@ -673,6 +673,10 @@ impl<'a> Translator<'a> {
         };
         let in_pixel = self.stage == Stage::Pixel;
         match op.opcode {
+            tex::SAMPLE if in_pixel && signature.kind == TextureKind::Float => {
+                let bias = format!("P.ps_lod_bias[{}]", op.sampler.min(17));
+                format!("textureSampleBias({tex_name}, {sampler_name}, {coords}, {bias}{offset})")
+            }
             tex::SAMPLE if in_pixel => {
                 format!("textureSample({tex_name}, {sampler_name}, {coords}{offset})")
             }
@@ -693,6 +697,10 @@ impl<'a> Translator<'a> {
                         "textureSampleLevel({tex_name}, {sampler_name}, {coords}, {lod_arg}{offset})"
                     )
                 }
+            }
+            tex::SAMPLE_LB if in_pixel && signature.kind == TextureKind::Float => {
+                let bias = format!("({lod_arg} + P.ps_lod_bias[{}])", op.sampler.min(17));
+                format!("textureSampleBias({tex_name}, {sampler_name}, {coords}, {bias}{offset})")
             }
             tex::SAMPLE_LB if in_pixel => {
                 format!(

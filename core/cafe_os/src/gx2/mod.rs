@@ -8,6 +8,7 @@ pub mod aperture;
 pub mod command;
 pub(crate) mod display;
 pub mod draw;
+mod interrupt;
 pub mod render_target;
 mod setup;
 pub mod shader;
@@ -73,6 +74,10 @@ pub struct Gx2State {
     /// `(function, user data)` per `GX2CallbackEventType`.
     pub event_callbacks: [(u32, u32); command::event::COUNT],
     pub apertures: aperture::Apertures,
+    /// Timestamp interrupts the title asked for, as `(GPU timestamp, event kind)`: raised
+    /// once the GPU has executed the commands up to them.
+    #[serde(default)]
+    pub pending_interrupts: Vec<(u64, u32)>,
 }
 
 impl Default for Gx2State {
@@ -98,6 +103,7 @@ impl Default for Gx2State {
             timestamp: 0,
             event_callbacks: [(0, 0); command::event::COUNT],
             apertures: aperture::Apertures::default(),
+            pending_interrupts: Vec::new(),
         }
     }
 }

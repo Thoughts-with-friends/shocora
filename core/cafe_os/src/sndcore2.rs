@@ -217,6 +217,7 @@ const fn frames_after(ticks: u64) -> u64 {
 impl CafeOs {
     /// Runs every AX frame that became due: guest callbacks, then the mixer.
     pub fn sound_tick(&mut self, memory: &mut Memory) {
+        self.mic_tick(memory);
         if !self.ax.initialized {
             return;
         }
@@ -272,6 +273,12 @@ impl CafeOs {
             voice.gains = target;
             if voice.voice.looping && voice.voice.current_offset < before {
                 voice.loop_count += 1;
+                log::debug!(
+                    "voice {address:08x} looped to {:08x} (offset {:x} of base {:08x})",
+                    voice.voice.base_address.wrapping_add(voice.voice.loop_offset / 2),
+                    voice.voice.loop_offset,
+                    voice.voice.base_address
+                );
             }
             if !voice.voice.playing {
                 voice.running = false;
@@ -345,7 +352,13 @@ impl CafeOs {
             let _ = memory.write_u16(block + 6, frame_samples as u16);
             let _ = memory.write_u16(block + 8, devices as u16);
             let _ = memory.write_u16(block + 10, channels as u16);
-            self.callbacks.push(GuestCall { function, args: vec![block] });
+            // Gated like the frame callbacks: pushed regardless, these kept the queue above
+            // the limit once it got there, the frame callbacks that feed streamed voices
+            // were dropped from then on, and those voices repeated a stale buffer as a tone.
+            // Skipped, the block plays as mixed.
+            if self.callbacks.pending() < MAX_PENDING_CALLBACKS {
+                self.callbacks.push(GuestCall { function, args: vec![block] });
+            }
         }
     }
 }
@@ -586,6 +599,21 @@ fn ax_set_voice_state(ctx: &mut HleContext<'_>, voice: u32, state: u32) -> Resul
         entry.running = state == STATE_RUNNING;
         if entry.running {
             entry.voice.playing = true;
+            let v = &entry.voice;
+            log::debug!(
+                "voice {voice:08x} start: {:?} base {:08x} cur {:x} loop {:x} end {:x} looping {} stream {} ratio {:.3} vol {:.3} tv {:.2}/{:.2}",
+                v.format,
+                v.base_address,
+                v.current_offset,
+                v.loop_offset,
+                v.end_offset,
+                v.looping,
+                v.stream,
+                v.ratio,
+                entry.volume,
+                entry.tv_left,
+                entry.tv_right
+            );
         }
     }
     Ok(())
@@ -655,9 +683,37 @@ fn ax_get_voice_offsets(ctx: &mut HleContext<'_>, voice: u32, out: u32) -> Resul
     Ok(())
 }
 
+/// Offset units in `bytes` of sample data: nibbles for ADPCM, samples for PCM.
+fn units_in(format: SampleFormat, bytes: u32) -> u32 {
+    match format {
+        SampleFormat::Adpcm => bytes.wrapping_mul(2),
+        SampleFormat::Pcm16 => (bytes.cast_signed() / 2).cast_unsigned(),
+        SampleFormat::Pcm8 => bytes,
+    }
+}
+
+/// Makes `offset`, counted from `samples`, an offset from the voice's own base. The `Ex`
+/// setters address memory, not the voice's buffer: a stream's loop is often in another
+/// buffer than the one playing (Super Mario 3D World's title music), and moving the base
+/// there made the voice play from the wrong place and run past its data, as a buzz.
+fn rebase(voice: &mut Voice, offset: u32, samples: u32) -> u32 {
+    if samples < voice.base_address {
+        // Offsets stay positive: the base moves down to the lower buffer.
+        let shift = units_in(voice.format, voice.base_address - samples);
+        voice.base_address = samples;
+        voice.current_offset = voice.current_offset.wrapping_add(shift);
+        voice.loop_offset = voice.loop_offset.wrapping_add(shift);
+        voice.end_offset = voice.end_offset.wrapping_add(shift);
+    }
+    offset.wrapping_add(units_in(voice.format, samples - voice.base_address))
+}
+
 #[hle_export(lib = "sndcore2", name = "AXGetVoiceCurrentOffsetEx")]
-fn ax_get_voice_current_offset_ex(ctx: &mut HleContext<'_>, voice: u32, _samples: u32) -> u32 {
-    ctx.os.ax.voices.get(&voice).map_or(0, |v| v.voice.current_offset)
+fn ax_get_voice_current_offset_ex(ctx: &mut HleContext<'_>, voice: u32, samples: u32) -> u32 {
+    ctx.os.ax.voices.get(&voice).map_or(0, |v| {
+        let from_samples = units_in(v.voice.format, samples.wrapping_sub(v.voice.base_address));
+        v.voice.current_offset.wrapping_sub(from_samples)
+    })
 }
 
 #[hle_export(lib = "sndcore2", name = "AXGetVoiceLoopCount")]
@@ -694,8 +750,7 @@ macro_rules! offset_setters {
         #[hle_export(lib = "sndcore2", name = $ex_name)]
         fn $ex_fn(ctx: &mut HleContext<'_>, voice: u32, offset: u32, samples: u32) {
             if let Some(entry) = ctx.os.ax.voices.get_mut(&voice) {
-                entry.voice.$field = offset;
-                entry.voice.base_address = samples;
+                entry.voice.$field = rebase(&mut entry.voice, offset, samples);
             }
         }
     )*};
@@ -1093,5 +1148,45 @@ mod tests {
         // The frame played last is the one `delay` frames before it, callback result included.
         let left = env.os.ax.output.iter().rev().nth(1).unwrap();
         assert_eq!(i32::from(*left), 100 + 3);
+    }
+
+    /// Intent: once the callback queue is full, final mix callbacks stop being queued too,
+    /// so the queue can drain and frame callbacks (which feed streamed voices) resume.
+    /// Pass: mixing frames with a full queue leaves its length unchanged.
+    #[test]
+    fn a_full_callback_queue_does_not_grow_with_final_mix_callbacks() {
+        let mut env = TestEnv::new();
+        env.call("sndcore2", "AXInit", &[]);
+        env.call("sndcore2", "AXRegisterDeviceFinalMixCallback", &[0, 0x1000]);
+        for _ in 0..super::MAX_PENDING_CALLBACKS {
+            env.os
+                .callbacks
+                .push(crate::hle::callback::GuestCall { function: 0x2000, args: Vec::new() });
+        }
+        for _ in 0..8 {
+            env.os.mix_frame(&mut env.memory);
+        }
+        assert_eq!(env.os.callbacks.pending(), super::MAX_PENDING_CALLBACKS);
+    }
+
+    /// Intent: an `Ex` offset in another buffer points there without moving what plays now.
+    /// Pass: the loop lands at the second buffer's address, the current position keeps its
+    /// address, and offsets read back relative to either buffer.
+    #[test]
+    fn ex_offsets_address_other_buffers() {
+        let (a, b) = (0x1000_0100_u32, 0x1000_0900_u32);
+        let mut voice = super::Voice::new(super::SampleFormat::Adpcm, a, 0x200);
+        voice.current_offset = 0x40;
+        let loop_offset = super::rebase(&mut voice, 2, b);
+        assert_eq!(voice.base_address + loop_offset / 2, b + 1);
+        assert_eq!(voice.base_address + voice.current_offset / 2, a + 0x20);
+        // A buffer below the base: the base moves, every address stays.
+        let below = 0x1000_0000_u32;
+        let end = super::rebase(&mut voice, 0x10, below);
+        assert_eq!(voice.base_address, below);
+        assert_eq!(voice.base_address + voice.current_offset / 2, a + 0x20);
+        assert_eq!(voice.base_address + end / 2, below + 8);
+        let back = super::units_in(voice.format, a - voice.base_address);
+        assert_eq!(voice.current_offset - back, 0x40);
     }
 }

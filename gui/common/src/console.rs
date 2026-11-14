@@ -17,7 +17,7 @@ use std::{
 
 use wiiu_emu::{EmuStats, Emulator, GamePadState, GameSpeed, RenderCommand, Status};
 
-use crate::audio::AudioOutput;
+use crate::audio::{AudioOutput, Volume};
 
 /// How often a stopped emulator looks for commands.
 const IDLE_POLL: Duration = Duration::from_millis(66);
@@ -105,6 +105,7 @@ impl Console {
     /// Fails if the emulator cannot be created or the thread cannot spawn.
     pub fn spawn(
         config: wiiu_emu::Config,
+        volume: Volume,
         render: SyncSender<Vec<RenderCommand>>,
         repaint: impl Fn() + Send + 'static,
     ) -> Result<Self, String> {
@@ -121,7 +122,7 @@ impl Console {
                     emulator,
                     rx,
                     render,
-                    audio: AudioOutput::open(AUDIO_RATE),
+                    audio: AudioOutput::open(AUDIO_RATE, volume),
                     audio_tap: None,
                     shared: thread_shared,
                     paused: false,

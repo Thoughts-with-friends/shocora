@@ -78,7 +78,7 @@ fn wait_for_gpu(ctx: &mut HleContext<'_>, timestamp: u64) -> bool {
     true
 }
 
-fn notify_event(os: &mut crate::CafeOs, kind: u32) {
+pub(super) fn notify_event(os: &mut crate::CafeOs, kind: u32) {
     let (function, user_data) =
         os.gx2.event_callbacks.get(kind as usize).copied().unwrap_or((0, 0));
     if function != 0 {
@@ -283,7 +283,15 @@ fn gx2_submit_user_time_stamp(
     }
     if interrupt != 0 {
         let kind = if kind == 0 { event::TIMESTAMP_TOP } else { event::TIMESTAMP_BOTTOM };
-        notify_event(ctx.os, kind);
+        // The handler reads what the GPU wrote: raised before the GPU thread got there, it
+        // found the old value and the title waited for a signal that never came (Mario
+        // Tennis spins 1.5 s, then resets the GPU).
+        let stamp = ctx.gpu.submitted_timestamp();
+        if ctx.gpu.retired_timestamp() >= stamp {
+            notify_event(ctx.os, kind);
+        } else {
+            ctx.os.gx2.pending_interrupts.push((stamp, kind));
+        }
     }
     Ok(())
 }

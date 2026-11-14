@@ -194,6 +194,7 @@ mod tests {
             left_stick: Stick { x: -0.5, y: 1.0 },
             right_stick: Stick { x: 0.25, y: 0.0 },
             touch: Some((12, 34)),
+            ..GamePadState::default()
         };
         let status = HostStatus {
             state: HostState::Exited(-3),

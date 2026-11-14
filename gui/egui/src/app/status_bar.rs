@@ -61,6 +61,8 @@ impl ShocoraApp {
                 self.cycle_upscale();
             }
             ui.separator();
+            self.mic_controls(ui);
+            ui.separator();
             ui.label(self.title.as_deref().unwrap_or_else(|| tr("status.no_title")));
             ui.separator();
             #[allow(clippy::cast_precision_loss)]

@@ -94,6 +94,7 @@ struct DrawParams {
     target_scaled: u32,
     vs_scaled: u32,
     ps_scaled: u32,
+    ps_lod_bias: array<f32, 18>,
 }
 @group(0) @binding(0) var<storage, read> arena: array<u32>;
 @group(0) @binding(1) var<storage, read> P: DrawParams;

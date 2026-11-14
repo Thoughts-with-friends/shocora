@@ -65,6 +65,10 @@ pub struct AppConfig {
     pub multi_core: bool,
     /// Translate the GPU's commands on a thread of its own (from the next boot).
     pub gpu_thread: bool,
+    /// Sound volume in percent (`0..=100`).
+    pub volume: u8,
+    /// How loud the microphone hears the player while the MIC button is held, in percent.
+    pub mic_strength: u8,
 }
 
 impl Default for AppConfig {
@@ -96,6 +100,8 @@ impl Default for AppConfig {
             gamepad_window: false,
             multi_core: true,
             gpu_thread: true,
+            volume: 100,
+            mic_strength: 80,
         }
     }
 }

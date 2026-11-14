@@ -13,6 +13,7 @@ impl ShocoraApp {
         let keyboard = merge(keyboard, self.window_keys);
         let mut pad = merge(keyboard, self.controllers.gamepad(&self.config.pad_bindings));
         pad.touch = self.touch.or(self.window_touch);
+        self.add_mic_and_motion(ctx, &mut pad);
         // The host's clock is not a guest's to change: its buttons all go to the title.
         if !matches!(self.netplay, Netplay::Guest(_)) {
             let button = pad.held.contains(VpadButtons::STICK_L);

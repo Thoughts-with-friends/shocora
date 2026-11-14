@@ -34,6 +34,7 @@ fn action_label(action: &str) -> String {
         "down" => "↓",
         "left" => "←",
         "right" => "→",
+        "mic" => "MIC",
         _ => "",
     };
     if !fixed.is_empty() {
@@ -48,6 +49,10 @@ fn action_label(action: &str) -> String {
         ("stick", "_down") => format!("{stick_name} ↓"),
         ("stick", "_left") => format!("{stick_name} ←"),
         ("stick", "_right") => format!("{stick_name} →"),
+        ("tilt", "_up") => format!("{} ↑", tr("input.tilt")),
+        ("tilt", "_down") => format!("{} ↓", tr("input.tilt")),
+        ("tilt", "_left") => format!("{} ←", tr("input.tilt")),
+        ("tilt", "_right") => format!("{} →", tr("input.tilt")),
         _ => action.to_owned(),
     }
 }
@@ -193,6 +198,7 @@ impl ShocoraApp {
         ui.horizontal(|ui| {
             for (code, name) in lang::languages() {
                 let chosen = self.config.language == code;
+
                 if ui.radio(chosen, name).clicked() && !chosen {
                     lang::set_language(&code);
                     self.config.language = code;
@@ -200,16 +206,24 @@ impl ShocoraApp {
                 }
             }
         });
+
         ui.separator();
+
         if ui.checkbox(&mut self.config.gamepad_window, tr("menu.gamepad_window")).changed() {
             self.save_config();
         }
+
+        ui.separator();
+        self.volume_slider(ui);
+
         ui.separator();
         ui.label(tr("general.speed")).on_hover_text(tr("general.speed_hint"));
+
         let guest = matches!(self.netplay, Netplay::Guest(_));
         if guest {
             ui.colored_label(ui.visuals().warn_fg_color, tr("settings.guest_speed_note"));
         }
+
         ui.add_enabled_ui(!guest, |ui| {
             ui.horizontal(|ui| {
                 for speed in GameSpeed::ALL {
@@ -221,17 +235,38 @@ impl ShocoraApp {
                 }
             });
         });
+
         ui.separator();
         if ui.button(tr("general.fonts_folder")).clicked() {
             self.pick_fonts_dir();
         }
+
         if ui.button(tr("general.rom_folder")).clicked() {
             self.pick_rom_folder();
         }
+
         ui.separator();
         self.add_on_dirs(ui, AddOnKind::Update);
+
         ui.separator();
         self.add_on_dirs(ui, AddOnKind::Dlc);
+    }
+
+    /// The sound volume: heard while dragging, written to the settings file when let go.
+    pub(super) fn volume_slider(&mut self, ui: &mut egui::Ui) {
+        let response = ui.add(
+            egui::Slider::new(&mut self.config.volume, 0..=200)
+                .text(tr("general.volume"))
+                .suffix(" %"),
+        );
+
+        if response.changed() {
+            self.volume.set(f32::from(self.config.volume) / 100.0);
+        }
+
+        if response.drag_stopped() || (response.changed() && !response.dragged()) {
+            self.save_config();
+        }
     }
 
     /// The folders searched for updates or downloadable content: listed, added, removed.
@@ -240,12 +275,16 @@ impl ShocoraApp {
             AddOnKind::Update => (tr("general.update_folders"), tr("general.update_folders_hint")),
             AddOnKind::Dlc => (tr("general.dlc_folders"), tr("general.dlc_folders_hint")),
         };
+
         ui.label(label).on_hover_text(hint);
+
         let dirs = match kind {
             AddOnKind::Update => &self.config.update_dirs,
             AddOnKind::Dlc => &self.config.dlc_dirs,
         };
+
         let mut removed = None;
+
         for (index, dir) in dirs.iter().enumerate() {
             ui.horizontal(|ui| {
                 if ui.small_button("✖").on_hover_text(tr("general.remove_folder")).clicked() {
@@ -254,29 +293,36 @@ impl ShocoraApp {
                 ui.label(dir.display().to_string());
             });
         }
+
         let added = ui
             .button(tr("general.add_folder"))
             .clicked()
             .then(|| rfd::FileDialog::new().set_title(label).pick_folder())
             .flatten();
+
         if removed.is_none() && added.is_none() {
             return;
         }
+
         let dirs = match kind {
             AddOnKind::Update => &mut self.config.update_dirs,
             AddOnKind::Dlc => &mut self.config.dlc_dirs,
         };
+
         if let Some(index) = removed {
             dirs.remove(index);
         }
+
         if let Some(dir) = added.filter(|dir| !dirs.contains(dir)) {
             dirs.push(dir);
         }
+
         let config = self.config.emulator_config();
         self.console.send(ConsoleCommand::AddOnDirs {
             update_dirs: config.update_dirs,
             dlc_dirs: config.dlc_dirs,
         });
+
         self.save_config();
         self.log.push(tr("log.add_on_folders").to_owned());
     }
@@ -286,18 +332,25 @@ impl ShocoraApp {
     fn input_settings(&mut self, ui: &mut egui::Ui) {
         ui.label(tr("input.speed_keys"));
         ui.label(tr("input.edit_hint"));
+
         if matches!(self.netplay, Netplay::Guest(_)) {
             ui.label(tr("input.guest_note"));
         }
+
         self.capture_binding(ui.ctx());
         ui.separator();
+        Self::motion_settings(ui);
+        ui.separator();
+
         let mut chosen = None;
         let mut cleared = None;
+
         egui::Grid::new("bindings").striped(true).show(ui, |ui| {
             ui.strong(tr("input.action"));
             ui.strong(tr("input.keyboard"));
             ui.strong(tr("input.controller"));
             ui.end_row();
+
             for action in ACTIONS {
                 ui.label(action_label(action));
                 for (device, bindings) in [
@@ -314,9 +367,11 @@ impl ShocoraApp {
                         } else {
                             bindings.get(action).map_or("-", String::as_str)
                         };
+
                         if ui.selectable_label(waiting, text).clicked() {
                             chosen = Some((action, device));
                         }
+
                         if bindings.contains_key(action)
                             && ui.small_button("✖").on_hover_text(tr("input.clear")).clicked()
                         {
@@ -327,9 +382,11 @@ impl ShocoraApp {
                 ui.end_row();
             }
         });
+
         if let Some(choice) = chosen {
             self.binding_capture = (self.binding_capture != Some(choice)).then_some(choice);
         }
+
         if let Some((action, device)) = cleared {
             match device {
                 BindingDevice::Keyboard => self.config.key_bindings.0.remove(action),
@@ -337,7 +394,9 @@ impl ShocoraApp {
             };
             self.save_config();
         }
+
         ui.separator();
+
         if ui.button(tr("input.reset")).clicked() {
             self.config.key_bindings = KeyBindings::default();
             self.config.pad_bindings = PadBindings::default();
@@ -356,24 +415,29 @@ impl ShocoraApp {
                 _ => None,
             })
         });
+
         if key == Some(egui::Key::Escape) {
             self.binding_capture = None;
             return;
         }
+
         let name = match device {
             BindingDevice::Keyboard => key.map(|key| key.name().to_owned()),
             BindingDevice::Controller => self.controllers.pressed_button().map(str::to_owned),
         };
+
         let Some(name) = name else {
             // Waiting: look again at the next frame even without new input.
             ctx.request_repaint();
             return;
         };
+
         let bindings = match device {
             BindingDevice::Keyboard => &mut self.config.key_bindings.0,
             BindingDevice::Controller => &mut self.config.pad_bindings.0,
         };
         bindings.insert(action.to_owned(), name);
+
         self.binding_capture = None;
         self.save_config();
     }
@@ -382,6 +446,7 @@ impl ShocoraApp {
     pub(super) fn settings_window(&mut self, ctx: &egui::Context) {
         let Some(mut tab) = self.settings_tab else { return };
         let mut open = true;
+
         egui::Window::new(tr("menu.settings")).open(&mut open).resizable(true).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 for choice in SettingsTab::ALL {
@@ -389,6 +454,7 @@ impl ShocoraApp {
                 }
             });
             ui.separator();
+
             egui::ScrollArea::vertical().show(ui, |ui| match tab {
                 SettingsTab::General => self.general_settings(ui),
                 SettingsTab::Graphics => self.graphics_settings(ui),
@@ -397,6 +463,7 @@ impl ShocoraApp {
             });
         });
         self.settings_tab = open.then_some(tab);
+
         if self.settings_tab != Some(SettingsTab::Input) {
             self.binding_capture = None;
         }
