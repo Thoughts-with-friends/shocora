@@ -51,6 +51,7 @@ impl TitleInfo {
     pub fn with_update(mut self, dir: &Path) -> Result<Self, TitleError> {
         let base_id = self.meta.title_id;
         let code_dir = dir.join("code");
+
         if let Some((text, path)) = read_if_file(code_dir.join("app.xml"))? {
             self.meta.apply_app_xml(&text, &path)?;
         }
@@ -60,16 +61,20 @@ impl TitleInfo {
         if let Some((text, path)) = read_if_file(dir.join("meta/meta.xml"))? {
             self.meta.apply_meta_xml(&text, &path)?;
         }
+
         let rpx_name = self
             .meta
             .rpx_name
             .clone()
             .or_else(|| self.rpx_path.file_name().map(|n| n.to_string_lossy().into_owned()));
+
         if let Some(rpx) = rpx_name.map(|name| code_dir.join(name)).filter(|p| p.is_file()) {
             self.rpx_path = rpx;
         }
+
         self.meta.title_id = base_id.or(self.meta.title_id);
         self.update_dir = Some(dir.to_owned());
+
         Ok(self)
     }
 
@@ -95,6 +100,7 @@ impl TitleSource {
     pub fn open(path: &Path) -> Result<TitleInfo, TitleError> {
         if path.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("rpx")) {
             let code_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+
             // An .rpx inside an installed title boots that title.
             if code_dir.file_name().is_some_and(|n| n.eq_ignore_ascii_case("code")) {
                 if let Some(root) = code_dir.parent() {
@@ -103,6 +109,7 @@ impl TitleSource {
                     return Ok(info);
                 }
             }
+
             return Ok(TitleInfo {
                 source: Self::Rpx(path.to_owned()),
                 meta: TitleMeta::default(),
@@ -114,6 +121,7 @@ impl TitleSource {
                 dlc: None,
             });
         }
+
         if path.is_dir() {
             let root = if path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("code")) {
                 path.parent().unwrap_or(path)
@@ -130,11 +138,13 @@ impl TitleSource {
         if !code_dir.is_dir() {
             return Err(TitleError::Unrecognised(root.to_owned()));
         }
+
         let existing = |name: &str| Some(root.join(name)).filter(|p| p.is_dir());
         let (content_dir, meta_dir) = (existing("content"), existing("meta"));
 
         let mut meta = TitleMeta::default();
         let read = read_if_file;
+
         if let Some((text, path)) = read(code_dir.join("app.xml"))? {
             meta.apply_app_xml(&text, &path)?;
         }
@@ -151,6 +161,7 @@ impl TitleSource {
             Some(name) if code_dir.join(name).is_file() => code_dir.join(name),
             _ => first_rpx(&code_dir)?.ok_or_else(|| TitleError::NoRpx(root.to_owned()))?,
         };
+
         Ok(TitleInfo {
             source: Self::Directory(root.to_owned()),
             meta,
@@ -180,6 +191,7 @@ fn first_rpx(dir: &Path) -> Result<Option<PathBuf>, TitleError> {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("rpx")))
         .collect();
+
     candidates.sort();
     Ok(candidates.into_iter().next())
 }
@@ -198,6 +210,7 @@ mod tests {
     #[test]
     fn opens_installed_title() {
         let root = temp_dir("installed");
+
         fs::create_dir_all(root.join("code")).unwrap();
         fs::create_dir_all(root.join("content")).unwrap();
         fs::write(root.join("code/other.rpx"), b"").unwrap();
@@ -208,12 +221,14 @@ mod tests {
         assert_eq!(info.rpx_path, root.join("code/game.rpx"));
         assert_eq!(info.content_dir, Some(root.join("content")));
         assert_eq!(TitleSource::open(&root.join("code")).unwrap().rpx_path, info.rpx_path);
+
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn update_replaces_rpx_and_version() {
         let root = temp_dir("base");
+
         fs::create_dir_all(root.join("code")).unwrap();
         fs::write(root.join("code/game.rpx"), b"").unwrap();
         fs::write(
@@ -221,6 +236,7 @@ mod tests {
             "<app><title_id type=\"hexBinary\">00050000101C9300</title_id></app>",
         )
         .unwrap();
+
         let update = temp_dir("update");
         fs::create_dir_all(update.join("code")).unwrap();
         fs::write(update.join("code/game.rpx"), b"").unwrap();
@@ -235,6 +251,7 @@ mod tests {
         assert_eq!(info.meta.title_version, Some(208));
         assert_eq!(info.meta.title_id, Some(0x0005_0000_101C_9300), "the update renamed the title");
         assert_eq!(info.update_dir.as_deref(), Some(update.as_path()));
+
         let _ = (fs::remove_dir_all(root), fs::remove_dir_all(update));
     }
 
@@ -243,10 +260,39 @@ mod tests {
         let dir = temp_dir("bare");
         let rpx = dir.join("hello.rpx");
         fs::write(&rpx, b"").unwrap();
+
         let info = TitleSource::open(&rpx).unwrap();
         assert_eq!(info.source, TitleSource::Rpx(rpx));
         assert_eq!(info.display_name(), "hello");
         assert!(TitleSource::open(&dir.join("missing.rpx")).is_err());
+
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::TitleSource;
+
+    /// Intent: `TitleSource::open` turns a title folder into everything the loader needs:
+    /// the executable to boot and the folders mounted as `/vol/code`, `/vol/content` and
+    /// `/vol/meta`.
+    /// Pass: the `.rpx` exists, `content/` and `meta/` are found, and the name shown in the
+    /// library is not empty.
+    #[test]
+    fn opens_an_installed_title() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let info = TitleSource::open(&title).unwrap();
+        assert!(info.rpx_path.is_file());
+        assert!(info.content_dir.as_ref().is_some_and(|d| d.is_dir()));
+        assert!(info.meta_dir.as_ref().is_some_and(|d| d.is_dir()));
+        assert!(!info.display_name().is_empty());
+        report("display name", info.display_name());
+        report("rpx", info.rpx_path.display());
+        report("code dir", info.code_dir.display());
+        report("update dir", format!("{:?}", info.update_dir));
     }
 }

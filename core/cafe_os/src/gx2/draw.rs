@@ -770,3 +770,7 @@ pub const EXPORTS: &[HleExport] = &[
     GX2_SET_STREAM_OUT_CONTEXT,
     GX2_SAVE_STREAM_OUT_CONTEXT,
 ];
+
+#[cfg(test)]
+#[path = "draw_tests.rs"]
+mod tests;

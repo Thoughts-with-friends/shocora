@@ -22,3 +22,17 @@ impl TitleError {
         move |source| Self::Io { path, source }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TitleError;
+
+    /// Intent: title errors name the file or folder the user picked.
+    /// Pass: `io` wraps an I/O error with its path; the path leads the message.
+    #[test]
+    fn io_errors_keep_their_path() {
+        let error = TitleError::io("D:/game/code")(std::io::ErrorKind::NotFound.into());
+        assert!(error.to_string().starts_with("D:/game/code: "));
+        assert!(TitleError::NoRpx("x".into()).to_string().contains("no RPX"));
+    }
+}

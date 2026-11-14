@@ -22,5 +22,9 @@ region = "3"
 serde = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+wiiu_rpl = { workspace = true }
+wiiu_test_roms = { workspace = true }
+
 [lints]
 workspace = true

@@ -158,5 +158,7 @@
   "netplay.return_player1": "Give player 1's rights back",
   "netplay.return_player1_hint": "The host plays as player 1 again, and you go back to player 2.",
   "settings.guest_graphics_note": "Joined to a host: the pictures are drawn by the host, so its graphics settings apply. They cannot be changed here.",
-  "settings.guest_speed_note": "Joined to a host: the game speed is the host's."
+  "settings.guest_speed_note": "Joined to a host: the game speed is the host's.",
+  "cheats.invalid_format": "Line {line}: not in the form \"address value\"",
+  "cheats.invalid_hex": "Line {line}: not hexadecimal: {token}"
 }

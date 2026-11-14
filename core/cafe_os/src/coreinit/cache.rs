@@ -75,3 +75,32 @@ fn bsp_get_hardware_version(ctx: &mut HleContext<'_>, version_out: u32) -> Resul
     ctx.memory.write_u32(version_out, HARDWARE_VERSION)?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::test_env::{SCRATCH, TestEnv};
+
+    /// Intent: `DCZeroRange` zeroes whole 32-byte cache lines, as `dcbz` does on the CPU,
+    /// so bytes around an unaligned range are cleared too.
+    /// Pass: zeroing 4 bytes at line offset 8 clears the whole line and nothing after it.
+    #[test]
+    fn zero_range_clears_whole_cache_lines() {
+        let mut env = TestEnv::new();
+        env.memory.fill(SCRATCH, 0x40, 0xAA).unwrap();
+        env.call("coreinit", "DCZeroRange", &[SCRATCH + 8, 4]);
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), 0);
+        assert_eq!(env.memory.read_u32(SCRATCH + 0x1C).unwrap(), 0);
+        assert_eq!(env.memory.read_u8(SCRATCH + 0x20).unwrap(), 0xAA);
+    }
+
+    /// Intent: titles that check the hardware see a retail console.
+    /// Pass: `OSGetConsoleType` is retail (0x03000050); `bspGetHardwareVersion` writes a
+    /// version and returns true.
+    #[test]
+    fn reports_a_retail_console() {
+        let mut env = TestEnv::new();
+        assert_eq!(env.call("coreinit", "OSGetConsoleType", &[]), 0x0300_0050);
+        assert_eq!(env.call("coreinit", "bspGetHardwareVersion", &[SCRATCH]), 1);
+        assert_ne!(env.memory.read_u32(SCRATCH).unwrap(), 0);
+    }
+}

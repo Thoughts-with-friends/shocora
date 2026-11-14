@@ -17,5 +17,8 @@ log = { workspace = true }
 thiserror = { workspace = true }
 wiiu_fs = { workspace = true }
 
+[dev-dependencies]
+wiiu_test_roms = { workspace = true }
+
 [lints]
 workspace = true

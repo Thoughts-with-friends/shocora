@@ -37,3 +37,20 @@ pub const fn encode_hle_call(index: u32) -> u32 {
 
 /// `blr`
 pub const INSTR_BLR: u32 = 0x4E80_0020;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: the HLE call instruction (primary opcode 1, unused on the Wii U CPU) carries
+    /// the system function index the loader put in an import stub.
+    /// Pass: an encoded index decodes as `HleCall` and keeps its 26 bits; `blr` decodes as
+    /// a branch to the link register.
+    #[test]
+    fn hle_calls_round_trip_through_the_decoder() {
+        let word = encode_hle_call(0x12_3456);
+        assert_eq!(decode(word), Opcode::HleCall);
+        assert_eq!(word & 0x03FF_FFFF, 0x12_3456);
+        assert_eq!(decode(INSTR_BLR), Opcode::Bclr);
+    }
+}

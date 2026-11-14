@@ -18,6 +18,7 @@ pub mod aoc;
 pub mod coreinit;
 pub mod fast;
 pub mod gx2;
+pub mod h264;
 pub mod hle;
 pub mod nn;
 pub mod patches;
@@ -71,6 +72,9 @@ pub struct CafeOs {
     pub frame_done: bool,
     /// Downloadable content installed for the title, as `nn_aoc` lists it.
     pub aoc: Vec<aoc::AocTitle>,
+    /// Movie decoders waiting for their output callback to return.
+    #[serde(default)]
+    pub h264: h264::H264State,
 }
 
 impl CafeOs {
@@ -91,6 +95,7 @@ impl CafeOs {
         registry.register_functions(nn::EXPORTS);
         registry.register_functions(aoc::EXPORTS);
         registry.register_functions(sndcore2::EXPORTS);
+        registry.register_functions(h264::EXPORTS);
         registry.register_functions(patches::EXPORTS);
         Self {
             registry,
@@ -113,6 +118,7 @@ impl CafeOs {
             exit_code: None,
             frame_done: false,
             aoc: Vec::new(),
+            h264: h264::H264State::default(),
         }
     }
 
@@ -239,5 +245,54 @@ impl CafeOs {
         }
         self.schedule(cpu, memory, coreinit::thread::Reschedule::Yield);
         Ok(())
+    }
+}
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use std::collections::BTreeMap;
+
+    use wiiu_rpl::RplFile;
+    use wiiu_test_roms::{report, require};
+
+    use super::CafeOs;
+
+    /// Intent: a fresh `CafeOs` registers the system functions (HLE) the title imports;
+    /// what is missing returns 0 when called, which is where titles misbehave. The report
+    /// lists the coverage per library, the to-do list for a title.
+    /// Pass: at least 90 % of the `coreinit` functions the title imports are implemented
+    /// (threads, memory, files: without them nothing boots).
+    #[test]
+    fn implements_the_title_imports() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let file = RplFile::parse(&std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap())
+            .unwrap();
+        let registry = CafeOs::new().registry;
+        let mut libraries: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+        for (library, symbol, is_function) in file.imported_symbols().unwrap() {
+            if !is_function || symbol.starts_with('.') {
+                continue;
+            }
+            let entry = libraries.entry(library.clone()).or_default();
+            entry.0 += 1;
+            if registry.function_index(&library, &symbol).is_none() {
+                entry.1.push(symbol);
+            }
+        }
+        for (library, (total, missing)) in &libraries {
+            let shown: Vec<&str> = missing.iter().take(6).map(String::as_str).collect();
+            let more = if missing.len() > 6 { ", ..." } else { "" };
+            report(
+                library,
+                format!(
+                    "{}/{total} implemented; missing: {}{more}",
+                    total - missing.len(),
+                    shown.join(", ")
+                ),
+            );
+        }
+        let (total, missing) = &libraries["coreinit"];
+        assert!(missing.len() * 10 <= *total, "coreinit: {} of {total} missing", missing.len());
     }
 }

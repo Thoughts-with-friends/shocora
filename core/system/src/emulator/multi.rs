@@ -65,10 +65,12 @@ impl<'a> Shared<'a> {
         if !self.profile {
             return self.machine.lock().unwrap_or_else(PoisonError::into_inner);
         }
+
         let timer = Instant::now();
         let guard = self.machine.lock().unwrap_or_else(PoisonError::into_inner);
         self.lock_waits[core as usize]
             .fetch_add(timer.elapsed().as_nanos() as u64, Ordering::Relaxed);
+
         guard
     }
 }
@@ -105,12 +107,15 @@ impl Emulator {
     /// [`Self::run_frame`] with each core on a host thread of its own.
     pub(super) fn run_frame_multi_core(&mut self, deadline: Instant) {
         self.os.coreinit.threads.multi_core = true;
+
         let timebase = self.os.timebase;
         let fast = FastCalls::new(&self.os.registry);
         let writes = self.gpu.write_notifier();
         let (jit_memory, profile) = (self.config.jit, self.config.profile);
+
         // Cores 0 and 2 see guest memory through handles of their own.
         let mut memories: Vec<Memory> = (0..CORE_COUNT).map(|_| self.memory.share()).collect();
+
         let shared = Shared {
             machine: Mutex::new(Machine {
                 os: &mut self.os,
@@ -122,6 +127,7 @@ impl Emulator {
             lock_waits: Default::default(),
             profile,
         };
+
         let setup = CoreSetup {
             shared: &shared,
             jit: &self.jit,
@@ -132,28 +138,34 @@ impl Emulator {
             jit_memory,
             profile,
         };
+
         let main_memory = &mut self.memory;
         let reports: Vec<CoreReport> = std::thread::scope(|scope| {
             let mut handles = Vec::new();
             let mut main = None;
+
             for (core, (cpu, memory)) in self.cores.iter_mut().zip(memories.iter_mut()).enumerate()
             {
                 if core as u32 == CALLBACK_CORE {
                     main = Some(cpu);
                     continue;
                 }
+
                 let spawned = std::thread::Builder::new()
                     .name(format!("shocora core {core}"))
                     .spawn_scoped(scope, move || run_core(core as u32, cpu, memory, setup));
+
                 match spawned {
                     Ok(handle) => handles.push(handle),
                     Err(error) => log::error!("cannot start core {core}: {error}"),
                 }
             }
+
             let mut reports = Vec::new();
             if let Some(cpu) = main {
                 reports.push(run_core(CALLBACK_CORE, cpu, main_memory, setup));
             }
+
             for handle in handles {
                 reports.push(handle.join().unwrap_or_else(|_| CoreReport {
                     crash: Some("a core thread panicked".to_owned()),
@@ -162,13 +174,16 @@ impl Emulator {
             }
             reports
         });
+
         let lock_nanos: u64 =
             shared.lock_waits.iter().map(|wait| wait.load(Ordering::Relaxed)).sum();
         self.stats.lock_nanos += lock_nanos;
+
         // Regions a core mapped (an HLE call) belong to all of them.
         for memory in &memories {
             self.memory.adopt_regions(memory);
         }
+
         for report in reports {
             self.stats.instructions += report.instructions;
             self.stats.hle_calls += report.hle_calls;
@@ -177,9 +192,11 @@ impl Emulator {
             self.stats.idle_nanos += report.idle_nanos;
             self.stats.fast_nanos += report.fast_nanos;
             self.stats.core_nanos += report.core_nanos;
+
             if let Some(nanos) = self.stats.core_guest_nanos.get_mut(report.core) {
                 *nanos += report.guest_nanos;
             }
+
             if let Some(message) = report.crash {
                 if self.status == Status::Running {
                     log::error!("emulation stopped: {message}");
@@ -199,6 +216,7 @@ fn run_core(
 ) -> CoreReport {
     let started = setup.profile.then(Instant::now);
     let mut report = run_core_until(core, cpu, memory, setup);
+
     if let Some(started) = started {
         report.core_nanos = started.elapsed().as_nanos() as u64;
     }
@@ -214,17 +232,21 @@ fn run_core_until(
     let shared = setup.shared;
     let mut report = CoreReport { core: core as usize, ..CoreReport::default() };
     let mut slice = TIME_SLICE;
+
     // The scheduler has a look before anything runs: the core may have nothing to do.
     let mut reschedule = true;
+
     // The clock is looked at every few turns: a turn is often one short HLE call, and the
     // clock cost as much as the call.
     let mut turns = 0_u32;
+
     while !shared.stop.load(Ordering::Relaxed) {
         turns = turns.wrapping_add(1);
         if (reschedule || turns.is_multiple_of(DEADLINE_TURNS)) && Instant::now() >= setup.deadline
         {
             break;
         }
+
         if reschedule {
             let timer = setup.profile.then(Instant::now);
             match find_work(core, cpu, memory, setup) {
@@ -248,9 +270,11 @@ fn run_core_until(
             };
             setup.jit.run(cpu, &mut bus, slice)
         };
+
         if let Some(timer) = timer {
             report.guest_nanos += timer.elapsed().as_nanos() as u64;
         }
+
         let (event, executed) = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -260,6 +284,7 @@ fn run_core_until(
         };
         report.instructions += executed;
         slice = slice.saturating_sub(executed);
+
         match event {
             StepEvent::Continue => {
                 if slice == 0 {
@@ -328,9 +353,11 @@ fn locked_call(
     let timer = setup.profile.then(Instant::now);
     let mut guard = setup.shared.lock(core);
     let machine = &mut *guard;
+
     let threads = &mut machine.os.coreinit.threads;
     threads.enter_core(core);
     let requests = threads.requests;
+
     let result = dispatch(
         &mut HleContext {
             cpu: &mut *cpu,
@@ -341,25 +368,32 @@ fn locked_call(
         },
         index,
     );
+
     let os = &mut *machine.os;
     os.coreinit.threads.leave_core(core);
+
     result.map_err(|error| format!("{error} (lr {:#010x})", cpu.lr))?;
+
     if os.exit_code.is_some() {
         setup.shared.stop.store(true, Ordering::Relaxed);
     }
+
     let idle = !os.coreinit.threads.current_is_running() && !os.callback_active_on(core);
     if let Some(timer) = timer {
         let nanos = timer.elapsed().as_nanos() as u64;
         report.hle_nanos += nanos;
         os.registry.note_time(index, nanos);
     }
+
     // The call may have made a thread of another core runnable: the calls that do ask for
     // a scheduling decision.
     let woke = os.coreinit.threads.requests != requests;
     drop(guard);
+
     if woke {
         setup.shared.changed.notify_all();
     }
+
     Ok(idle)
 }
 
@@ -377,12 +411,15 @@ fn find_work(
 ) -> Result<bool, String> {
     let mut machine = setup.shared.lock(core);
     let found = housekeeping(core, cpu, memory, &mut machine);
+
     if found != Ok(false) {
         drop(machine);
         return found;
     }
+
     let wait = setup.deadline.saturating_duration_since(Instant::now()).min(IDLE_WAIT);
     drop(setup.shared.changed.wait_timeout(machine, wait));
+
     Ok(false)
 }
 
@@ -396,6 +433,7 @@ fn housekeeping(
 ) -> Result<bool, String> {
     let os = &mut *machine.os;
     os.coreinit.threads.enter_core(core);
+
     let result = (|| {
         if core == CALLBACK_CORE {
             os.sound_tick(memory);
@@ -409,6 +447,7 @@ fn housekeeping(
         }
         Ok(os.schedule(cpu, memory, Reschedule::Block) != Outcome::Idle)
     })();
+
     os.coreinit.threads.leave_core(core);
     result.map_err(|error: wiiu_memory::MemoryError| error.to_string())
 }
@@ -422,12 +461,14 @@ fn end_time_slice(
 ) -> Result<bool, String> {
     let os = &mut *machine.os;
     os.coreinit.threads.enter_core(core);
+
     let result = if core == CALLBACK_CORE {
         os.end_time_slice(cpu, memory).map_err(|error| error.to_string())
     } else {
         os.schedule(cpu, memory, Reschedule::Yield);
         Ok(())
     };
+
     os.coreinit.threads.leave_core(core);
     result.map(|()| !os.coreinit.threads.current_is_running() && !os.callback_active_on(core))
 }

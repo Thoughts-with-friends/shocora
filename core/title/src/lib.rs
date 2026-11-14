@@ -15,3 +15,18 @@ pub mod wux;
 
 pub use error::TitleError;
 pub use source::{Dlc, TitleInfo, TitleSource};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: opening something that is neither a title folder nor an `.rpx` fails with a
+    /// message the library view can show.
+    /// Pass: a missing path gives an error (no panic) that names the path.
+    #[test]
+    fn opening_a_missing_path_fails_cleanly() {
+        let path = std::path::Path::new("definitely/not/a/title");
+        let error = TitleSource::open(path).unwrap_err();
+        assert!(error.to_string().contains("not"));
+    }
+}

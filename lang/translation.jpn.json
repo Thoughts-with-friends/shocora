@@ -158,5 +158,7 @@
   "netplay.return_player1": "1Pの権限を戻す",
   "netplay.return_player1_hint": "ホストが再び1Pとして操作し、あなたは2Pに戻ります。",
   "settings.guest_graphics_note": "ホストに参加中：画面はホストが描画しているため、ホストのグラフィック設定が使われます。ここでは変更できません。",
-  "settings.guest_speed_note": "ホストに参加中：ゲーム速度はホストの設定です。"
+  "settings.guest_speed_note": "ホストに参加中：ゲーム速度はホストの設定です。",
+  "cheats.invalid_format": "{line} 行目: 「アドレス 値」の形式ではありません",
+  "cheats.invalid_hex": "{line} 行目: 16 進数ではありません: {token}"
 }

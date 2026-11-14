@@ -46,6 +46,11 @@ pub trait Device: Send {
     /// # Errors
     /// Fails if the device is read-only or the file cannot be resized.
     fn truncate(&mut self, path: &GuestPath, len: u64) -> Result<(), FsError>;
+
+    /// What the device is, for people: where its files come from.
+    fn describe(&self) -> String {
+        "device".to_owned()
+    }
 }
 
 /// A host directory exposed as a device.
@@ -96,6 +101,11 @@ fn metadata_of(meta: &fs::Metadata) -> Metadata {
 }
 
 impl Device for HostDirectory {
+    fn describe(&self) -> String {
+        let access = if self.writable { "writable" } else { "read-only" };
+        format!("host folder {} ({access})", self.root.display())
+    }
+
     fn metadata(&self, path: &GuestPath) -> Result<Metadata, FsError> {
         fs::metadata(self.host_path(path)).map(|m| metadata_of(&m)).map_err(Self::io_error(path))
     }
@@ -170,5 +180,40 @@ impl Device for HostDirectory {
             .open(self.host_path(path))
             .map_err(Self::io_error(path))?;
         file.set_len(len).map_err(Self::io_error(path))
+    }
+}
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::*;
+
+    /// Intent: a read-only host folder serves a title's `content/` the way `/vol/content`
+    /// needs it: listing, sizes, and reads at an offset.
+    /// Pass: the root lists the same entries as the host folder, and the first 16 bytes of
+    /// the first file read through the device equal the host file's.
+    #[test]
+    fn serves_the_title_content() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let device = HostDirectory::read_only(title.join("content"));
+        let root = GuestPath::new("/").unwrap();
+        let entries = device.read_dir(&root).unwrap();
+        let host = std::fs::read_dir(title.join("content")).unwrap().count();
+        assert_eq!(entries.len(), host);
+        let dirs = entries.iter().filter(|e| e.metadata.is_dir).count();
+        report("content root entries", format!("{} ({dirs} folders)", entries.len()));
+        let mut names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        names.sort_unstable();
+        report("content folders", names.join(", "));
+
+        let Some(file) = entries.iter().find(|e| !e.metadata.is_dir) else { return };
+        let path = GuestPath::new(&format!("/{}", file.name)).unwrap();
+        let mut buf = [0_u8; 16];
+        let read = device.read_at(&path, 0, &mut buf).unwrap();
+        let host = std::fs::read(title.join("content").join(&file.name)).unwrap();
+        assert_eq!(&buf[..read], &host[..read]);
+        report("first file", format!("{} ({} bytes)", file.name, file.metadata.size));
     }
 }

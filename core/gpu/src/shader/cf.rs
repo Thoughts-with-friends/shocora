@@ -372,3 +372,24 @@ pub fn parse_tex(code: &[u8], addr: u32, count: u32) -> Vec<TexOp> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: the control-flow parser finds the export that ends a shader program and
+    /// decodes which register goes where (the translator's map of outputs).
+    /// Pass: an `EXPORT_DONE` of GPR 3 to position slot 60, burst 1, swizzle `xyzw`
+    /// parses into exactly that one `Cf::Export`.
+    #[test]
+    fn parses_the_final_export() {
+        let word0 = 60 | (1 << 13) | (3 << 15);
+        let word1 = (0x28 << 23) | (1 << 21) | (1 << 3) | (2 << 6) | (3 << 9);
+        let code: Vec<u8> = [word0, word1].iter().flat_map(|w: &u32| w.to_le_bytes()).collect();
+        let list = parse_cf(&code);
+        assert_eq!(list.len(), 1);
+        let Cf::Export(export) = &list[0] else { panic!("{list:?}") };
+        assert_eq!((export.kind, export.array_base, export.gpr), (1, 60, 3));
+        assert_eq!((export.burst, export.sel), (1, [0, 1, 2, 3]));
+    }
+}

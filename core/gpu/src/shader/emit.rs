@@ -1456,3 +1456,7 @@ pub fn translate_pixel(
     let translated = t.finish(wgsl);
     (translated, flat_params)
 }
+
+#[cfg(test)]
+#[path = "emit_tests.rs"]
+mod tests;

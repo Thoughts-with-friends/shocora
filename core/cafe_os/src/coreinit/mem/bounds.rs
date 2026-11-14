@@ -61,3 +61,24 @@ fn os_get_foreground_bucket_free_area(
     write_area(ctx, address_out, size_out, (FOREGROUND.start, FOREGROUND_FREE_SIZE))?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use wiiu_mem_addr::{FOREGROUND, MEM1};
+
+    use crate::hle::test_env::{SCRATCH, TestEnv};
+
+    /// Intent: titles size their heaps from `OSGetMemBound` and the foreground bucket.
+    /// Pass: MEM1 is the whole 32 MiB at its fixed address; an unknown type returns -1;
+    /// the foreground bucket starts at its fixed address.
+    #[test]
+    fn reports_memory_areas() {
+        let mut env = TestEnv::new();
+        assert_eq!(env.call("coreinit", "OSGetMemBound", &[1, SCRATCH, SCRATCH + 4]), 0);
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), MEM1.start);
+        assert_eq!(env.memory.read_u32(SCRATCH + 4).unwrap(), MEM1.size);
+        assert_eq!(env.call("coreinit", "OSGetMemBound", &[9, SCRATCH, 0]) as i32, -1);
+        assert_eq!(env.call("coreinit", "OSGetForegroundBucket", &[SCRATCH, SCRATCH + 4]), 1);
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), FOREGROUND.start);
+    }
+}

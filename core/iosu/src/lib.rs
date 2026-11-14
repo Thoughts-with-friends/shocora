@@ -10,7 +10,7 @@ pub mod fsa;
 use std::collections::HashMap;
 
 pub use error::IosError;
-pub use fsa::{Fsa, FsaError, FsaStat};
+pub use fsa::{Fsa, FsaError, FsaStat, OpenDir, OpenFile};
 use wiiu_fs::Vfs;
 
 /// Devices IOSU exposes to Cafe OS.
@@ -87,6 +87,18 @@ impl Iosu {
     #[inline]
     pub fn adopt_volumes(&mut self, running: &mut Self) {
         std::mem::swap(self.fsa.vfs_mut(), running.fsa.vfs_mut());
+    }
+
+    /// The open device handles (`IOS_Open`), by handle.
+    pub fn handles(&self) -> Vec<(DeviceHandle, DeviceKind)> {
+        let mut handles: Vec<_> = self.open_devices.iter().map(|(h, k)| (*h, *k)).collect();
+        handles.sort_unstable_by_key(|(handle, _)| handle.0);
+        handles
+    }
+
+    #[inline]
+    pub const fn vfs(&self) -> &Vfs {
+        self.fsa.vfs()
     }
 
     #[inline]

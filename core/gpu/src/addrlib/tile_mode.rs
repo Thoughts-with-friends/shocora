@@ -72,3 +72,22 @@ pub const fn non_bank_swapped(tile_mode: u32) -> u32 {
         m => m,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: tile-mode predicates drive how surfaces are (de)tiled: thick modes stack 4
+    /// slices, 2D/3D modes are macro-tiled, "B" modes swap banks.
+    /// Pass: values match the AMD addrlib tables for representative modes.
+    #[test]
+    fn tile_mode_predicates_match_addrlib() {
+        assert!(is_thick(TM_2D_TILED_THICK) && !is_thick(TM_2D_TILED_THIN1));
+        assert_eq!(thickness(TM_1D_TILED_THICK), 4);
+        assert_eq!(thickness(TM_2D_TILED_THIN1), 1);
+        assert!(is_macro_tiled(TM_2D_TILED_THIN1) && !is_macro_tiled(TM_1D_TILED_THIN1));
+        assert!(is_bank_swapped(TM_2B_TILED_THIN1) && !is_bank_swapped(TM_2D_TILED_THIN1));
+        assert_eq!(non_bank_swapped(TM_2B_TILED_THIN2), TM_2D_TILED_THIN2);
+        assert!(!is_macro_tiled(TM_LINEAR_ALIGNED));
+    }
+}

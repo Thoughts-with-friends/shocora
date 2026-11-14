@@ -107,10 +107,12 @@ fn parse_presses(text: &str) -> Vec<Press> {
     text.split(';')
         .filter_map(|item| {
             let mut parts = item.split(',');
+
             let frame = parts.next()?.trim().parse().ok()?;
             let button =
                 u32::from_str_radix(parts.next()?.trim().trim_start_matches("0x"), 16).ok()?;
             let frames = parts.next()?.trim().parse().ok()?;
+
             Some(Press { frame, button, frames })
         })
         .collect()
@@ -123,10 +125,12 @@ fn create_renderer() -> Result<LatteRenderer, Box<dyn std::error::Error>> {
         Ok("gl") => wgpu::Backends::GL,
         _ => wgpu::Backends::VULKAN,
     };
+
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
+
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
@@ -134,11 +138,14 @@ fn create_renderer() -> Result<LatteRenderer, Box<dyn std::error::Error>> {
         ..Default::default()
     }))?;
     println!("adapter: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+
     let (device, queue) = pollster::block_on(request_device(&adapter))?;
     let mut renderer = LatteRenderer::new(device, queue);
+
     renderer.use_pipeline_cache(Path::new("shader_cache"), &adapter.get_info());
     renderer.pipeline_setting().set(std::env::var_os("SHOCORA_BACKGROUND_SHADERS").is_some());
     renderer.frame_gen_setting().set(std::env::var_os("SHOCORA_FRAMEGEN").is_some());
+
     Ok(renderer)
 }
 
@@ -150,10 +157,13 @@ fn save_png(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::File::create(path)?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+
     let mut writer = encoder.write_header()?;
     writer.write_image_data(rgba)?;
+
     Ok(())
 }
 
@@ -161,8 +171,10 @@ fn save_png(
 fn save_wav(path: &Path, samples: &[i16]) -> Result<(), Box<dyn std::error::Error>> {
     let data = u32::try_from(samples.len() * 2)?;
     let mut bytes = Vec::with_capacity(44 + samples.len() * 2);
+
     bytes.extend_from_slice(b"RIFF");
     bytes.extend_from_slice(&(36 + data).to_le_bytes());
+
     bytes.extend_from_slice(b"WAVEfmt ");
     bytes.extend_from_slice(&16_u32.to_le_bytes());
     bytes.extend_from_slice(&1_u16.to_le_bytes());
@@ -171,10 +183,13 @@ fn save_wav(path: &Path, samples: &[i16]) -> Result<(), Box<dyn std::error::Erro
     bytes.extend_from_slice(&192_000_u32.to_le_bytes());
     bytes.extend_from_slice(&4_u16.to_le_bytes());
     bytes.extend_from_slice(&16_u16.to_le_bytes());
+
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data.to_le_bytes());
     bytes.extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
+
     std::fs::write(path, bytes)?;
+
     Ok(())
 }
 
@@ -187,11 +202,14 @@ fn capture_frame(
     min_pixels: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::{collections::HashMap, fmt::Write as _};
+
     std::fs::create_dir_all(dir)?;
+
     let mut last: HashMap<_, Vec<u8>> = HashMap::new();
     let mut dumped = std::collections::HashSet::new();
     let mut seen_textures = std::collections::HashSet::new();
     let mut log = String::new();
+
     let probes: Vec<(u32, u32)> = std::env::var("SHOCORA_CAPTURE_PROBE")
         .unwrap_or_default()
         .split(';')
@@ -201,12 +219,14 @@ fn capture_frame(
         })
         .collect();
     let mut probed = HashMap::new();
+
     let poison: Vec<u32> = std::env::var("SHOCORA_CAPTURE_POISON")
         .unwrap_or_default()
         .split(',')
         .filter_map(|address| u32::from_str_radix(address.trim(), 16).ok())
         .collect();
     let mut poisoned = std::collections::HashSet::new();
+
     for (index, command) in commands.iter().enumerate() {
         // A surface as the frame's first reader sees it: once, or a capture takes gigabytes.
         if let RenderCommand::Draw(draw) = command {
@@ -215,6 +235,7 @@ fn capture_frame(
                 if !seen_textures.insert((texture.key, draw.count <= 4)) {
                     continue;
                 }
+
                 if let Some((width, height, rgba)) = renderer.read_surface(texture.key) {
                     let name = format!(
                         "tex{index:05}_{:08x}_{width}x{height}_{:?}.png",
@@ -228,12 +249,14 @@ fn capture_frame(
         if let RenderCommand::Draw(draw) = command {
             for texture in &draw.textures {
                 let key = texture.key;
+
                 if !matches!(key.format, wiiu_gpu::render::HostFormat::R16Unorm)
                     || key.layers < 2
                     || !dumped.insert(key)
                 {
                     continue;
                 }
+
                 for slice in 0..key.layers {
                     if let Some((width, height, raw)) = renderer.read_surface_slice(key, slice) {
                         let rgba: Vec<u8> = raw
@@ -242,12 +265,14 @@ fn capture_frame(
                             .iter()
                             .flat_map(|p| [p[1], p[1], p[0], 255])
                             .collect();
+
                         let name = format!("h_{:08x}_s{slice}.png", key.address);
                         save_png(&dir.join(name), width, height, &rgba)?;
                     }
                 }
             }
         }
+
         // SHOCORA_CAPTURE_POISON="hex,hex": targets start magenta, so what the frame leaves
         // alone shows, and a draw writing the value already there counts as a change.
         if let RenderCommand::Draw(draw) = command {
@@ -260,6 +285,7 @@ fn capture_frame(
                 }
             }
         }
+
         // What a target holds before the frame's first draw to it.
         if let RenderCommand::Draw(draw) = command {
             if let Some((key, _)) = draw.color_targets.iter().flatten().next() {
@@ -270,6 +296,7 @@ fn capture_frame(
                 }
             }
         }
+
         renderer.execute(std::slice::from_ref(command));
         let RenderCommand::Draw(draw) = command else {
             if !matches!(command, RenderCommand::ArenaWrite { .. } | RenderCommand::Upload(_)) {
@@ -277,9 +304,11 @@ fn capture_frame(
             }
             continue;
         };
+
         for module in [&draw.vertex, &draw.pixel] {
             std::fs::write(dir.join(format!("shader_{}.wgsl", module.id)), &module.wgsl)?;
         }
+
         // SHOCORA_CAPTURE_PROBE="x,y;x,y": which draws write these pixels of any target.
         for &(x, y) in &probes {
             for (key, _) in draw.color_targets.iter().flatten() {
@@ -287,13 +316,16 @@ fn capture_frame(
                 let at = (y * width + x) as usize * 4;
                 let Some(pixel) = rgba.get(at..at + 4) else { continue };
                 let pixel: [u8; 4] = pixel.try_into()?;
+
                 if probed.insert((x, y, key.address), pixel) != Some(pixel) {
                     writeln!(log, "probe {index} ({x},{y}) {:x}: {pixel:?}", key.address)?;
                 }
             }
         }
+
         let target = draw.color_targets.iter().flatten().next().map(|(key, _)| *key);
         let mut changed = None;
+
         if let Some((key, (width, height, rgba))) =
             target.and_then(|key| renderer.read_surface(key).map(|image| (key, image)))
         {
@@ -307,6 +339,7 @@ fn capture_frame(
                     before.is_none_or(|b| b[pixel * 4..pixel * 4 + 4] != **value)
                 })
                 .count() as u32;
+
             changed = Some(count);
             if count >= min_pixels {
                 let name = format!("d{index:05}_{:08x}.png", key.address);
@@ -314,6 +347,7 @@ fn capture_frame(
             }
             last.insert(key, rgba);
         }
+
         writeln!(
             log,
             "{index}: draw vs{} ps{} n{} i{} {:?} changed {changed:?} target {target:?} all {:x?} depth {:?} \
@@ -341,13 +375,16 @@ fn capture_frame(
                 .collect::<Vec<_>>(),
         )?;
     }
+
     std::fs::write(dir.join("draws.txt"), log)?;
     renderer.submit();
+
     for screen in Screen::ALL {
         if let Some((width, height, rgba)) = renderer.read_screen(screen) {
             save_png(&dir.join(format!("{screen:?}.png")), width, height, &rgba)?;
         }
     }
+
     Ok(())
 }
 
@@ -375,7 +412,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         multi_core: std::env::var_os("SHOCORA_SINGLE_CORE").is_none(),
         ..Config::default()
     };
+
     let mut emu = Emulator::new(config)?;
+
     emu.set_speed(match std::env::var("SHOCORA_SPEED").as_deref() {
         Ok("0.5") => GameSpeed::Half,
         Ok("2") => GameSpeed::Double,
@@ -383,7 +422,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok("4") => GameSpeed::Quadruple,
         _ => GameSpeed::Normal,
     });
+
     emu.load_title(&path)?;
+
     if let Some(title) = emu.title() {
         println!("title: {} ({:016x?})", title.display_name(), title.meta.title_id);
         println!("rpx:   {}", title.rpx_path.display());
@@ -394,14 +435,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .and_then(|s| s.split_once(','))
         .map_or((None, 60), |(dir, every)| (Some(PathBuf::from(dir)), every.parse().unwrap_or(60)));
+
     let mut renderer = shot_dir.as_ref().map(|_| create_renderer()).transpose()?;
+
     if let (Some(renderer), Some(factor)) = (&renderer, std::env::var("SHOCORA_XBRZ").ok()) {
         let factor = factor.parse().unwrap_or(2);
         renderer.upscale_setting().set(UpscaleConfig { method: UpscaleMethod::Xbrz, factor });
     }
+
     if let Some(dir) = &shot_dir {
         std::fs::create_dir_all(dir)?;
     }
+
     let (render_thread, upscale) = match std::env::var_os("SHOCORA_RENDER_THREAD") {
         Some(_) => {
             let renderer = create_renderer()?;
@@ -413,8 +458,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => (None, None),
     };
+
     let render_sender = render_thread.as_ref().and_then(|thread| thread.sender());
     let presses = parse_presses(&std::env::var("SHOCORA_PRESS").unwrap_or_default());
+
     // SHOCORA_CAPTURE="flip,dir,min_pixels": see `capture_frame`.
     let capture = std::env::var("SHOCORA_CAPTURE").ok().and_then(|text| {
         let mut parts = text.split(',');
@@ -437,6 +484,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             PathBuf::from(parts.next()?),
         ))
     });
+
     let mut ubo_arena = std::collections::HashMap::new();
     let mut ubo_log = String::new();
     let memory_watch = renderer.as_ref().map(LatteRenderer::memory_watch);
@@ -448,6 +496,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         title: emu.title().map(wiiu_emu::TitleInfo::display_name).unwrap_or_default(),
         ..shocora_netplay::HostStatus::default()
     }));
+
     let net_host = match (std::env::var("SHOCORA_NET_HOST").ok(), &renderer) {
         (Some(text), Some(renderer)) => {
             let mut parts = text.splitn(3, ',');
@@ -463,19 +512,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let host = shocora_netplay::Host::start(config, events)?;
             println!("netplay: listening on port {}", host.port());
+
             Some(host)
         }
         _ => None,
     };
+
     let state_test = std::env::var("SHOCORA_STATE_TEST").ok().and_then(|text| {
         let parts: Vec<u64> = text.split(',').filter_map(|n| n.parse().ok()).collect();
         let [save_at, load_at, slot, ..] = parts[..] else { return None };
         Some((save_at, load_at, slot as u8))
     });
+
     let state_repeat = std::env::var("SHOCORA_STATE_TEST")
         .ok()
         .and_then(|text| text.split(',').nth(3)?.parse().ok())
         .unwrap_or(u64::MAX);
+
     let start = Instant::now();
     let mut flips = 0_u64;
     let mut last_report = Instant::now();
@@ -492,6 +545,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut upscaled_before = 0;
     let wav = std::env::var_os("SHOCORA_WAV").map(PathBuf::from);
     let mut sound = Vec::new();
+
     for frame in 0..frames {
         let held = presses
             .iter()
@@ -499,16 +553,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .fold(0, |bits, p| bits | p.button);
         let guest = *second_player.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut pad = GamePadState::from_button_bits(held);
+
         // SHOCORA_TOUCH="frame,x,y,frames": a finger on the GamePad's screen.
         pad.touch = std::env::var("SHOCORA_TOUCH").ok().and_then(|text| {
             let parts: Vec<u64> = text.split(',').filter_map(|n| n.parse().ok()).collect();
             let [at, x, y, length] = parts[..] else { return None };
             (frame >= at && frame < at + length).then_some((x as u16, y as u16))
         });
+
         // The guest's touches reach the GamePad, its buttons the Pro Controller.
         let guest_touch = guest.and_then(|guest: shocora_netplay::GuestInput| guest.pad.touch);
         pad.touch = pad.touch.or(guest_touch);
         emu.set_gamepad(pad);
+
         // Like the GUI: what does not fit into video memory gets smaller.
         if let Some(factor) = memory_watch.as_ref().and_then(shocora_render::MemoryWatch::take) {
             let lower = shocora_render::ResolutionScale::lower_factor(factor);
@@ -518,12 +575,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 emu.set_resolution_factor(lower);
             }
         }
+
         if net_host.is_some() {
             emu.set_pro_controller(0, guest.map(|guest| guest.pad));
             let mut status = net_status.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             status.instructions = emu.stats().instructions;
             status.fps = flip_rates.last().map_or(0.0, |rate| *rate as f32);
         }
+
         // SHOCORA_NORMAL_SPEED_AT=frame: back to normal speed, after a quick start.
         if std::env::var("SHOCORA_NORMAL_SPEED_AT").ok().and_then(|at| at.parse().ok())
             == Some(frame)
@@ -531,21 +590,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             emu.set_speed(GameSpeed::Normal);
             println!("normal speed at frame {frame}");
         }
+
         // SHOCORA_RESET_AT=frame: the reset the GUI offers.
         if std::env::var("SHOCORA_RESET_AT").ok().and_then(|at| at.parse().ok()) == Some(frame) {
             emu.reset()?;
             println!("reset at frame {frame}");
         }
+
         if let Some((save_at, load_at, slot)) = state_test {
             let timer = Instant::now();
             if frame == save_at {
                 let answer = emu.request_surfaces();
                 let commands = emu.take_render_commands();
+
                 if let Some(renderer) = &mut renderer {
                     renderer.execute(&commands);
                 } else if let Some(sender) = &render_sender {
                     sender.send(commands)?;
                 }
+
                 let path = emu.save_state(slot, answer.recv().unwrap_or_default())?;
                 let size = std::fs::metadata(&path)?.len() / 1_000_000;
                 println!("state saved at frame {frame}: {size} MB in {:.2?}", timer.elapsed());
@@ -554,18 +617,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("state loaded at frame {frame} in {:.2?}", timer.elapsed());
             }
         }
+
         let frame_start = Instant::now();
         emu.run_frame();
         run_time += frame_start.elapsed();
+
         let run_elapsed = frame_start.elapsed();
+
         if wav.is_some() {
             sound.extend(emu.take_audio());
         } else if let Some(host) = &net_host {
             let _ = host.audio_sink().try_send(emu.take_audio());
         }
+
         let commands = emu.take_render_commands();
         let new_flips = commands.iter().filter(|c| matches!(c, RenderCommand::Flip)).count() as u64;
         let mut send_elapsed = Duration::ZERO;
+
         let commands = match &render_sender {
             Some(sender) => {
                 let wait = Instant::now();
@@ -576,6 +644,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             None => commands,
         };
+
         if std::env::var_os("SHOCORA_TRACE_DRAWS").is_some() {
             for command in &commands {
                 if let RenderCommand::ArenaWrite { offset, bytes } = command {
@@ -583,6 +652,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
         // SHOCORA_TRACE_DRAWS="first_frame,count": prints draws and their shaders.
         if let Some((first, count)) = std::env::var("SHOCORA_TRACE_DRAWS").ok().and_then(|s| {
             let (a, b) = s.split_once(',')?;
@@ -601,6 +671,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                     })
                     .collect();
+
                 for command in interesting.iter().skip(interesting.len().saturating_sub(count)) {
                     match command {
                         RenderCommand::Draw(draw) => {
@@ -613,12 +684,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         params[i * 4 + 3],
                                     ])
                                 };
+
                                 println!(
                                     "  params {:08x?} attr {:08x?} stride {:?}",
                                     (0..8).map(word).collect::<Vec<_>>(),
                                     (40..44).map(word).collect::<Vec<_>>(),
                                     (56..60).map(word).collect::<Vec<_>>()
                                 );
+
                                 for (name, base) in [("vs", 8), ("ps", 24)] {
                                     for block in 0..16 {
                                         let offset = word(base + block);
@@ -633,6 +706,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         f32::from_le_bytes([b[0], b[1], b[2], b[3]])
                                                     })
                                                     .collect();
+
                                                 println!(
                                                     "  {name} ubo{block} ({} bytes): {floats:?}",
                                                     data.len()
@@ -641,6 +715,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 }
+
                                 for (name, offset) in [("vs", word(0)), ("ps", word(1))] {
                                     if let Some(data) = arena.get(&offset) {
                                         let floats: Vec<f32> = data
@@ -653,6 +728,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("  {name} alu: {floats:?}");
                                     }
                                 }
+
                                 let attribute = word(40);
                                 if let Some(data) = arena.get(&attribute) {
                                     println!(
@@ -661,6 +737,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     );
                                 }
                             }
+
                             println!(
                                 "draw vs{} ps{} count {} inst {} idx {:?} base {} topo {:?} blend {:?}\n  targets {:?}\n  depth {:?}\n  masks {:?} formats {:?}\n  vp {:?} sc {:?} depth_test {} write {} cmp {} cull {}/{} cw {}\n  textures {:?}",
                                 draw.vertex.id,
@@ -701,11 +778,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         other => println!("{other:?}"),
                     }
                 }
+
                 // SHOCORA_TRACE_SPAN: frames to keep tracing after the first one.
                 let span = std::env::var("SHOCORA_TRACE_SPAN")
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(0);
+
                 if !commands.is_empty() && frame >= first + span {
                     let Some(renderer) = &mut renderer else { return Ok(()) };
                     renderer.execute(&commands);
@@ -722,6 +801,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             })
                             .flatten()
                             .collect();
+
                         for key in keys {
                             if let Some((width, height, rgba)) = renderer.read_surface(key) {
                                 let mean = |channel: usize| {
@@ -732,6 +812,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .sum::<u64>()
                                         / u64::from(width * height).max(1)
                                 };
+
                                 println!(
                                     "  texture {:#010x} {width}x{height}: mean rgba {} {} {} {}",
                                     key.address,
@@ -740,6 +821,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     mean(2),
                                     mean(3)
                                 );
+
                                 save_png(
                                     &std::path::Path::new(&dir)
                                         .join(format!("tex_{:08x}.png", key.address)),
@@ -754,9 +836,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
         // SHOCORA_TRACE_UBO="first_flip,last_flip,file": uniform blocks of every draw, per flip.
         if let Some((first, last, file)) = &ubo_trace {
             use std::fmt::Write as _;
+
             for command in &commands {
                 match command {
                     RenderCommand::ArenaWrite { offset, bytes } => {
@@ -777,6 +861,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "{flips} vs{} ps{} n{}",
                             draw.vertex.id, draw.pixel.id, draw.count
                         );
+
                         for block in 0..16 {
                             let Some(data) = ubo_arena.get(&word(8 + block)) else { continue };
                             let floats: Vec<String> = data
@@ -801,6 +886,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
         }
+
         if let (Some(renderer), Some((flip, dir, min_pixels))) = (&mut renderer, &capture) {
             // The frame's draws may come a vertical blank before its flip: the first batch
             // with many draws is the one worth looking at.
@@ -809,6 +895,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
                 .and_then(|n| n.parse().ok())
                 .unwrap_or(100);
+
             // SHOCORA_CAPTURE_SKY="x,y": wait until this TV pixel shows sky, not what covers it.
             let armed = capture_sky.is_none() || sky_seen;
             if flips >= *flip && draws >= min_draws && armed {
@@ -816,11 +903,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
         }
+
         if let Some(renderer) = &mut renderer {
             let render_start = Instant::now();
             renderer.execute(&commands);
             renderer.submit();
             render_time += render_start.elapsed();
+
             if let (Some((x, y)), Some((flip, ..)), true) = (capture_sky, &capture, new_flips > 0)
                 && flips >= *flip
                 && let Some((width, _, rgba)) = renderer.read_screen(Screen::Tv)
@@ -831,6 +920,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("sky at ({x},{y}) after flip {flips}: {:?}", &pixel[..3]);
                 sky_seen = true;
             }
+
             // SHOCORA_SHOTS_FROM: first flip worth a screenshot.
             let shots_from = std::env::var("SHOCORA_SHOTS_FROM")
                 .ok()
@@ -851,6 +941,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             save_png(&dir.join(name), width, height, &rgba)?;
                         }
                     }
+
                     if std::env::var_os("SHOCORA_DUMP_TARGETS").is_some() {
                         for (key, draws) in renderer.take_target_log() {
                             println!(
@@ -872,12 +963,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
         flips += new_flips;
         second_flips += new_flips;
+
         if new_flips > 0 {
             flip_gaps.push((last_flip.elapsed(), frame, run_elapsed, send_elapsed));
             last_flip = Instant::now();
         }
+
         if profile && second_start.elapsed() >= Duration::from_secs(1) {
             flip_rates.push(second_flips);
             if let Some(upscale) = &upscale {
@@ -886,15 +980,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             (second_start, second_flips) = (Instant::now(), 0);
         }
+
         for line in emu.take_console() {
             println!("[guest] {}", line.trim_end());
         }
+
         if *emu.status() != Status::Running {
             break;
         }
+
         if last_report.elapsed() > Duration::from_secs(10) {
             last_report = Instant::now();
             let stats = emu.stats();
+
             println!(
                 "... frame {frame} · {:.0} MIPS · {} flips · {} draws ({} skipped)",
                 stats.instructions as f64 / 1e6 / start.elapsed().as_secs_f64(),
@@ -902,6 +1000,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stats.gpu.draws,
                 stats.gpu.skipped_draws
             );
+
             if profile {
                 let ms = |now: u64, before: u64| now.saturating_sub(before) / 1_000_000;
                 let (first, optimize) = emu.jit_queue_lengths();
@@ -909,6 +1008,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (quick, optimized) = emu.jit_code_bytes();
                     (quick >> 20, optimized >> 20)
                 };
+
                 println!(
                     "    last 10 s: {} M instructions, guest {} ms, HLE {} ms, idle {} ms, lock {} ms, fast {} ms, other {} ms, GPU thread {} ms, per core {:?} ms, translating {} ms, {} blocks; queued {first} new, {optimize} to optimize; code {quick_mb} MB quick, {optimized_mb} MB optimized",
                     (stats.instructions - last_stats.instructions) / 1_000_000,
@@ -935,15 +1035,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             last_stats = stats;
         }
     }
+
     if profile {
         println!("flips per second: {flip_rates:?}");
         if upscale.is_some() {
             println!("upscaled images per second: {upscaled_rates:?}");
         }
+
         // The first flips come while everything is loaded for the first time.
         let settled = flip_gaps.len() / 4;
         let mut gaps: Vec<_> = flip_gaps[settled..].to_vec();
         gaps.sort_by_key(|gap| gap.0);
+
         if let (Some(median), Some(p99), Some(worst)) =
             (gaps.get(gaps.len() / 2), gaps.get(gaps.len() * 99 / 100), gaps.last())
         {
@@ -952,11 +1055,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 median.0, p99.0, worst.0
             );
         }
+
         for (gap, frame, run, send) in gaps.iter().rev().take(6) {
             println!(
                 "  {gap:>10.2?} before frame {frame}: run_frame {run:.2?}, waiting for the renderer {send:.2?}"
             );
         }
+
         let stats = emu.stats();
         println!(
             "run_frame {run_time:.2?} (guest code {:.2?}, of it translating {} blocks {:.2?}, {:.1}% of instructions interpreted; HLE {:.2?}) · render {render_time:.2?}",
@@ -966,17 +1071,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             100.0 * stats.interpreted as f64 / stats.instructions.max(1) as f64,
             Duration::from_nanos(stats.hle_nanos),
         );
+
         for (name, calls, nanos) in emu.hle_slowest(16) {
             println!("  {:>10.2?} {calls:>10}  {name}", Duration::from_nanos(nanos));
         }
         println!("time slices ran out at:");
+
         for (address, slices) in emu.slice_end_profile(8) {
             println!("  {slices:>8}  {}", emu.disassemble_around(address, 0, 1).join(""));
         }
     }
-    for (name, calls) in emu.hle_profile(8) {
+
+    // SHOCORA_HLE_TOP=n: how many of the most called system functions to list.
+    let top = std::env::var("SHOCORA_HLE_TOP").ok().and_then(|n| n.parse().ok()).unwrap_or(8);
+    for (name, calls) in emu.hle_profile(top) {
         println!("  {calls:>12}  {name}");
     }
+
     if !matches!(emu.status(), Status::Exited(_)) {
         if let Some(cpu) = emu.core(1) {
             println!(
@@ -998,6 +1109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  {line}");
         }
     }
+
     for spec in
         std::env::var("SHOCORA_DISASM").unwrap_or_default().split(';').filter(|s| !s.is_empty())
     {
@@ -1008,14 +1120,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  {line}");
         }
     }
+
     if let Some(path) = &wav {
         save_wav(path, &sound)?;
     }
+
     let stats = emu.stats();
     println!("threads:");
     for line in emu.thread_report() {
         println!("  {line}");
     }
+
     if let Some(renderer) = &renderer {
         println!("generated frames: {}", renderer.frame_gen_setting().images_generated());
     }

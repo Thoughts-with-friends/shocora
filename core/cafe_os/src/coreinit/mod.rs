@@ -286,3 +286,23 @@ pub const DATA_EXPORTS: &[HleDataExport] = &[
         init: DataInit::FunctionPointer { library: LIBRARY, name: mem::exp_api::DEFAULT_FREE.name },
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{EXPORTS, LIBRARY};
+
+    /// Intent: every function in coreinit's export table is registered under `coreinit`
+    /// (or the emulator's own internal library), and only once: a second entry with the
+    /// same name would shadow the first.
+    /// Pass: no other library appears and the `(library, name)` pairs are unique.
+    #[test]
+    fn exports_are_unique_coreinit_functions() {
+        use crate::process::INTERNAL_LIBRARY;
+        let mut names: Vec<(&str, &str)> = EXPORTS.iter().map(|e| (e.library, e.name)).collect();
+        assert!(names.iter().all(|(library, _)| [LIBRARY, INTERNAL_LIBRARY].contains(library)));
+        names.sort_unstable();
+        let count = names.len();
+        names.dedup();
+        assert_eq!(names.len(), count, "duplicate coreinit exports");
+    }
+}

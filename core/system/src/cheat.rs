@@ -48,10 +48,10 @@ impl fmt::Display for CheatParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormat(line) => {
-                write!(f, "{line} 行目: 「アドレス 値」の形式ではありません")
+                write!(f, "line {line}: not \"address value\"")
             }
             Self::InvalidHex(line, token) => {
-                write!(f, "{line} 行目: 16 進数ではありません: {token}")
+                write!(f, "line {line}: not hexadecimal: {token}")
             }
         }
     }
@@ -76,16 +76,19 @@ fn parse_value(token: &str) -> Option<CheatValue> {
 pub fn parse(text: &str) -> Result<Vec<Cheat>, CheatParseError> {
     let mut cheats = Vec::new();
     let (mut name, mut enabled, mut writes) = (String::new(), true, Vec::new());
+
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
         let (code, comment) = line.split_once("//").map_or((line, None), |(c, n)| (c, Some(n)));
         let code = code.trim();
+
         if code.is_empty() {
             if !writes.is_empty() {
                 let finished = std::mem::take(&mut writes);
                 cheats.push(Cheat { name: std::mem::take(&mut name), enabled, writes: finished });
                 enabled = true;
             }
+
             if let Some(comment) = comment.map(str::trim) {
                 if comment.eq_ignore_ascii_case("disabled") {
                     enabled = false;
@@ -95,20 +98,24 @@ pub fn parse(text: &str) -> Result<Vec<Cheat>, CheatParseError> {
             }
             continue;
         }
+
         let mut tokens = code.split_whitespace();
         let (Some(address), Some(value), None) = (tokens.next(), tokens.next(), tokens.next())
         else {
             return Err(CheatParseError::InvalidFormat(number));
         };
+
         let parsed = u32::from_str_radix(&address.replace('_', ""), 16)
             .map_err(|_| CheatParseError::InvalidHex(number, address.to_owned()))?;
         let value = parse_value(value)
             .ok_or_else(|| CheatParseError::InvalidHex(number, value.to_owned()))?;
         writes.push((parsed, value));
     }
+
     if !writes.is_empty() {
         cheats.push(Cheat { name, enabled, writes });
     }
+
     Ok(cheats)
 }
 
@@ -122,6 +129,7 @@ pub fn apply(cheats: &[Cheat], memory: &mut Memory) {
                 CheatValue::U16(value) => memory.write_u16(*address, value),
                 CheatValue::U32(value) => memory.write_u32(*address, value),
             };
+
             if let Err(error) = written {
                 log::debug!("cheat {:?}: {error}", cheat.name);
             }
@@ -141,6 +149,7 @@ mod tests {
             "// Rupees\n1000_0000 03E7\n1000_0004 12345678\n\n// disabled\n// Hearts\n10000008 50 // full\n",
         )
         .unwrap();
+
         assert_eq!(cheats.len(), 2);
         assert_eq!(cheats[0].name, "Rupees");
         assert!(cheats[0].enabled);
@@ -162,6 +171,7 @@ mod tests {
     fn enabled_cheats_write_and_unmapped_ones_do_not_stop_the_rest() {
         let mut memory = Memory::new();
         memory.map(Region::new("MEM2", MEM2.start, 0x1000)).unwrap();
+
         let start = MEM2.start;
         let text = format!(
             "{:X} 11223344\n\n// disabled\n{:X} AB\n\nFFFFFF00 1\n{:X} CCDD\n",
@@ -170,6 +180,7 @@ mod tests {
             start + 8
         );
         apply(&parse(&text).unwrap(), &mut memory);
+
         assert_eq!(memory.read_u32(start).unwrap(), 0x1122_3344);
         assert_eq!(memory.read_u8(start + 4).unwrap(), 0);
         assert_eq!(memory.read_u16(start + 8).unwrap(), 0xCCDD);

@@ -31,6 +31,7 @@ wiiu_rpl = { workspace = true }
 wiiu_title = { workspace = true }
 
 [dev-dependencies]
+wiiu_test_roms = { workspace = true }
 wiiu_rpl = { workspace = true, features = ["builder"] }
 
 [lints]

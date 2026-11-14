@@ -60,3 +60,32 @@ pub mod scan_target {
     pub const TV: u32 = 1;
     pub const DRC: u32 = 4;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: the emulator's own packets (`HLE_*`) use opcodes the Latte command processor
+    /// does not, so they can never be confused with the title's packets.
+    /// Pass: every HLE opcode is at or above 0xE0, every hardware opcode here below, and
+    /// the HLE ones are distinct.
+    #[test]
+    fn hle_opcodes_stay_out_of_the_hardware_range() {
+        let hle = [
+            HLE_CLEAR,
+            HLE_COPY_COLOR_BUFFER_TO_SCAN_BUFFER,
+            HLE_SWAP_SCAN_BUFFERS,
+            HLE_CONTEXT_STATE,
+            HLE_COPY_SURFACE,
+            HLE_SET_TARGET,
+        ];
+        let hardware =
+            [NOP, DRAW_INDEX_2, SET_CONTEXT_REG, SET_ALU_CONST, SET_CTL_CONST, EVENT_WRITE_EOP];
+        assert!(hle.iter().all(|op| *op >= 0xE0));
+        assert!(hardware.iter().all(|op| *op < 0xE0));
+        let mut sorted = hle.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), hle.len());
+    }
+}

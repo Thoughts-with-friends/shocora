@@ -19,6 +19,9 @@ thiserror = { workspace = true }
 wiiu_mem_addr = { workspace = true }
 wiiu_memory = { workspace = true }
 
+[dev-dependencies]
+wiiu_test_roms = { workspace = true }
+
 [lints]
 workspace = true
 

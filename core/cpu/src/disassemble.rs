@@ -209,3 +209,36 @@ mod tests {
         assert_eq!(disassemble(0, 0x7C63_2615), "addo. r3, r3, r4");
     }
 }
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_rpl::RplFile;
+    use wiiu_test_roms::{report, require};
+
+    use super::disassemble;
+
+    /// Intent: the disassembler, which the debugger views and crash reports use, reads
+    /// the title's entry point (`_start` of the C runtime).
+    /// Pass: the first eight instructions at the entry disassemble to text that is not
+    /// `<invalid>`.
+    #[test]
+    fn disassembles_the_entry_point() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let file = RplFile::parse(&std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap())
+            .unwrap();
+        let entry = file.header.entry;
+        let section = file
+            .sections
+            .iter()
+            .find(|s| (s.header.address..s.header.address + s.data.len() as u32).contains(&entry))
+            .unwrap();
+        let at = (entry - section.header.address) as usize;
+        for (i, word) in section.data[at..at + 32].as_chunks::<4>().0.iter().enumerate() {
+            let pc = entry + 4 * i as u32;
+            let text = disassemble(pc, u32::from_be_bytes([word[0], word[1], word[2], word[3]]));
+            assert!(!text.contains("<invalid>"), "{pc:#010x}: {text}");
+            report(&format!("{pc:#010x}"), text);
+        }
+    }
+}

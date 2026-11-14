@@ -67,3 +67,22 @@ impl TestEnv {
         self.cpu.gpr[3]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: the test machine itself works: scratch memory is mapped, the default heap
+    /// allocates inside its range, and the main thread is the running one.
+    /// Pass: a heap allocation lands in `HEAP_START..HEAP_START + 1 MiB`, scratch reads back,
+    /// and the current thread is `MAIN_THREAD`.
+    #[test]
+    fn the_test_machine_is_usable() {
+        let mut env = TestEnv::new();
+        env.memory.write_u32(SCRATCH, 7).unwrap();
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), 7);
+        let block = env.call("coreinit", "__shocora_DefaultHeapAlloc", &[0x40]);
+        assert!((HEAP_START..HEAP_START + 0x10_0000).contains(&block), "{block:#x}");
+        assert_eq!(env.os.coreinit.threads.current, MAIN_THREAD);
+    }
+}

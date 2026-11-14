@@ -252,3 +252,40 @@ fn section_data(bytes: &[u8], index: usize, header: &SectionHeader) -> Result<Ve
         .map_err(|source| LoadError::Decompress { index, source })?;
     Ok(data)
 }
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::RplFile;
+
+    /// Intent: parsing the `.rpx` inflates its sections and reads `SHT_RPL_FILEINFO` (the
+    /// stack and heap sizes the OS gives the title) and its imports (which system
+    /// libraries it links against).
+    /// Pass: the file info has a stack size, the text section is not empty, and the title
+    /// imports from `coreinit` like every Wii U program.
+    #[test]
+    fn parses_the_rpx_with_file_info_and_imports() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let file = RplFile::parse(&std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap())
+            .unwrap();
+        let info = &file.file_info;
+        assert!(info.stack_size > 0);
+        assert!(file.sections.iter().any(|s| s.name == ".text" && !s.data.is_empty()));
+        let libraries = file.imported_libraries();
+        assert!(libraries.contains(&"coreinit"));
+        let imports = file.imported_symbols().unwrap();
+        let functions = imports.iter().filter(|(_, _, function)| *function).count();
+        report(
+            "text / data / load size",
+            format!("{:#x} / {:#x} / {:#x}", info.text_size, info.data_size, info.load_size),
+        );
+        report("stack size", format!("{:#x}", info.stack_size));
+        report("heap size", format!("{:#x}", info.heap_size));
+        report("sda base", format!("{:#010x}", info.sda_base));
+        report("imported libraries", libraries.join(", "));
+        report("imported functions / data", format!("{functions} / {}", imports.len() - functions));
+        report("exports", file.exports().unwrap().len());
+    }
+}

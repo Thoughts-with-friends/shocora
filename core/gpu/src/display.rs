@@ -28,3 +28,22 @@ impl Display {
         self.flips
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: a swap tells the host renderer to present what was copied to the scan
+    /// buffers, and counts the flip (the FPS counter).
+    /// Pass: `swap` queues `Flip` and the count goes to 1; `clear` queues a screen clear.
+    #[test]
+    fn swap_queues_a_flip_and_counts_it() {
+        let mut latte = Latte::default();
+        let mut display = Display::default();
+        display.swap(&mut latte);
+        assert_eq!(display.flips(), 1);
+        assert!(latte.commands.iter().any(|c| matches!(c, RenderCommand::Flip)));
+        Display::clear(&mut latte, Screen::Tv, [0.0; 4]);
+        assert!(matches!(latte.commands.last(), Some(RenderCommand::ClearScreen { .. })));
+    }
+}

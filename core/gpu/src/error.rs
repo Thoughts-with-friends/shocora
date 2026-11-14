@@ -15,3 +15,19 @@ pub enum GpuError {
     #[error(transparent)]
     Memory(#[from] MemoryError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GpuError;
+
+    /// Intent: GPU errors say where a command stream went wrong.
+    /// Pass: the packet index and the physical address appear in the messages, and a
+    /// memory error converts with `?`.
+    #[test]
+    fn messages_locate_the_fault() {
+        assert!(GpuError::TruncatedPacket { index: 7 }.to_string().contains("word 7"));
+        assert!(GpuError::BadPhysicalAddress(0x1234).to_string().contains("0x00001234"));
+        let memory = wiiu_memory::MemoryError::Unmapped { address: 4, len: 4 };
+        assert!(matches!(GpuError::from(memory), GpuError::Memory(_)));
+    }
+}

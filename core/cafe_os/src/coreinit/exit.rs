@@ -25,3 +25,34 @@ fn os_fatal(ctx: &mut HleContext<'_>, message: GuestPtr<u8>) -> Result<(), HleEr
     let message = ctx.memory.read_c_string(message.address(), 0x1000)?;
     Err(HleError::Fatal(message))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::{
+        dispatch,
+        test_env::{SCRATCH, TestEnv},
+    };
+
+    /// Intent: `exit` ends the title with its status and ends the frame, so the front end
+    /// can show that the title quit.
+    /// Pass: the exit code is kept and the frame is marked done.
+    #[test]
+    fn exit_keeps_the_status() {
+        let mut env = TestEnv::new();
+        env.call("coreinit", "exit", &[3]);
+        assert_eq!(env.os.exit_code, Some(3));
+        assert!(env.os.frame_done);
+    }
+
+    /// Intent: `OSFatal` stops emulation with the title's own message.
+    /// Pass: the call fails with a fatal error that carries the guest string.
+    #[test]
+    fn fatal_carries_the_guest_message() {
+        let mut env = TestEnv::new();
+        env.memory.write_c_string(SCRATCH, "disc read error").unwrap();
+        env.cpu.gpr[3] = SCRATCH;
+        let index = env.os.registry.function_index("coreinit", "OSFatal").unwrap();
+        let error = dispatch(&mut env.ctx(), index).unwrap_err();
+        assert!(error.to_string().contains("disc read error"));
+    }
+}

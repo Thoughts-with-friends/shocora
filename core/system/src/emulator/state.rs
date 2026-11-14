@@ -73,13 +73,17 @@ fn state_error(path: &Path, message: impl std::fmt::Display) -> EmuError {
 /// Where guest memory is not zero, in pieces of at most [`MAX_RUN`] bytes.
 fn non_zero_runs(memory: &Memory) -> Result<Vec<(u32, u32)>, EmuError> {
     let mut runs: Vec<(u32, u32)> = Vec::new();
+
+    // Check each region separately, as memory may not be contiguous.
     for region in memory.regions() {
         let bytes = memory.slice(region.start, region.size)?;
+
         for (index, page) in bytes.chunks(PAGE).enumerate() {
             if page.iter().all(|byte| *byte == 0) {
                 continue;
             }
             let address = region.start + (index * PAGE) as u32;
+
             match runs.last_mut() {
                 Some((start, size)) if *start + *size == address && (*size as usize) < MAX_RUN => {
                     *size += page.len() as u32;
@@ -94,6 +98,7 @@ fn non_zero_runs(memory: &Memory) -> Result<Vec<(u32, u32)>, EmuError> {
 fn compress_memory(memory: &Memory) -> Result<Vec<MemoryRun>, EmuError> {
     let runs = non_zero_runs(memory)?;
     let next = AtomicUsize::new(0);
+
     let compress = || {
         let mut done = Vec::new();
         while let Some(&(address, size)) = runs.get(next.fetch_add(1, Ordering::Relaxed)) {
@@ -103,6 +108,8 @@ fn compress_memory(memory: &Memory) -> Result<Vec<MemoryRun>, EmuError> {
         }
         Ok::<_, wiiu_memory::MemoryError>(done)
     };
+
+    // Workers must start before the first is joined, so that they can all read from memory at once.
     let parts: Vec<_> = std::thread::scope(|scope| {
         #[allow(
             clippy::needless_collect,
@@ -111,11 +118,14 @@ fn compress_memory(memory: &Memory) -> Result<Vec<MemoryRun>, EmuError> {
         let workers: Vec<_> = (0..THREADS).map(|_| scope.spawn(compress)).collect();
         workers.into_iter().map(std::thread::ScopedJoinHandle::join).collect()
     });
+
+    // Memory runs execute in parallel; errors are returned if any fail.
     let mut memory_runs = Vec::with_capacity(runs.len());
     for part in parts {
         let part = part.map_err(|_| EmuError::State("compressing memory failed".to_owned()))?;
         memory_runs.extend(part?);
     }
+
     Ok(memory_runs)
 }
 
@@ -134,8 +144,10 @@ impl Emulator {
         if self.status != Status::Running {
             return Err(EmuError::State("no title is running".to_owned()));
         }
+
         let title = self.title.as_ref().and_then(|title| title.meta.title_id);
         let folder = title.map_or_else(|| "homebrew".to_owned(), |id| format!("{id:016x}"));
+
         Ok(self.config.states_dir.join(folder).join(format!("{slot}.state")))
     }
 
@@ -156,6 +168,7 @@ impl Emulator {
         surfaces: Vec<TextureUpload>,
     ) -> Result<PathBuf, EmuError> {
         let path = self.state_path(slot)?;
+
         if self.multi_core_running {
             // Side by side, each core holds its thread in registers of its own: a state keeps
             // them in the threads, which either mode can go on from.
@@ -165,11 +178,14 @@ impl Emulator {
             self.os.coreinit.threads.park(&self.cores, super::MAIN_CORE);
             self.multi_core_running = false;
         }
+
         // Waits for the GPU thread, which may still write guest memory.
         let gpu = self
             .gpu
             .save_state(surfaces)
             .ok_or_else(|| state_error(&path, "the GPU thread stopped"))?;
+
+        // The guest machine: the GPU thread is done with the old memory
         let machine = MachineRef {
             cores: &self.cores,
             os: &self.os,
@@ -177,22 +193,30 @@ impl Emulator {
             iosu: &self.iosu,
             gpu,
         };
+
+        // Serialize the machine state
         let machine = postcard::to_stdvec(&machine).map_err(|e| state_error(&path, e))?;
+
+        // Serialize the memory state: runs of non-zero pages, compressed
         let file = StateFile {
             format: FORMAT,
             title_id: self.title.as_ref().and_then(|title| title.meta.title_id),
             machine: ByteBuf::from(lz4_flex::compress_prepend_size(&machine)),
             memory: compress_memory(&self.memory)?,
         };
+
         let bytes = postcard::to_stdvec(&file).map_err(|e| state_error(&path, e))?;
         let io = |source| EmuError::Io { path: path.clone(), source };
+
         if let Some(folder) = path.parent() {
             std::fs::create_dir_all(folder).map_err(io)?;
         }
+
         // A crash while writing must not cost the state already there.
         let unfinished = path.with_extension("state.tmp");
         std::fs::write(&unfinished, &bytes).map_err(io)?;
         std::fs::rename(&unfinished, &path).map_err(io)?;
+
         Ok(path)
     }
 
@@ -206,18 +230,23 @@ impl Emulator {
         let bytes =
             std::fs::read(&path).map_err(|source| EmuError::Io { path: path.clone(), source })?;
         let file: StateFile = postcard::from_bytes(&bytes).map_err(|e| state_error(&path, e))?;
+
         if file.format != FORMAT {
             return Err(state_error(&path, "saved by a different version of shocora"));
         }
+
         let title_id = self.title.as_ref().and_then(|title| title.meta.title_id);
         if file.title_id != title_id {
             return Err(state_error(&path, "saved by another title"));
         }
+
         let machine = lz4_flex::decompress_size_prepended(&file.machine)
             .map_err(|e| state_error(&path, e))?;
         let machine: SavedMachine =
             postcard::from_bytes(&machine).map_err(|e| state_error(&path, e))?;
+
         let mut memory_runs = Vec::with_capacity(file.memory.len());
+
         for run in &file.memory {
             let bytes = lz4_flex::decompress_size_prepended(&run.compressed)
                 .map_err(|e| state_error(&path, e))?;
@@ -231,16 +260,24 @@ impl Emulator {
         // The file is good: from here on the machine is replaced. The GPU thread must be done
         // with the old memory first.
         self.gpu.wait_idle();
+
         let regions: Vec<_> = self.memory.regions().collect();
         for region in regions {
             self.memory.fill(region.start, region.size, 0)?;
         }
+
         for (address, bytes) in &memory_runs {
             self.memory.write_bytes(*address, bytes)?;
         }
+
         self.cores = machine.cores;
         self.jit = Jit::new();
+
         let mut os = machine.os;
+
+        // Move registry -> preserve gamepad/controllers ->
+        // configure timebase and GX2 -> set fonts directory ->
+        // update OS
         os.registry = std::mem::take(&mut self.os.registry);
         os.gamepad = self.os.gamepad;
         os.pro_controllers = self.os.pro_controllers;
@@ -249,15 +286,20 @@ impl Emulator {
         os.gx2.min_swap_interval = self.config.min_swap_interval.unwrap_or(0);
         os.coreinit.shared_data.fonts_dir.clone_from(&self.config.fonts_dir);
         self.os = os;
+
         let mut iosu = machine.iosu;
         iosu.adopt_volumes(&mut self.iosu);
+
+        // GPU thread finishes old memory update -> cores resume execution.
         self.iosu = iosu;
         self.gpu.restore_state(machine.gpu, self.config.resolution_factor);
         self.audio_speed = SpeedResampler::default();
         self.next_vsync = None;
+
         // States hold parked threads, or the turns of one host thread: either way, the
         // cores go side by side again from there.
         self.multi_core_running = false;
+
         Ok(path)
     }
 }

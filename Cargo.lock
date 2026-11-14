@@ -5017,6 +5017,7 @@ dependencies = [
  "wiiu_peripherals",
  "wiiu_rpl",
  "wiiu_sound",
+ "wiiu_test_roms",
 ]
 
 [[package]]
@@ -5032,6 +5033,8 @@ dependencies = [
  "region",
  "serde",
  "thiserror 2.0.21",
+ "wiiu_rpl",
+ "wiiu_test_roms",
 ]
 
 [[package]]
@@ -5054,6 +5057,7 @@ dependencies = [
  "wiiu_peripherals",
  "wiiu_rpl",
  "wiiu_sound",
+ "wiiu_test_roms",
  "wiiu_title",
 ]
 
@@ -5062,6 +5066,7 @@ name = "wiiu_fs"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.21",
+ "wiiu_test_roms",
 ]
 
 [[package]]
@@ -5103,6 +5108,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "wiiu_fs",
+ "wiiu_test_roms",
 ]
 
 [[package]]
@@ -5138,6 +5144,7 @@ dependencies = [
  "thiserror 2.0.21",
  "wiiu_mem_addr",
  "wiiu_memory",
+ "wiiu_test_roms",
 ]
 
 [[package]]
@@ -5148,11 +5155,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wiiu_test_roms"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "wiiu_title"
 version = "0.1.0"
 dependencies = [
  "roxmltree",
  "thiserror 2.0.21",
+ "wiiu_test_roms",
 ]
 
 [[package]]

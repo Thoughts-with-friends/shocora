@@ -77,6 +77,17 @@ impl Overlay {
 }
 
 impl Device for Overlay {
+    fn describe(&self) -> String {
+        let layers: Vec<String> = self.layers.iter().map(|layer| layer.describe()).collect();
+        let mut text = format!("overlay, topmost first: {}", layers.join(" over "));
+        let mut files: Vec<&str> = self.files.keys().map(GuestPath::as_str).collect();
+        files.sort_unstable();
+        if !files.is_empty() {
+            text.push_str(&format!("; replaced files: {}", files.join(", ")));
+        }
+        text
+    }
+
     fn metadata(&self, path: &GuestPath) -> Result<Metadata, FsError> {
         if let Some(contents) = self.files.get(path) {
             return Ok(Metadata { is_dir: false, size: contents.len() as u64 });

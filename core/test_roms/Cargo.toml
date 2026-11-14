@@ -1,0 +1,20 @@
+[package]
+name = "wiiu_test_roms"
+description = "Test-only helper: finds the developer's own ROMs and saves through the git-ignored shocora.toml"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+publish = false
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+toml = "0.9"
+
+[lints]
+workspace = true

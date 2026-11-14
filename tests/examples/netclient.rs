@@ -36,9 +36,11 @@ struct Recorder {
 fn save_png(path: &Path, frame: &Frame) -> Result<(), Box<dyn std::error::Error>> {
     let file = std::io::BufWriter::new(std::fs::File::create(path)?);
     let mut encoder = png::Encoder::new(file, frame.width, frame.height);
+
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header()?.write_image_data(&frame.rgba)?;
+
     Ok(())
 }
 
@@ -47,6 +49,7 @@ impl ClientEvents for Recorder {
         let (name, every, number) = {
             let mut received = self.received.lock().unwrap_or_else(PoisonError::into_inner);
             received.frame_bytes += frame.rgba.len() as u64;
+
             if frame.display == Display::Tv {
                 received.frames += 1;
                 received.size = (frame.width, frame.height);
@@ -57,6 +60,7 @@ impl ClientEvents for Recorder {
                 ("net_gamepad", 10, received.gamepad_frames)
             }
         };
+
         // One picture per second of each screen.
         if let Some(dir) = self.out.as_ref().filter(|_| number % every == 1) {
             if let Err(error) = save_png(&dir.join(format!("{name}_{number:06}.png")), &frame) {
@@ -82,9 +86,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = args.next().ok_or("usage: netclient <HOST[:PORT]> <SECONDS> [OUT_DIR]")?;
     let seconds: u64 = args.next().ok_or("seconds?")?.parse()?;
     let out = args.next().map(PathBuf::from);
+
     if let Some(dir) = &out {
         std::fs::create_dir_all(dir)?;
     }
+
     let presses: Vec<(u64, u32, u64)> = std::env::var("SHOCORA_PRESS")
         .unwrap_or_default()
         .split(';')
@@ -104,15 +110,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let received = Arc::clone(&received);
         move || Recorder { received, out }
     })?;
+
     let start = Instant::now();
     let mut last_report = start;
     let mut last_bits = None;
+
     while start.elapsed() < Duration::from_secs(seconds) {
         let now = start.elapsed().as_secs();
         let bits = presses
             .iter()
             .filter(|(at, _, length)| now >= *at && now < at + length)
             .fold(0, |bits, (_, button, _)| bits | button);
+
         if last_bits != Some(bits) {
             client.set_input(GuestInput {
                 pad: GamePadState::from_button_bits(bits),
@@ -120,9 +129,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             last_bits = Some(bits);
         }
+
         if last_report.elapsed() >= Duration::from_secs(1) {
             last_report = Instant::now();
             let received = received.lock().unwrap_or_else(PoisonError::into_inner);
+
             println!(
                 "{now:>4}s {:?} · TV {} {:?} · GamePad {} {:?} · {:.1} s of sound · {:?}",
                 client.state(),

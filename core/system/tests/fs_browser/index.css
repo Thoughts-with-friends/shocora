@@ -1,0 +1,307 @@
+:root {
+  --bg: #1e1e1e;
+  --side: #252526;
+  --bar: #333333;
+  --tab: #2d2d2d;
+  --line: #3c3c3c;
+  --text: #cccccc;
+  --dim: #858585;
+  --hover: #2a2d2e;
+  --select: #37373d;
+  --accent: #007acc;
+  --tag: #569cd6;
+  --attr: #9cdcfe;
+  --str: #ce9178;
+  --num: #b5cea8;
+  --comment: #6a9955;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  display: grid;
+  height: 100%;
+  grid-template: "title title title" 30px "act side main" 1fr "status status status" 22px / 48px 280px 1fr;
+}
+
+#title {
+  grid-area: title;
+  background: var(--bar);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+#act {
+  grid-area: act;
+  background: var(--bar);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#act div {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  border-left: 2px solid var(--text);
+  color: var(--text);
+}
+
+#side {
+  grid-area: side;
+  background: var(--side);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#side header {
+  padding: 8px 12px 8px 20px;
+  font-size: 11px;
+  letter-spacing: .5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#side header button {
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#filter {
+  margin: 0 12px 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 3px 6px;
+  font: inherit;
+  outline: none;
+}
+
+#filter:focus {
+  border-color: var(--accent);
+}
+
+#tree {
+  overflow: auto;
+  flex: 1;
+  padding-bottom: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.active {
+  background: var(--select);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.twisty {
+  width: 16px;
+  text-align: center;
+  color: var(--dim);
+  flex: none;
+}
+
+.icon {
+  width: 18px;
+  flex: none;
+  font-size: 12px;
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.size {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+#main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+#tabs {
+  display: flex;
+  background: var(--side);
+  height: 35px;
+  overflow-x: auto;
+  flex: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  background: var(--tab);
+  color: var(--dim);
+  border-right: 1px solid var(--side);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--bg);
+  color: #fff;
+  border-top: 1px solid var(--accent);
+}
+
+.tab .close {
+  visibility: hidden;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.tab:hover .close,
+.tab.active .close {
+  visibility: visible;
+}
+
+.tab .close:hover {
+  background: var(--line);
+}
+
+#crumbs {
+  padding: 3px 16px;
+  color: var(--dim);
+  font-size: 12px;
+  flex: none;
+  height: 22px;
+}
+
+#view {
+  flex: 1;
+  overflow: auto;
+  font: 13px/19px Consolas, "Cascadia Mono", monospace;
+}
+
+#view table {
+  border-collapse: collapse;
+}
+
+#view td {
+  padding: 0;
+  vertical-align: top;
+  white-space: pre;
+}
+
+#view td.ln {
+  color: var(--dim);
+  text-align: right;
+  padding: 0 20px 0 16px;
+  user-select: none;
+  min-width: 60px;
+}
+
+#view td.hexoff {
+  color: var(--dim);
+  padding: 0 16px;
+  user-select: none;
+}
+
+#view td.hexbytes {
+  color: var(--num);
+  padding-right: 16px;
+}
+
+#view tr:hover td {
+  background: #2a2a2a;
+}
+
+.tag {
+  color: var(--tag);
+}
+
+.attr {
+  color: var(--attr);
+}
+
+.str {
+  color: var(--str);
+}
+
+.num {
+  color: var(--num);
+}
+
+.comment {
+  color: var(--comment);
+}
+
+#welcome {
+  padding: 40px;
+  color: var(--dim);
+  line-height: 1.7;
+}
+
+#welcome h1 {
+  font-weight: 300;
+  color: var(--text);
+}
+
+#more {
+  margin: 12px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+#status {
+  grid-area: status;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+#status .right {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+}

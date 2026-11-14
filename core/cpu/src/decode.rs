@@ -423,3 +423,44 @@ mod tests {
         }
     }
 }
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use std::collections::HashMap;
+
+    use wiiu_rpl::{RplFile, elf::SHF_EXECINSTR};
+    use wiiu_test_roms::{report, require};
+
+    use super::{Opcode, decode};
+
+    /// Intent: the decoder knows every instruction the title's code uses, so neither the
+    /// interpreter nor the JIT meets an opcode it cannot run.
+    /// Pass: under 0.1 % of the words in executable sections decode as `<invalid>` (the
+    /// rest are data islands such as jump tables and padding).
+    #[test]
+    fn decodes_the_title_code() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let file = RplFile::parse(&std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap())
+            .unwrap();
+        let mut counts: HashMap<Opcode, usize> = HashMap::new();
+        let mut words = 0;
+        for section in file.sections.iter().filter(|s| s.header.flags & SHF_EXECINSTR != 0) {
+            for word in section.data.as_chunks::<4>().0 {
+                let raw = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+                *counts.entry(decode(raw)).or_default() += 1;
+                words += 1;
+            }
+        }
+        let invalid = counts.get(&Opcode::Invalid).copied().unwrap_or(0);
+        let mut common: Vec<_> = counts.iter().collect();
+        common.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+        let common: Vec<String> =
+            common.iter().take(8).map(|(op, n)| format!("{} {n}", op.mnemonic())).collect();
+        report("instruction words", words);
+        report("distinct opcodes", counts.len());
+        report("invalid words", invalid);
+        report("most common", common.join(", "));
+        assert!(invalid * 1000 < words, "{invalid} of {words} words are invalid");
+    }
+}

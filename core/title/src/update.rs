@@ -126,14 +126,17 @@ pub fn find_add_on(
 ) -> UpdateSearch {
     let id = kind.title_id(title_id);
     let (high, low) = (id >> 32, id & 0xFFFF_FFFF);
+
     // Cemu writes lowercase; a copy made by hand may not be.
     let names = [
         (format!("{high:08x}"), format!("{low:08x}")),
         (format!("{high:08X}"), format!("{low:08X}")),
     ];
+
     // `true`: a folder shared by many titles.
     let mut candidates: Vec<(PathBuf, bool)> =
         root.map(|root| (root.join(kind.dir_name()), false)).into_iter().collect();
+
     for dir in library_dirs {
         candidates.extend(library_entries(dir, &names[0].1).into_iter().map(|dir| (dir, true)));
     }
@@ -144,11 +147,13 @@ pub fn find_add_on(
 
     let mut search = UpdateSearch::default();
     let mut seen: Vec<PathBuf> = Vec::new();
+
     for (dir, shared) in candidates {
         if !dir.join("code").is_dir() || seen.contains(&dir) {
             continue;
         }
         seen.push(dir.clone());
+
         match verify_add_on(&dir, kind, title_id) {
             Ok(meta) => {
                 search.version = meta.title_version;
@@ -173,6 +178,7 @@ const LIBRARY_DEPTH: usize = 8;
 fn library_entries(dir: &Path, id: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut pending = vec![(dir.to_owned(), 0)];
+
     while let Some((dir, depth)) = pending.pop() {
         if dir.join("code").is_dir() {
             found.push(dir);
@@ -181,6 +187,7 @@ fn library_entries(dir: &Path, id: &str) -> Vec<PathBuf> {
         if depth >= LIBRARY_DEPTH {
             continue;
         }
+
         let children = fs::read_dir(&dir).into_iter().flatten().filter_map(Result::ok);
         pending.extend(
             children
@@ -188,6 +195,7 @@ fn library_entries(dir: &Path, id: &str) -> Vec<PathBuf> {
                 .map(|entry| (entry.path(), depth + 1)),
         );
     }
+
     let names_title = |path: &Path| path.to_string_lossy().to_ascii_lowercase().contains(id);
     found.sort_by_cached_key(|path| (!names_title(path), path.clone()));
     found
@@ -213,9 +221,11 @@ pub fn verify_add_on(
 ) -> Result<TitleMeta, UpdateProblem> {
     let path = dir.join("code/app.xml");
     let text = fs::read(&path).map_err(|_| UpdateProblem::Unreadable)?;
+
     let mut meta = TitleMeta::default();
     meta.apply_app_xml(&String::from_utf8_lossy(&text), &path)
         .map_err(|_| UpdateProblem::Unreadable)?;
+
     let wanted = kind.title_id(title_id);
     match meta.title_id {
         Some(found) if found == wanted => Ok(meta),
@@ -271,13 +281,15 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("shocora-mlc-{}", std::process::id()));
         let mlc = temp.join("mlc01");
         let _ = fs::remove_dir_all(&temp);
+
         let update = mlc.join("usr/title/0005000e/101c9300");
         write_app_xml(&update, &app_xml(update_title_id(BASE)));
-
         assert_eq!(update_title_id(BASE), 0x0005_000E_101C_9300);
+
         let search = find_update(BASE, None, &[PathBuf::from("missing"), mlc.clone()]);
         assert_eq!(search.found, Some(update));
         assert_eq!(find_update(0x0005_0000_1010_EC00, None, &[mlc]).found, None);
+
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -285,22 +297,27 @@ mod tests {
     fn the_title_folder_comes_first_and_wrong_dumps_are_passed_over() {
         let temp = std::env::temp_dir().join(format!("shocora-bundled-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
+
         let (root, mlc) = (temp.join("title"), temp.join("mlc01"));
         let installed = mlc.join("usr/title/0005000e/101c9300");
         write_app_xml(&installed, &app_xml(update_title_id(BASE)));
 
         // A system title dumped next to the game, then one still encrypted.
         write_app_xml(&root.join(BUNDLED_DIR), &app_xml(0x0005_0010_1006_0000));
+
         let search = find_update(BASE, Some(&root), std::slice::from_ref(&mlc));
         assert_eq!(search.found, Some(installed));
         assert!(matches!(search.rejected[..], [(_, UpdateProblem::OtherTitle { .. })]));
         write_app_xml(&root.join(BUNDLED_DIR), &[0x8F, 0x00, 0xC3, 0x12]);
+
         let search = find_update(BASE, Some(&root), &[]);
         assert_eq!(search.rejected[0].1, UpdateProblem::Unreadable);
 
         write_app_xml(&root.join(BUNDLED_DIR), &app_xml(update_title_id(BASE)));
+
         let search = find_update(BASE, Some(&root), &[mlc]);
         assert_eq!(search.found, Some(root.join(BUNDLED_DIR)));
+
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -309,12 +326,15 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("shocora-library-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         let (updates, dlc) = (temp.join("update"), temp.join("dlc"));
+
         // Another title's update first by name: passed over without a word.
         write_app_xml(&updates.join("1010ec00"), &app_xml(update_title_id(0x0005_0000_1010_EC00)));
         write_app_xml(&updates.join("any name"), &app_xml(update_title_id(BASE)));
+
         // Deep in a copied `mlc01`: found, and before the other one, as its path names the title.
         let nested = updates.join("backup/mlc01/usr/title/0005000e/101c9300");
         write_app_xml(&nested, &app_xml(update_title_id(BASE)));
+
         let dlc_id = AddOnKind::Dlc.title_id(BASE);
         write_app_xml(&dlc, &format!(
             "<app><title_id type=\"hexBinary\">{dlc_id:016X}</title_id>             <title_version type=\"hexBinary\">0050</title_version></app>"
@@ -323,9 +343,11 @@ mod tests {
         let found = find_add_on(AddOnKind::Update, BASE, None, std::slice::from_ref(&updates), &[]);
         assert_eq!(found.found, Some(nested));
         assert!(found.rejected.is_empty());
+
         let found = find_add_on(AddOnKind::Dlc, BASE, None, std::slice::from_ref(&dlc), &[]);
         assert_eq!((found.found, found.version), (Some(dlc), Some(0x50)));
         assert_eq!(dlc_id, 0x0005_000C_101C_9300);
+
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -333,5 +355,33 @@ mod tests {
     fn knows_gated_titles() {
         assert_eq!(version_gate(0x0005_0000_101C_9300).unwrap().contents, b"1.5.0");
         assert_eq!(version_gate(0x0005_0000_1010_EC00), None);
+    }
+}
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::version_gate;
+
+    /// Intent: for a title that refuses to start below a version, the gate names a file in
+    /// its content, and the emulator can tell from it whether an update is applied.
+    /// Pass: titles without a gate pass at once; otherwise the gate file exists in the
+    /// base game's `content/` and its contents are printed (the base game holds an older
+    /// version than the gate's).
+    #[test]
+    fn version_gate_file_is_in_the_content() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let id = require!(wiiu_test_roms::title_id(&title), "no title id");
+        let Some(gate) = version_gate(id) else {
+            report("version gate", "none for this title");
+            return;
+        };
+        let file = title.join("content").join(gate.file.trim_start_matches('/'));
+        let contents = std::fs::read(&file).unwrap();
+        report("version gate file", gate.file);
+        report("base game holds", String::from_utf8_lossy(&contents).trim());
+        report("gate wants", String::from_utf8_lossy(gate.contents));
     }
 }

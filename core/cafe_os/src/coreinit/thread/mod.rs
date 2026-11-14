@@ -180,3 +180,39 @@ pub const EXPORTS: &[HleExport] = &[
     message::OS_PEEK_MESSAGE,
     message::OS_GET_SYSTEM_MESSAGE_QUEUE,
 ];
+
+#[cfg(test)]
+mod tests {
+    use wiiu_cpu::CpuState;
+
+    use super::{core_from_attr, new_context};
+
+    /// Intent: `OS_THREAD_ATTR_AFFINITY_*` picks a thread's core; "any core" (0 or all three
+    /// bits) keeps the creator's.
+    /// Pass: bit 0 → core 0, bit 2 → core 2, 0 and 7 → the default.
+    #[test]
+    fn affinity_bits_pick_the_core() {
+        assert_eq!(core_from_attr(1, 1), 0);
+        assert_eq!(core_from_attr(4, 1), 2);
+        assert_eq!(core_from_attr(0, 1), 1);
+        assert_eq!(core_from_attr(7, 2), 2);
+    }
+
+    /// Intent: a new thread starts at its entry with the PowerPC EABI set up: arguments in
+    /// r3/r4, an aligned stack below its top, and the small data bases of its creator.
+    /// Pass: pc, lr, r1 (16-byte aligned, under the top), r2, r3, r4 and r13 are as set.
+    #[test]
+    fn new_threads_start_with_the_eabi_registers() {
+        let mut parent = CpuState::new(1);
+        parent.gpr[2] = 0x1000_8000;
+        parent.gpr[13] = 0x1056_8600;
+        let context =
+            new_context(&parent, 2, 0x0200_0000, 1, 0x1000_0000, 0x1001_0007, 0x0E00_1040);
+        assert_eq!((context.pc, context.lr), (0x0200_0000, 0x0E00_1040));
+        assert_eq!(context.gpr[1] % 16, 0);
+        assert!(context.gpr[1] < 0x1001_0007);
+        assert_eq!((context.gpr[2], context.gpr[13]), (0x1000_8000, 0x1056_8600));
+        assert_eq!((context.gpr[3], context.gpr[4]), (1, 0x1000_0000));
+        assert_eq!(context.core_id(), 2);
+    }
+}

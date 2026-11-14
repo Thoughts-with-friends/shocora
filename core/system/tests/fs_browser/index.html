@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>shocora — guest file system</title>
+  <link rel="stylesheet" href="/index.css">
+</head>
+
+<body>
+  <div id="app">
+    <div id="title">shocora — guest file system (read-only)</div>
+    <div id="act">
+      <div title="Explorer">&#128462;</div>
+    </div>
+    <aside id="side">
+      <header><span>EXPLORER</span><button id="refresh" title="Refresh">&#8635;</button></header>
+      <input id="filter" placeholder="Filter loaded entries">
+      <div id="tree"></div>
+    </aside>
+    <section id="main">
+      <div id="tabs"></div>
+      <div id="crumbs"></div>
+      <div id="view">
+        <div id="welcome">
+          <h1>Console file system</h1>
+          The Wii U's tree as IOSU names it:<br>
+          <code>/vol</code>: the title's volumes (<code>code</code>, <code>content</code>, <code>meta</code>,
+          <code>save</code>, add-on content), also at their place in system memory under
+          <code>/vol/storage_mlc01/usr</code>;<br>
+          <code>/dev</code>: IOSU's devices and their open handles;<br>
+          <code>/proc</code>: the emulator's VFS mount table, IOSU handles, open files and folders.<br>
+          Open a file in the explorer. Text is shown with line numbers, anything else as a hex dump.
+        </div>
+      </div>
+    </section>
+    <footer id="status"><span id="emu">connecting…</span>
+      <span class="right"><span id="fileinfo"></span><span id="kind"></span></span>
+    </footer>
+  </div>
+  <script src="/index.js"></script>
+</body>
+
+</html>

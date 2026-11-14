@@ -41,18 +41,20 @@ pub struct FsaStat {
     pub size: u64,
 }
 
+/// An open file handle.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-struct OpenFile {
-    path: String,
-    position: u64,
-    size: u64,
-    writable: bool,
+pub struct OpenFile {
+    pub path: String,
+    pub position: u64,
+    pub size: u64,
+    pub writable: bool,
 }
 
+/// An open directory handle: its listing, read up to `next`.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-struct OpenDir {
-    entries: Vec<(String, FsaStat)>,
-    next: usize,
+pub struct OpenDir {
+    pub entries: Vec<(String, FsaStat)>,
+    pub next: usize,
 }
 
 /// FSA device state: the mount table plus open file/directory handles.
@@ -70,6 +72,25 @@ impl Fsa {
     #[inline]
     pub fn new(vfs: Vfs) -> Self {
         Self { vfs, ..Self::default() }
+    }
+
+    /// The open file handles, by handle.
+    pub fn open_files(&self) -> Vec<(u32, &OpenFile)> {
+        let mut files: Vec<(u32, &OpenFile)> = self.files.iter().map(|(h, f)| (*h, f)).collect();
+        files.sort_unstable_by_key(|(handle, _)| *handle);
+        files
+    }
+
+    /// The open directory handles, by handle.
+    pub fn open_dirs(&self) -> Vec<(u32, &OpenDir)> {
+        let mut dirs: Vec<(u32, &OpenDir)> = self.dirs.iter().map(|(h, d)| (*h, d)).collect();
+        dirs.sort_unstable_by_key(|(handle, _)| *handle);
+        dirs
+    }
+
+    #[inline]
+    pub const fn vfs(&self) -> &Vfs {
+        &self.vfs
     }
 
     #[inline]
@@ -283,5 +304,48 @@ mod tests {
         assert_eq!(fsa.read_dir(d), Err(FsaError::EndOfDirectory));
         fsa.close_dir(d).unwrap();
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// Tests against the developer's own save (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_fs::{HostDirectory, Vfs};
+    use wiiu_test_roms::{report, require};
+
+    use super::*;
+
+    /// Intent: through FSA (the IOSU file server behind `FSOpenDir`/`FSOpenFile`), a title
+    /// finds its save under `/vol/save`: a `common` folder and one folder per user
+    /// (`80000001` is the first account). Mounted read-only, so the save is never touched.
+    /// Pass: every folder under `/vol/save` lists through `open_dir`/`read_dir`, and every
+    /// file in them opens and reads its full size.
+    #[test]
+    fn lists_and_reads_the_title_save() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let save = require!(wiiu_test_roms::save_of(&title), "no save for the title");
+        let mut vfs = Vfs::new();
+        vfs.mount("/vol/save", HostDirectory::read_only(save)).unwrap();
+        let mut fsa = Fsa::new(vfs);
+        let (mut files, mut dirs) = (Vec::new(), vec!["/vol/save".to_owned()]);
+        while let Some(dir) = dirs.pop() {
+            let handle = fsa.open_dir(&dir).unwrap();
+            while let Ok((name, stat)) = fsa.read_dir(handle) {
+                let path = format!("{dir}/{name}");
+                if stat.is_directory { dirs.push(path) } else { files.push((path, stat.size)) }
+            }
+            fsa.close_dir(handle).unwrap();
+        }
+        files.sort();
+        report("save files", files.len());
+        for (path, size) in &files {
+            let handle = fsa.open_file(path, "r").unwrap();
+            let data = fsa.read_file(handle, *size as usize).unwrap();
+            assert_eq!(data.len() as u64, *size, "{path}");
+            fsa.close_file(handle).unwrap();
+            if size > &0x1000 || files.len() < 16 {
+                report(path, format!("{size} bytes"));
+            }
+        }
     }
 }

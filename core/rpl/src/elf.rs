@@ -181,3 +181,37 @@ pub fn name_at(table: &[u8], offset: u32) -> String {
     let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
     String::from_utf8_lossy(&tail[..end]).into_owned()
 }
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::*;
+
+    /// Intent: the ELF headers of the title's `.rpx` are what the Cafe OS loader expects:
+    /// a PowerPC RPL whose section table lies inside the file.
+    /// Pass: type `ET_RPL`, machine `EM_PPC`, 40-byte section entries, and every section
+    /// header parses with its file range inside the file (except `NOBITS`).
+    #[test]
+    fn reads_the_rpx_headers() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let bytes = std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap();
+        let header = ElfHeader::parse(&bytes).unwrap();
+        assert_eq!((header.kind, header.machine), (ET_RPL, EM_PPC));
+        assert_eq!(usize::from(header.section_entry_size), SECTION_HEADER_SIZE);
+        let mut compressed = 0;
+        for index in 0..usize::from(header.section_count) {
+            let at = header.section_offset as usize + index * SECTION_HEADER_SIZE;
+            let section = SectionHeader::parse(&bytes, at).unwrap();
+            if section.kind != SHT_NOBITS && section.kind != SHT_NULL {
+                assert!((section.offset + section.size) as usize <= bytes.len());
+            }
+            compressed += usize::from(section.flags & SHF_RPL_ZLIB != 0);
+        }
+        report("rpx size", bytes.len());
+        report("entry point", format!("{:#010x}", header.entry));
+        report("sections", header.section_count);
+        report("zlib-compressed sections", compressed);
+    }
+}

@@ -348,3 +348,58 @@ fn resolve_symbol(
         }
     }
 }
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_mem_addr::{MEM2, Region, TEXT};
+    use wiiu_memory::Memory;
+    use wiiu_test_roms::{report, require};
+
+    use super::*;
+    use crate::LinearAllocator;
+
+    /// Resolves every import to one fake stub, counting them.
+    struct Stubs(usize);
+
+    impl ImportResolver for Stubs {
+        fn resolve(&mut self, _library: &str, _symbol: &str, _kind: ImportKind) -> u32 {
+            self.0 += 1;
+            0x0E00_0000
+        }
+    }
+
+    /// Intent: the loader places the `.rpx` segments in guest memory, applies every
+    /// relocation and finds the entry point, with nothing from the OS but addresses for
+    /// its imports.
+    /// Pass: loading succeeds; the entry point lies inside the placed text segment; the
+    /// first word there is not zero (the code was copied and relocated).
+    #[test]
+    fn loads_the_rpx_into_guest_memory() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let file = RplFile::parse(&std::fs::read(wiiu_test_roms::rpx_of(&title).unwrap()).unwrap())
+            .unwrap();
+        let mut memory = Memory::with_game_layout().unwrap();
+        let text = Region::new("TEXT", TEXT.start, TEXT.size);
+        let data = Region::new("DATA", MEM2.start, 0x1000_0000);
+        let read_only = Region::new("LOAD", MEM2.start + 0x1000_0000, 0x1000_0000);
+        let mut allocator = LinearAllocator::new(text, data, read_only);
+        let mut stubs = Stubs(0);
+        let module = load(&file, "main", &mut memory, &mut allocator, &mut stubs).unwrap();
+        let (start, size) = module.segments[&SegmentKind::Text];
+        assert!((start..start + size).contains(&module.entry));
+        assert_ne!(memory.read_u32(module.entry).unwrap(), 0);
+        report("entry", format!("{:#010x}", module.entry));
+        for kind in [SegmentKind::Text, SegmentKind::Data, SegmentKind::Load] {
+            if let Some((start, size)) = module.segments.get(&kind) {
+                report(&format!("{kind:?} segment"), format!("{start:#010x} + {size:#x}"));
+            }
+        }
+        report(
+            "sda / sda2 base",
+            format!("{:#010x} / {:#010x}", module.sda_base, module.sda2_base),
+        );
+        report("imports resolved", stubs.0);
+        report("TLS", format!("{:?}", module.tls));
+    }
+}

@@ -114,3 +114,30 @@ impl JITMemoryProvider for CodeMemory {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use cranelift_jit::{BranchProtection, JITMemoryKind, JITMemoryProvider};
+
+    use super::CodeMemory;
+
+    /// Intent: translated blocks are packed into one chunk one after another, aligned as
+    /// asked, instead of one mapping per block (the fix that took gigabytes off BotW).
+    /// Pass: two executable allocations are 16-byte aligned and the second follows the
+    /// first in the same chunk; finalizing succeeds; writable data comes from the heap.
+    #[test]
+    fn packs_blocks_into_one_chunk() {
+        let mut memory = CodeMemory::default();
+        let first = memory.allocate(40, 16, JITMemoryKind::Executable).unwrap() as usize;
+        let second = memory.allocate(24, 16, JITMemoryKind::Executable).unwrap() as usize;
+        assert_eq!(first % 16, 0);
+        assert_eq!(second, first + 48);
+        assert_eq!(memory.chunks.len(), 1);
+        memory.finalize(BranchProtection::None).unwrap();
+        let data = memory.allocate(8, 8, JITMemoryKind::Writable).unwrap();
+        assert!(!data.is_null());
+        // SAFETY: no code in the chunks runs.
+        unsafe { memory.free_memory() };
+        assert!(memory.chunks.is_empty());
+    }
+}

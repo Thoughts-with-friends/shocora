@@ -15,3 +15,19 @@ pub enum EmuError {
     #[error(transparent)]
     Fs(#[from] wiiu_fs::FsError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EmuError;
+
+    /// Intent: errors of the lower layers reach the front end unchanged through `?`.
+    /// Pass: a file-system error converts and keeps its message.
+    #[test]
+    fn lower_errors_convert_with_their_message() {
+        let fs = wiiu_fs::FsError::NotFound("/vol/a".into());
+        let message = fs.to_string();
+        let error = EmuError::from(fs);
+        assert!(matches!(error, EmuError::Fs(_)));
+        assert_eq!(error.to_string(), message);
+    }
+}

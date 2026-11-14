@@ -2,7 +2,6 @@
 version = "0.1.0"
 authors = ["DiaSird"]
 categories = ["emulators"]
-description = "A Wii U emulator written in Rust"
 edition = "2024"
 keywords = ["emulator", "wiiu", "rust"]
 license = "MPL-2.0"
@@ -49,6 +48,7 @@ wiiu_memory = { path = "./core/memory" }
 wiiu_peripherals = { path = "./core/peripherals" }
 wiiu_rpl = { path = "./core/rpl" }
 wiiu_sound = { path = "./core/sound" }
+wiiu_test_roms = { path = "./core/test_roms" }
 wiiu_title = { path = "./core/title" }
 
 # front end crates

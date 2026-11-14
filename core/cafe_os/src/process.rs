@@ -303,3 +303,19 @@ impl CafeOs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::test_env::TestEnv;
+
+    /// Intent: when the title's `main` returns, its return value becomes the exit status
+    /// and the frame ends.
+    /// Pass: r3 at the return stub is the exit code.
+    #[test]
+    fn main_returning_exits_with_its_value() {
+        let mut env = TestEnv::new();
+        env.call("shocora", "__shocora_MainThreadReturn", &[5]);
+        assert_eq!(env.os.exit_code, Some(5));
+        assert!(env.os.frame_done);
+    }
+}

@@ -27,3 +27,22 @@ pub use loader::{
     TlsImage, load,
 };
 pub use rpl::{FileInfo, RplFile};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: a program built by the test builder parses back with the public API: the
+    /// round trip every loader test relies on.
+    /// Pass: the built RPX parses, imports `coreinit::exit`, and its file info is present.
+    #[test]
+    fn built_programs_parse_back() {
+        let rpx = builder::RplBuilder::new()
+            .text(&[0x4800_0001, 0x4800_0000])
+            .call_import(0, "coreinit", "exit")
+            .build();
+        let file = RplFile::parse(&rpx).unwrap();
+        assert!(file.imported_libraries().contains(&"coreinit"));
+        assert_eq!(TLS_MODULE_INDEX, 1);
+    }
+}

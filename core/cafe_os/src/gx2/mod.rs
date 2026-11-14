@@ -255,3 +255,21 @@ pub const EXPORTS: &[HleExport] = &[
     surface::GX2_CALC_DEPTH_BUFFER_HIZ_INFO,
     surface::GX2_CALC_COLOR_BUFFER_AUX_INFO,
 ];
+
+#[cfg(test)]
+mod tests {
+    use wiiu_gpu::command::pm4::type3_header;
+
+    use super::Gx2State;
+
+    /// Intent: GX2 builds PM4 type-3 packets like the console's GX2 does; a packet with no
+    /// body still carries one zero word (the hardware has no empty packets).
+    /// Pass: an empty `emit` gives header + 0; one with a body gives header + body.
+    #[test]
+    fn emit_builds_type3_packets() {
+        let mut gx2 = Gx2State::default();
+        gx2.emit(0x10, &[]);
+        gx2.emit(0x20, &[7, 8]);
+        assert_eq!(gx2.commands, [type3_header(0x10, 1), 0, type3_header(0x20, 2), 7, 8]);
+    }
+}

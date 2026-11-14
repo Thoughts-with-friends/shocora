@@ -119,3 +119,21 @@ fn gx2_perf_metrics_clear(_ctx: &mut HleContext<'_>, _perf: u32) {}
 
 #[hle_export(lib = "gx2", name = "GX2PerfTagEnable")]
 fn gx2_perf_tag_enable(_ctx: &mut HleContext<'_>, _perf: u32, _tag: u32, _enable: bool) {}
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::test_env::{SCRATCH, TestEnv};
+
+    /// Intent: a shader's resource word (`SQ_PGM_RESOURCES_*`, the first word of
+    /// `GX2VertexShader`) holds the GPRs it needs in bits 0-7 and its stack size in 8-15;
+    /// titles read them to size their register budget.
+    /// Pass: 0x0000_0A21 gives 0x21 GPRs and 0x0A stack entries.
+    #[test]
+    fn shader_resources_split_into_gprs_and_stack() {
+        let mut env = TestEnv::new();
+        env.memory.write_u32(SCRATCH, 0x0000_0A21).unwrap();
+        assert_eq!(env.call("gx2", "GX2GetVertexShaderGPRs", &[SCRATCH]), 0x21);
+        assert_eq!(env.call("gx2", "GX2GetVertexShaderStackEntries", &[SCRATCH]), 0x0A);
+        assert_eq!(env.call("gx2", "GX2GetPixelShaderGPRs", &[SCRATCH]), 0x21);
+    }
+}

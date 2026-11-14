@@ -18,3 +18,16 @@ pub use voice::{SampleFormat, SampleMemory, Voice};
 
 /// Output sample rate of the mixer.
 pub const OUTPUT_RATE: u32 = 48_000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intent: the mixer's output rate is the console's 48 kHz, which the front end's audio
+    /// device opens with.
+    /// Pass: `OUTPUT_RATE` is 48 000.
+    #[test]
+    fn output_is_48_khz() {
+        assert_eq!(OUTPUT_RATE, 48_000);
+    }
+}

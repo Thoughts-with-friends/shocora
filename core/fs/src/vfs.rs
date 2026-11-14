@@ -41,6 +41,17 @@ impl Vfs {
         self.mounts.clear();
     }
 
+    /// Every mount point, longest first.
+    #[inline]
+    pub fn mount_points(&self) -> Vec<&str> {
+        self.mounts.iter().map(|m| m.point.as_str()).collect()
+    }
+
+    /// Every mount, longest point first: the point and what its device is.
+    pub fn mounts(&self) -> Vec<(&str, String)> {
+        self.mounts.iter().map(|m| (m.point.as_str(), m.device.describe())).collect()
+    }
+
     #[inline]
     pub fn is_mounted(&self, point: &str) -> bool {
         GuestPath::new(point).is_ok_and(|p| self.mounts.iter().any(|m| m.point == p))
@@ -183,5 +194,38 @@ mod tests {
         assert!(matches!(vfs.read("/dev/x"), Err(FsError::NotMounted(_))));
         assert!(matches!(vfs.read("/vol/missing"), Err(FsError::NotFound(_))));
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// Tests against the developer's own title (`shocora.toml`); they pass without one.
+#[cfg(test)]
+mod rom_tests {
+    use wiiu_test_roms::{report, require};
+
+    use super::*;
+    use crate::HostDirectory;
+
+    /// Intent: the title's folders mounted as the console's volumes (`/vol/code`,
+    /// `/vol/content`, `/vol/meta`) give the paths the title opens.
+    /// Pass: `/vol/code/app.xml` and `/vol/meta/meta.xml` read back byte for byte, and
+    /// `/vol/content` is a folder.
+    #[test]
+    fn mounts_the_title_volumes() {
+        let title = require!(wiiu_test_roms::title(), "no title");
+        let mut vfs = Vfs::new();
+        for (point, dir) in
+            [("/vol/code", "code"), ("/vol/content", "content"), ("/vol/meta", "meta")]
+        {
+            vfs.mount(point, HostDirectory::read_only(title.join(dir))).unwrap();
+        }
+        let app = vfs.read("/vol/code/app.xml").unwrap();
+        assert_eq!(app, std::fs::read(title.join("code/app.xml")).unwrap());
+        let meta = vfs.read("/vol/meta/meta.xml").unwrap();
+        assert_eq!(meta, std::fs::read(title.join("meta/meta.xml")).unwrap());
+        assert!(vfs.metadata("/vol/content").unwrap().is_dir);
+        let code: Vec<String> =
+            vfs.read_dir("/vol/code").unwrap().into_iter().map(|e| e.name).collect();
+        report("/vol/code", code.join(", "));
+        report("/vol/meta/meta.xml bytes", meta.len());
     }
 }

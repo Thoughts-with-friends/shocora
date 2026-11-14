@@ -359,3 +359,32 @@ fn gx2_convert_depth_buffer_to_texture_surface(
     submit_copy(ctx, source, descriptor(&target, dst_mip, dst_slice));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::test_env::{SCRATCH, TestEnv};
+
+    /// Intent: titles allocate their TV scan buffers from `GX2CalcTVSize`: width x height
+    /// x 4 bytes per buffer.
+    /// Pass: 720p (mode 3) double-buffered is 1280 x 720 x 4 x 2 bytes, and no scaling is
+    /// reported; 1080p triple-buffered is 1920 x 1080 x 4 x 3.
+    #[test]
+    fn tv_buffer_sizes_follow_mode_and_buffering() {
+        let mut env = TestEnv::new();
+        env.call("gx2", "GX2CalcTVSize", &[3, 0x1A, 2, SCRATCH, SCRATCH + 4]);
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), 1280 * 720 * 4 * 2);
+        assert_eq!(env.memory.read_u32(SCRATCH + 4).unwrap(), 0);
+        env.call("gx2", "GX2CalcTVSize", &[5, 0x1A, 4, SCRATCH, 0]);
+        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), 1920 * 1080 * 4 * 3);
+    }
+
+    /// Intent: `GX2Init` remembers the core that owns the GPU (`GX2GetMainCoreId`).
+    /// Pass: after the call GX2 is initialised and its main core is the caller's (1).
+    #[test]
+    fn init_remembers_the_main_core() {
+        let mut env = TestEnv::new();
+        env.call("gx2", "GX2Init", &[0]);
+        assert!(env.os.gx2.initialized);
+        assert_eq!(env.call("gx2", "GX2GetMainCoreId", &[]), 1);
+    }
+}

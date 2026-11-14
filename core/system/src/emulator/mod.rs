@@ -302,6 +302,18 @@ impl Emulator {
         self.os.registry.recent_calls()
     }
 
+    /// IOSU: its devices, open handles and file system.
+    #[inline]
+    pub const fn iosu(&self) -> &Iosu {
+        &self.iosu
+    }
+
+    /// The title's volumes as the guest sees them (`/vol/code`, `/vol/content`, `/vol/save`…).
+    #[inline]
+    pub const fn vfs(&self) -> &wiiu_fs::Vfs {
+        self.iosu.vfs()
+    }
+
     /// The most frequently called HLE functions (for profiling).
     #[inline]
     pub fn hle_profile(&self, limit: usize) -> Vec<(String, u64)> {

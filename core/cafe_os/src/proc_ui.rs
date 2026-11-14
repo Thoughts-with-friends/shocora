@@ -140,3 +140,23 @@ pub const EXPORTS: &[HleExport] = &[
     PROC_UI_PROCESS_MESSAGES,
     PROC_UI_SUB_PROCESS_MESSAGES,
 ];
+
+#[cfg(test)]
+mod tests {
+    use crate::hle::test_env::TestEnv;
+
+    /// Intent: ProcUI tells the title it is running in the foreground until it shuts down;
+    /// the emulator never sends it to the background.
+    /// Pass: after `ProcUIInit` it is running and messages say foreground (0); after
+    /// `ProcUIShutdown` it is not running.
+    #[test]
+    fn runs_in_the_foreground_until_shutdown() {
+        let mut env = TestEnv::new();
+        env.call("proc_ui", "ProcUIInit", &[0x0200_0000]);
+        assert_eq!(env.call("proc_ui", "ProcUIIsRunning", &[]), 1);
+        assert_eq!(env.call("proc_ui", "ProcUIProcessMessages", &[1]), 0);
+        assert_eq!(env.os.proc_ui.save_callback.0, 0x0200_0000);
+        env.call("proc_ui", "ProcUIShutdown", &[]);
+        assert_eq!(env.call("proc_ui", "ProcUIIsRunning", &[]), 0);
+    }
+}

@@ -128,3 +128,26 @@ impl Default for AddressSpace {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AddressSpace;
+
+    /// Intent: guest memory is one 4 GiB host reservation; committed pages are zeroed and
+    /// writable, and clones (the GPU thread's view) see the same bytes.
+    /// Pass: a committed page reads 0, and a write through one handle reads back through a
+    /// clone.
+    #[test]
+    fn committed_pages_are_shared_between_clones() {
+        let space = AddressSpace::new();
+        space.commit(0x1000_0000, 0x1000);
+        let view = space.clone();
+        // SAFETY: the page at 0x1000_0000 was just committed.
+        unsafe {
+            let at = space.base().add(0x1000_0000);
+            assert_eq!(*at, 0);
+            *at = 0x5A;
+            assert_eq!(*view.base().add(0x1000_0000), 0x5A);
+        }
+    }
+}

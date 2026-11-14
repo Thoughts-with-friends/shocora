@@ -1,4 +1,6 @@
 //! The cheat editor.
+use wiiu_emu::cheat::CheatParseError;
+
 use super::*;
 
 /// The cheat editor window.
@@ -26,7 +28,14 @@ impl ShocoraApp {
         let count = match wiiu_emu::cheat::parse(&editor.text) {
             Ok(cheats) => cheats.iter().filter(|cheat| cheat.enabled).count(),
             Err(error) => {
-                editor.message = error.to_string();
+                editor.message = match &error {
+                    CheatParseError::InvalidFormat(line) => {
+                        trf("cheats.invalid_format", &[("line", line)])
+                    }
+                    CheatParseError::InvalidHex(line, token) => {
+                        trf("cheats.invalid_hex", &[("line", line), ("token", token)])
+                    }
+                };
                 return;
             }
         };

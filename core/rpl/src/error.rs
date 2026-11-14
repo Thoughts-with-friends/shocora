@@ -24,3 +24,18 @@ pub enum LoadError {
     #[error(transparent)]
     Memory(#[from] MemoryError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::LoadError;
+
+    /// Intent: loader errors tell which part of an RPL/RPX is wrong.
+    /// Pass: offsets, ELF types and symbol names appear in the messages.
+    #[test]
+    fn messages_locate_the_problem() {
+        let truncated = LoadError::Truncated { offset: 0x40, needed: 4 };
+        assert_eq!(truncated.to_string(), "file is truncated (needed 4 bytes at offset 0x40)");
+        assert_eq!(LoadError::NotRpl(2).to_string(), "ELF type 0x0002 is not an RPL/RPX");
+        assert!(LoadError::UndefinedSymbol("main".into()).to_string().contains("\"main\""));
+    }
+}

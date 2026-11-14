@@ -49,6 +49,9 @@ fn create(
     if thread == 0 || entry == 0 {
         return Ok(false);
     }
+    if !take_over_from_other_cores(ctx, thread) {
+        return Ok(false);
+    }
     let lr = thread_return_stub(ctx)?;
     let core = core_from_attr(attr, ctx.cpu.core_id());
     let context = new_context(ctx.cpu, core, entry, argc, argv, stack_top, lr);
@@ -79,6 +82,31 @@ fn create(
         "OSCreateThread {thread:#010x}: entry {entry:#010x}, core {core}, priority {priority}"
     );
     Ok(true)
+}
+
+/// Side by side, the thread an earlier `OSCreateThread` started at `thread` may still be
+/// another core's current one: running its last instructions, or terminated with nothing
+/// else for that core to run. On the console it is long gone by then; here the core would
+/// resume the new thread with the old registers (at the thread return stub) and end it at
+/// once. A terminated one is taken off its core; a running one is waited for, as
+/// `OSJoinThread` would. Returns `false` when the caller blocked (the call is run again).
+fn take_over_from_other_cores(ctx: &mut HleContext<'_>, thread: u32) -> bool {
+    let threads = &mut ctx.os.coreinit.threads;
+    let me = ctx.cpu.core_id() as usize;
+    let elsewhere = |cores: &[u32]| cores.iter().enumerate().any(|(c, t)| *t == thread && c != me);
+    if !threads.multi_core || !elsewhere(&threads.cores) {
+        return true;
+    }
+    if threads.threads.get(&thread).is_some_and(|t| t.state != ThreadState::Moribund) {
+        block(ctx, Wait::Join(thread));
+        return false;
+    }
+    for (core, slot) in threads.cores.iter_mut().enumerate() {
+        if *slot == thread && core != me {
+            *slot = 0;
+        }
+    }
+    true
 }
 
 #[hle_export(lib = "coreinit", name = "OSCreateThread")]
@@ -402,3 +430,7 @@ fn os_restore_interrupts(ctx: &mut HleContext<'_>, enable: bool) -> bool {
 fn os_is_interrupt_enabled(ctx: &mut HleContext<'_>) -> bool {
     ctx.os.coreinit.interrupts_enabled
 }
+
+#[cfg(test)]
+#[path = "api_tests.rs"]
+mod tests;

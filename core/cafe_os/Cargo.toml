@@ -27,6 +27,7 @@ wiiu_rpl = { workspace = true }
 wiiu_sound = { workspace = true }
 
 [dev-dependencies]
+wiiu_test_roms = { workspace = true }
 wiiu_fs = { workspace = true }
 
 [lints]

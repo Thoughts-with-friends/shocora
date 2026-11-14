@@ -16,21 +16,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if files.is_empty() {
         files = shocora_tests::local_games().into_iter().map(|game| game.rpx_path).collect();
     }
+
     let registry = CafeOs::new().registry;
+
     for (index, path) in files.iter().enumerate() {
         let file = RplFile::parse(&std::fs::read(path)?)?;
         let mut libraries: BTreeMap<String, (u32, Vec<String>)> = BTreeMap::new();
+
         for (library, symbol, is_function) in file.imported_symbols()? {
             let entry = libraries.entry(library.clone()).or_default();
+
             if !is_function {
                 continue;
             }
             entry.0 += 1;
+
             if registry.function_index(&library, &symbol).is_none() {
                 entry.1.push(symbol);
             }
         }
         println!("# title {index}");
+
         for (library, (total, missing)) in &libraries {
             println!("{library}: {}/{total} implemented", total - missing.len() as u32);
             for symbol in missing {

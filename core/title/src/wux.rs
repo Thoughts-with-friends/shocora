@@ -81,11 +81,13 @@ impl<R: Read + Seek> WuxReader<R> {
     #[allow(clippy::cast_possible_truncation)]
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, TitleError> {
         let mut done = 0;
+
         while done < buf.len() {
             let position = offset + done as u64;
             if position >= self.uncompressed_size {
                 break;
             }
+
             let sector = (position / self.sector_size) as usize;
             let within = position % self.sector_size;
             let stored = *self.index.get(sector).ok_or(TitleError::CorruptWux)?;
@@ -93,6 +95,7 @@ impl<R: Read + Seek> WuxReader<R> {
                 .min((buf.len() - done) as u64)
                 .min(self.uncompressed_size - position);
             let file_offset = self.data_offset + u64::from(stored) * self.sector_size + within;
+
             self.inner.seek(SeekFrom::Start(file_offset)).map_err(|_| TitleError::CorruptWux)?;
             self.inner
                 .read_exact(&mut buf[done..done + chunk as usize])
@@ -113,14 +116,17 @@ mod tests {
     fn sample() -> Vec<u8> {
         let sector = 0x40_usize;
         let mut file = vec![0_u8; 0x20];
+
         file[0..4].copy_from_slice(&MAGIC0.to_le_bytes());
         file[4..8].copy_from_slice(&MAGIC1.to_le_bytes());
         file[8..12].copy_from_slice(&(sector as u32).to_le_bytes());
         file[0x10..0x18].copy_from_slice(&(4 * sector as u64 - 8).to_le_bytes());
+
         for stored in [0_u32, 1, 0, 2] {
             file.extend_from_slice(&stored.to_le_bytes());
         }
         file.resize(file.len().next_multiple_of(sector), 0);
+
         for fill in [0xAA_u8, 0xBB, 0xCC] {
             file.extend(std::iter::repeat_n(fill, sector));
         }
@@ -131,11 +137,16 @@ mod tests {
     fn reads_across_deduplicated_sectors() {
         let mut wux = WuxReader::new(Cursor::new(sample())).unwrap();
         assert_eq!(wux.len(), 0xF8);
-        let mut buf = [0_u8; 4];
-        wux.read_at(0x3E, &mut buf).unwrap();
-        assert_eq!(buf, [0xAA, 0xAA, 0xBB, 0xBB]);
-        wux.read_at(0x80, &mut buf).unwrap();
-        assert_eq!(buf, [0xAA; 4]);
+
+        {
+            let mut buf = [0_u8; 4];
+            wux.read_at(0x3E, &mut buf).unwrap();
+            assert_eq!(buf, [0xAA, 0xAA, 0xBB, 0xBB]);
+
+            wux.read_at(0x80, &mut buf).unwrap();
+            assert_eq!(buf, [0xAA; 4]);
+        }
+
         let mut tail = [0_u8; 16];
         assert_eq!(wux.read_at(0xF0, &mut tail).unwrap(), 8);
         assert_eq!(tail[..8], [0xCC; 8]);

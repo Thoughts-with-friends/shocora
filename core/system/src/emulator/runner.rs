@@ -26,33 +26,41 @@ fn wait_until(deadline: Instant) {
 }
 
 impl Emulator {
-    /// Runs the guest up to the next vertical blank, which it then raises.
+    /// Run the guest until the next vertical blank (VBlank).
     ///
-    /// Time keeps passing like on the console: a guest with nothing to do waits for
-    /// its sleeps and alarms, and one that is still busy gets the blank regardless.
-    /// Without [`Config::paced`](super::Config::paced) the blank comes as soon as
-    /// the guest idles, or when the budget of instructions runs out.
+    /// - Trigger a VBlank interrupt when reached.
+    /// - Guest sleep and alarm timers continue progressing while idle.
+    /// - VBlank occurs even if the guest is still busy.
+    /// - When paced is disabled:
+    ///   VBlank occurs when the guest becomes idle or the instruction budget is exhausted.
     pub fn run_frame(&mut self) {
+        // 1. Check emulator status; return if not running.
         if self.status != Status::Running {
             return;
         }
 
+        // 2. Apply cheats to memory.
         crate::cheat::apply(&self.cheats, &mut self.memory);
 
         // Vertical blanks come as often as the guest's time says.
         let frame_time = self.config.frame_time * 2 / self.speed.halves();
         let now = Instant::now();
 
+        // 3. Calculate the next VSync deadline.
         let deadline = match self.next_vsync {
             Some(vsync) if now < vsync + frame_time * MAX_LAG_FRAMES => vsync,
             _ => now + frame_time,
         };
         self.next_vsync = Some(deadline + frame_time);
 
+        // 4. Update the GPU retired counter.
         // Threads waiting for the GPU look at its progress themselves.
         self.os.coreinit.threads.gpu_retired = self.gpu.retired_counter();
 
+        // 5. Switch to multi-core mode if enabled.
+        // Run cores in parallel; main core handles frames.
         if self.switch_core_mode() {
+            // 6. Run the multi-core frame loop and finalize the frame.
             self.run_frame_multi_core(deadline);
             if let Some(code) = self.os.exit_code {
                 self.status = Status::Exited(code);
@@ -63,16 +71,18 @@ impl Emulator {
             return;
         }
 
+        // 7. Initialize the instruction budget and time slice.
         // Frame budget: Next VSync counts per frame
         let mut budget = self.config.instructions_per_frame;
         let mut slice = TIME_SLICE;
 
-        // Alarms, pending callbacks, and threads that became runnable since the last frame.
+        // 8. Process pending alarms, callbacks, and runnable threads.
         if let Err(error) = self.os.begin_frame(&mut self.cores[MAIN_CORE], &mut self.memory) {
             self.crash(error.to_string());
             return;
         }
 
+        // 9. Run the main CPU core until VBlank or the instruction budget expires.
         // Frame loop: run the main core until the next vertical blank.
         while budget > 0 {
             if self.os.exit_code.is_some() {
@@ -80,6 +90,7 @@ impl Emulator {
             }
 
             if self.os.frame_done {
+                // 10. Wait until the VSync deadline if pacing is enabled.
                 if !self.config.paced || Instant::now() >= deadline {
                     break;
                 }
@@ -130,10 +141,12 @@ impl Emulator {
             budget = budget.saturating_sub(executed);
             slice = slice.saturating_sub(executed);
 
+            // 10. Handle CPU events (continue, HLE calls, syscalls, traps).
             match event {
+                // 11. Yield to other threads when the time slice expires.
                 StepEvent::Continue => {
                     if slice == 0 {
-                        // Time slice used up: let threads of equal priority run.
+                        // Let other game threads run after the current thread uses its allotted CPU time.
                         slice = TIME_SLICE;
                         if self.config.profile {
                             *self.slice_ends.entry(self.cores[MAIN_CORE].pc).or_insert(0) += 1;
@@ -148,6 +161,7 @@ impl Emulator {
                     }
                 }
 
+                // Prepare the HLE execution context and start profiling.
                 StepEvent::HleCall(index) => {
                     self.stats.hle_calls += 1;
                     let timer = self.config.profile.then(Instant::now);
@@ -171,6 +185,7 @@ impl Emulator {
                     }
                 }
 
+                // Stop emulation when the game calls an unsupported system function.
                 StepEvent::SystemCall => {
                     self.crash(format!(
                         "unsupported syscall at {:#010x}",
@@ -179,6 +194,7 @@ impl Emulator {
                     return;
                 }
 
+                // Stop emulation when the game triggers a CPU exception (trap).
                 StepEvent::Trap => {
                     self.crash(format!(
                         "trap at {:#010x}",
@@ -193,12 +209,15 @@ impl Emulator {
             }
         }
 
+        // 12. Wait until the VSync deadline if pacing is enabled.
+        // 13. Update exit status.
         if let Some(code) = self.os.exit_code {
             self.status = Status::Exited(code);
         } else if self.config.paced {
             wait_until(deadline);
         }
 
+        // 14. Finalize the GX2 frame and frame statistics.
         self.finish_gx2_frame();
         self.stats.frames += 1;
     }

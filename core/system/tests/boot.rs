@@ -8,12 +8,14 @@ const BL: u32 = 0x4800_0001;
 fn run(rpx: &[u8]) -> Emulator {
     let mut emu = Emulator::new(Config::default()).unwrap();
     emu.load_rpx("test.rpx", rpx).unwrap();
+
     for _ in 0..10 {
         emu.run_frame();
         if *emu.status() != Status::Running {
             break;
         }
     }
+
     emu
 }
 
@@ -35,6 +37,7 @@ fn hello_world_through_os_report_and_exit() {
         .call_import(20, "coreinit", "exit")
         .compress_text()
         .build();
+
     let mut emu = run(&rpx);
     assert_eq!(*emu.status(), Status::Exited(7));
     assert_eq!(emu.take_console(), ["value=42\n"]);
@@ -50,6 +53,7 @@ fn reset_boots_the_same_program_again_and_tells_the_renderer() {
         ])
         .call_import(4, "coreinit", "exit")
         .build();
+
     let mut emu = run(&rpx);
     assert_eq!(*emu.status(), Status::Exited(7));
     emu.take_render_commands();
@@ -57,6 +61,7 @@ fn reset_boots_the_same_program_again_and_tells_the_renderer() {
     assert!(emu.reset().unwrap());
     assert_eq!(*emu.status(), Status::Running);
     assert!(matches!(emu.take_render_commands().first(), Some(RenderCommand::Reset)));
+
     for _ in 0..10 {
         emu.run_frame();
     }
@@ -81,6 +86,7 @@ fn returning_from_entry_ends_the_process() {
         ])
         .call_import(12, "coreinit", "OSGetCoreId")
         .build();
+
     let emu = run(&rpx);
     assert_eq!(*emu.status(), Status::Exited(1));
     assert!(emu.stats().hle_calls >= 2);
@@ -97,6 +103,7 @@ fn unimplemented_imports_return_zero() {
         .call_import(4, "nn_ac", "ACGetStatus")
         .call_import(8, "coreinit", "exit")
         .build();
+
     assert_eq!(*run(&rpx).status(), Status::Exited(0));
 }
 

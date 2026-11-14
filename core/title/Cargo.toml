@@ -15,5 +15,8 @@ version.workspace = true
 roxmltree = "0.21"
 thiserror = { workspace = true }
 
+[dev-dependencies]
+wiiu_test_roms = { workspace = true }
+
 [lints]
 workspace = true
