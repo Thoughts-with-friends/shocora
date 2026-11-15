@@ -59,6 +59,10 @@ pub mod clear {
 pub mod scan_target {
     pub const TV: u32 = 1;
     pub const DRC: u32 = 4;
+    /// Added by the HLE: the TV scan buffer has an sRGB format.
+    pub const TV_SRGB: u32 = 0x100;
+    /// Added by the HLE: the GamePad scan buffer has an sRGB format.
+    pub const DRC_SRGB: u32 = 0x200;
 }
 
 #[cfg(test)]

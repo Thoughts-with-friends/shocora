@@ -1,7 +1,12 @@
 //! Initialisation, scan buffers, clears and surface copies.
 #![allow(clippy::too_many_arguments)]
 
-use wiiu_gpu::{addrlib::tile_mode, command::opcode, regs::context as reg};
+use wiiu_gpu::{
+    addrlib::{self, tile_mode},
+    command::opcode,
+    regs::context as reg,
+    tiling::{Layout, swizzle_from_address},
+};
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 
@@ -125,27 +130,93 @@ pub(super) fn descriptor(
     level: u32,
     slice: u32,
 ) -> [u32; opcode::SURFACE_WORDS] {
-    let image = match level {
-        0 => surface.image,
-        1 => surface.mip_ptr,
-        n => surface.mip_ptr.wrapping_add(surface.mip_offset[(n as usize - 1).min(12)]),
-    };
-    let macro_swizzle =
-        tile_mode::is_macro_tiled(surface.tile_mode) && level < ((surface.swizzle >> 16) & 0xFF);
-    let swizzle = if macro_swizzle { surface.swizzle & 0xFFFF } else { 0 };
     let mip = surface.info(level);
     [
-        physical(image),
+        physical(level_image(surface, level)),
         (surface.width >> level).max(1),
         (surface.height >> level).max(1),
         surface.depth.max(1),
         mip.pitch,
         surface.tile_mode,
-        swizzle,
+        level_swizzle(surface, level),
         surface.format,
         surface.aa,
         (level << 16) | (slice & 0xFFFF),
     ]
+}
+
+/// Where mip `level` of `surface` starts (effective address).
+fn level_image(surface: &Gx2Surface, level: u32) -> u32 {
+    match level {
+        0 => surface.image,
+        1 => surface.mip_ptr,
+        n => surface.mip_ptr.wrapping_add(surface.mip_offset[(n as usize - 1).min(12)]),
+    }
+}
+
+/// The pipe and bank swizzle of mip `level`: macro-tiled levels before the stop level only.
+fn level_swizzle(surface: &Gx2Surface, level: u32) -> u32 {
+    let macro_swizzle =
+        tile_mode::is_macro_tiled(surface.tile_mode) && level < ((surface.swizzle >> 16) & 0xFF);
+    if macro_swizzle { surface.swizzle & 0xFFFF } else { 0 }
+}
+
+/// Copies from a `LINEAR_SPECIAL` surface on the CPU, straight into memory, as GX2 and
+/// Cemu (`LatteSurfaceCopy_CopyInRAM`) do. BotW builds its wind texture this way.
+///
+/// Returns `false` when the surfaces do not fit together or lie outside memory.
+fn copy_in_memory(
+    ctx: &mut HleContext<'_>,
+    (source, src_mip, src_slice): (&Gx2Surface, u32, u32),
+    (target, dst_mip, dst_slice): (&Gx2Surface, u32, u32),
+) -> bool {
+    let (src_info, dst_info) = (source.info(src_mip), target.info(dst_mip));
+    if src_info.bpp != dst_info.bpp || dst_info.bpp < 8 {
+        log::debug!("GX2CopySurface: bpp {} to {}", src_info.bpp, dst_info.bpp);
+        return false;
+    }
+    let layout = |surface: &Gx2Surface, info: &addrlib::SurfaceInfo, level: u32| {
+        let (pipe_swizzle, bank_swizzle) = swizzle_from_address(level_swizzle(surface, level));
+        Layout {
+            tile_mode: info.hw_tile_mode,
+            bpp: info.bpp,
+            pitch: info.pitch,
+            height: info.height,
+            samples: 1 << surface.aa,
+            is_depth: false,
+            pipe_swizzle,
+            bank_swizzle,
+        }
+    };
+    let base = |surface: &Gx2Surface, info: &addrlib::SurfaceInfo, level: u32| {
+        let image = level_image(surface, level);
+        if tile_mode::is_macro_tiled(info.hw_tile_mode) { image & !0x7FF } else { image }
+    };
+    let (from, to) = (layout(source, &src_info, src_mip), layout(target, &dst_info, dst_mip));
+    let size = |info: &addrlib::SurfaceInfo| (info.surf_size as u32).max(1);
+    let Ok(input) = ctx.memory.slice(base(source, &src_info, src_mip), size(&src_info)) else {
+        return false;
+    };
+    let input = input.to_vec();
+    let target_base = base(target, &dst_info, dst_mip);
+    let Ok(output) = ctx.memory.slice_mut(target_base, size(&dst_info)) else { return false };
+    // Like a texture, a compressed surface is copied in blocks.
+    let blocks =
+        |n: u32| if addrlib::is_compressed(target.format & 0x3F) { n.div_ceil(4) } else { n };
+    let width = blocks((target.width >> dst_mip).max(1));
+    let height = blocks((target.height >> dst_mip).max(1));
+    let bytes = (dst_info.bpp / 8) as usize;
+    to.for_each_pixel(width, height, dst_slice, |x, y, offset| {
+        let at = from.address(x, y, src_slice) as usize;
+        let offset = offset as usize;
+        if let (Some(pixel), Some(out)) =
+            (input.get(at..at + bytes), output.get_mut(offset..offset + bytes))
+        {
+            out.copy_from_slice(pixel);
+        }
+    });
+    ctx.gpu.note_cpu_write(target_base, size(&dst_info));
+    true
 }
 
 fn view_descriptor(
@@ -296,6 +367,13 @@ fn gx2_copy_color_buffer_to_scan_buffer(
     target: u32,
 ) -> Result<(), HleError> {
     let mut body = view_descriptor(ctx, buffer)?.to_vec();
+    let mut target = target & (opcode::scan_target::TV | opcode::scan_target::DRC);
+    if ctx.os.gx2.tv_srgb {
+        target |= opcode::scan_target::TV_SRGB;
+    }
+    if ctx.os.gx2.drc_srgb {
+        target |= opcode::scan_target::DRC_SRGB;
+    }
     body.push(target);
     ctx.os.gx2.emit(opcode::HLE_COPY_COLOR_BUFFER_TO_SCAN_BUFFER, &body);
     Ok(())
@@ -323,6 +401,11 @@ fn gx2_copy_surface(
 ) -> Result<(), HleError> {
     let source = Gx2Surface::read(ctx.memory, src)?;
     let target = Gx2Surface::read(ctx.memory, dst)?;
+    if source.tile_mode == tile_mode::TM_LINEAR_SPECIAL
+        && copy_in_memory(ctx, (&source, src_mip, src_slice), (&target, dst_mip, dst_slice))
+    {
+        return Ok(());
+    }
     submit_copy(
         ctx,
         descriptor(&source, src_mip, src_slice),
@@ -386,5 +469,49 @@ mod tests {
         env.call("gx2", "GX2Init", &[0]);
         assert!(env.os.gx2.initialized);
         assert_eq!(env.call("gx2", "GX2GetMainCoreId", &[]), 1);
+    }
+
+    /// Intent: a copy from a `LINEAR_SPECIAL` surface is done in memory, tiling the
+    /// pixels into the target's layout (GX2 does it on the CPU; BotW's wind texture).
+    /// Pass: every pixel of a 64 x 16 R16F linear surface is found in the 2D-tiled target
+    /// where the target's tiling puts it.
+    #[test]
+    fn linear_special_copies_tile_into_memory() {
+        let mut env = TestEnv::new();
+        let (source_image, target_image) = (SCRATCH + 0x1_0000, SCRATCH + 0x2_0000);
+        let surface = |image, tile_mode| super::Gx2Surface {
+            dim: 1,
+            width: 64,
+            height: 16,
+            depth: 1,
+            num_levels: 1,
+            format: 0x806,
+            image,
+            tile_mode,
+            ..super::Gx2Surface::default()
+        };
+        let (source, target) = (surface(source_image, 16), surface(target_image, 4));
+        source.write(&mut env.memory, SCRATCH).unwrap();
+        target.write(&mut env.memory, SCRATCH + 0x100).unwrap();
+        for i in 0..64 * 16 {
+            env.memory.write_u16(source_image + 2 * i, i as u16 + 1).unwrap();
+        }
+        env.call("gx2", "GX2CopySurface", &[SCRATCH, 0, 0, SCRATCH + 0x100, 0, 0]);
+        let info = target.info(0);
+        let layout = super::Layout {
+            tile_mode: info.hw_tile_mode,
+            bpp: info.bpp,
+            pitch: info.pitch,
+            height: info.height,
+            samples: 1,
+            is_depth: false,
+            pipe_swizzle: 0,
+            bank_swizzle: 0,
+        };
+        assert_eq!(info.hw_tile_mode, 4);
+        for (x, y) in (0..16).flat_map(|y| (0..64).map(move |x| (x, y))) {
+            let at = target_image + layout.address(x, y, 0);
+            assert_eq!(env.memory.read_u16(at).unwrap(), (y * 64 + x) as u16 + 1, "({x}, {y})");
+        }
     }
 }

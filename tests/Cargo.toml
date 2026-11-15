@@ -16,13 +16,9 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-env_logger = "0.11"
 shocora_game_library = { workspace = true }
 shocora_gui_common = { workspace = true }
-shocora_netplay = { workspace = true }
 shocora_render = { workspace = true }
-png = "0.18"
-pollster = "0.4"
 wiiu_cafe_os = { workspace = true }
 wiiu_emu = { workspace = true }
 wiiu_gpu = { workspace = true }

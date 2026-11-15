@@ -39,8 +39,6 @@ jobs:
       - name: Install nextest(Parallel Test Execution CLI)
         uses: taiki-e/install-action@nextest
       - name: Test
-        # `melon_egui` and `melon_lan` are excluded for the reason in
-        # lint.yaml: they compile the melonDS C++ core.
         run: cargo nextest run --workspace --target ${{ matrix.job.target }} --no-fail-fast
 
   # TODO: Raw Pointer Dereference Detection

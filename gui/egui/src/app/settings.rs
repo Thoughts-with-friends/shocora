@@ -339,7 +339,7 @@ impl ShocoraApp {
 
         self.capture_binding(ui.ctx());
         ui.separator();
-        Self::motion_settings(ui);
+        self.motion_settings(ui);
         ui.separator();
 
         let mut chosen = None;

@@ -78,6 +78,12 @@ pub struct Gx2State {
     /// once the GPU has executed the commands up to them.
     #[serde(default)]
     pub pending_interrupts: Vec<(u64, u32)>,
+    /// Whether the TV and GamePad scan buffers have an sRGB format (`GX2SetTVBuffer`,
+    /// `GX2SetDRCBuffer`): copies to them encode linear colour, as Cemu does.
+    #[serde(default)]
+    pub tv_srgb: bool,
+    #[serde(default)]
+    pub drc_srgb: bool,
 }
 
 impl Default for Gx2State {
@@ -104,6 +110,8 @@ impl Default for Gx2State {
             event_callbacks: [(0, 0); command::event::COUNT],
             apertures: aperture::Apertures::default(),
             pending_interrupts: Vec::new(),
+            tv_srgb: false,
+            drc_srgb: false,
         }
     }
 }

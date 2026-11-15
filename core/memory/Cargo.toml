@@ -12,7 +12,6 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-serde = { workspace = true }
 thiserror = { workspace = true }
 wiiu_mem_addr = { workspace = true }
 

@@ -1,8 +1,9 @@
 //! The GamePad's microphone and motion sensors, as the host stands in for them: a held MIC
-//! button with a strength bar, and a GamePad tilted by a right-button drag on its screen or
-//! by the Tilt actions bound to keys or controller buttons.
+//! button with a strength bar, the motion sensors of a connected controller, and a GamePad
+//! tilted by a right-button drag on its screen or by the Tilt actions.
 use std::time::Instant;
 
+use shocora_gui_common::controller_motion::ControllerMotion;
 use wiiu_emu::{Pose, TiltMotion};
 
 use super::*;
@@ -28,6 +29,8 @@ pub(super) struct MotionInput {
     /// Where the GamePad is held now.
     pose: Pose,
     last_sample: Instant,
+    /// A controller's own sensors, while the settings allow them.
+    controller: Option<ControllerMotion>,
 }
 
 impl Default for MotionInput {
@@ -39,6 +42,7 @@ impl Default for MotionInput {
             sensors: TiltMotion::default(),
             pose: Pose::default(),
             last_sample: Instant::now(),
+            controller: None,
         }
     }
 }
@@ -49,6 +53,14 @@ fn approach(value: f32, target: f32, limit: f32) -> f32 {
 }
 
 impl ShocoraApp {
+    /// Starts or stops reading a controller's sensors as the settings say.
+    pub(super) fn update_controller_motion(&mut self) {
+        let wanted = self.config.controller_motion;
+        if wanted != self.motion.controller.is_some() {
+            self.motion.controller = wanted.then(ControllerMotion::start);
+        }
+    }
+
     /// Adds the microphone and motion to the GamePad sample.
     pub(super) fn add_mic_and_motion(&mut self, ctx: &egui::Context, pad: &mut GamePadState) {
         let strength = f32::from(self.config.mic_strength.min(100)) / 100.0;
@@ -82,7 +94,7 @@ impl ShocoraApp {
         }
         if motion.pose == Pose::default() && motion.tilt.or(motion.window_tilt).is_none() {
             motion.sensors.release();
-            pad.motion = None;
+            pad.motion = motion.controller.as_ref().and_then(ControllerMotion::motion);
         } else {
             pad.motion = Some(motion.sensors.update(motion.pose, step));
         }
@@ -101,9 +113,21 @@ impl ShocoraApp {
         }
     }
 
-    /// How the GamePad is tilted from here.
-    pub(super) fn motion_settings(ui: &mut egui::Ui) {
+    /// Where the GamePad's motion comes from.
+    pub(super) fn motion_settings(&mut self, ui: &mut egui::Ui) {
         ui.strong(tr("motion.title"));
+        let toggle = ui.checkbox(&mut self.config.controller_motion, tr("motion.controller"));
+        if toggle.on_hover_text(tr("motion.controller_hint")).changed() {
+            self.save_config();
+            self.update_controller_motion();
+        }
+        if let Some(controller) = &self.motion.controller {
+            let state = match controller.device() {
+                Some(name) => trf("motion.controller_found", &[("name", &name)]),
+                None => tr("motion.controller_none").to_owned(),
+            };
+            ui.label(state);
+        }
         ui.label(tr("motion.mouse_hint"));
         ui.label(tr("motion.tilt_hint"));
     }

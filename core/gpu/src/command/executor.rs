@@ -284,11 +284,13 @@ impl CommandProcessor {
                 if let (Some(surface), Some(target)) =
                     (SurfaceWords::parse(body), body.get(opcode::SURFACE_WORDS))
                 {
-                    if target & opcode::scan_target::TV != 0 {
-                        ctx.latte.copy_to_scan(&surface, Screen::Tv);
+                    use opcode::scan_target as scan;
+                    if target & scan::TV != 0 {
+                        ctx.latte.copy_to_scan(&surface, Screen::Tv, target & scan::TV_SRGB != 0);
                     }
-                    if target & opcode::scan_target::DRC != 0 {
-                        ctx.latte.copy_to_scan(&surface, Screen::Drc);
+                    if target & scan::DRC != 0 {
+                        let srgb = target & scan::DRC_SRGB != 0;
+                        ctx.latte.copy_to_scan(&surface, Screen::Drc, srgb);
                     }
                 }
             }

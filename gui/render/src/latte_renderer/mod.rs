@@ -114,13 +114,18 @@ pub struct LatteRenderer {
     encoder: Option<wgpu::CommandEncoder>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: Option<PassKey>,
+    /// What the open pass has set, so equal state is not set again.
+    bound: BoundState,
     blit_pipeline: wgpu::RenderPipeline,
+    /// The blit for scan buffers of an sRGB format: encodes the colour on the way.
+    blit_srgb_pipeline: wgpu::RenderPipeline,
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     /// Layout and per-target pipelines of depth to color copies, made on first use.
     depth_to_color: Option<(wgpu::BindGroupLayout, wgpu::PipelineLayout, wgpu::ShaderModule)>,
     depth_to_color_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
-    pending_scan: HashMap<Screen, (SurfaceKey, u32)>,
+    /// Scan buffer copies of this frame: surface, slice, sRGB scan buffer.
+    pending_scan: HashMap<Screen, (SurfaceKey, u32, bool)>,
     screen_targets: HashMap<Screen, ScreenImage>,
     screens: ScreenImages,
     generation: u64,
@@ -259,27 +264,31 @@ impl LatteRenderer {
             immediate_size: 0,
         });
 
-        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shocora blit"),
-            layout: Some(&blit_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &blit_module,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &blit_module,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let blit_with = |fragment: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("shocora blit"),
+                layout: Some(&blit_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &blit_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &blit_module,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let blit_pipeline = blit_with("fs_main");
+        let blit_srgb_pipeline = blit_with("fs_srgb");
 
         let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
@@ -318,7 +327,9 @@ impl LatteRenderer {
             encoder: None,
             pass: None,
             pass_key: None,
+            bound: BoundState::default(),
             blit_pipeline,
+            blit_srgb_pipeline,
             blit_layout,
             blit_sampler,
             depth_to_color: None,
@@ -440,6 +451,7 @@ impl LatteRenderer {
     fn end_pass(&mut self) {
         self.pass = None;
         self.pass_key = None;
+        self.bound = BoundState::default();
     }
 
     /// Submits everything recorded so far.
@@ -452,6 +464,19 @@ impl LatteRenderer {
         // The queue's writes of the next commands come after these in the queue's order.
         self.upload_cursor = 0;
     }
+}
+
+/// State set on the open render pass.
+#[derive(Default)]
+struct BoundState {
+    pipeline: Option<Arc<wgpu::RenderPipeline>>,
+    params_offset: Option<u32>,
+    resources: Option<wgpu::BindGroup>,
+    stream: bool,
+    viewport: Option<[f32; 6]>,
+    scissor: Option<[u32; 4]>,
+    stencil_reference: Option<u8>,
+    blend_constant: Option<[f32; 4]>,
 }
 
 impl LatteRenderer {

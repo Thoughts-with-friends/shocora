@@ -4,4 +4,5 @@
 pub mod audio;
 pub mod config;
 pub mod console;
+pub mod controller_motion;
 pub mod input;

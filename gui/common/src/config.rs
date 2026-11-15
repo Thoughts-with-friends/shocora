@@ -69,6 +69,8 @@ pub struct AppConfig {
     pub volume: u8,
     /// How loud the microphone hears the player while the MIC button is held, in percent.
     pub mic_strength: u8,
+    /// Use the motion sensors of a connected controller as the GamePad's.
+    pub controller_motion: bool,
 }
 
 impl Default for AppConfig {
@@ -102,6 +104,7 @@ impl Default for AppConfig {
             gpu_thread: true,
             volume: 100,
             mic_strength: 80,
+            controller_motion: true,
         }
     }
 }

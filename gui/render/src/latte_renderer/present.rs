@@ -15,10 +15,20 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
 @fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(textureSample(source, source_sampler, input.uv).rgb, 1.0);
 }
+// Scan buffers of an sRGB format take linear colour and store it encoded (Cemu's output
+// shader does the same).
+fn srgb_encode(linear: vec3<f32>) -> vec3<f32> {
+    let low = linear * 12.92;
+    let high = 1.055 * pow(max(linear, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(high, low, linear <= vec3<f32>(0.0031308));
+}
+@fragment fn fs_srgb(input: VsOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(srgb_encode(textureSample(source, source_sampler, input.uv).rgb), 1.0);
+}
 ";
 
 impl LatteRenderer {
-    fn present(&mut self, screen: Screen, source: SurfaceKey, slice: u32) {
+    fn present(&mut self, screen: Screen, source: SurfaceKey, slice: u32, srgb: bool) {
         let Some(surface) = self.surfaces.get_mut(&source) else {
             self.log_once(format!("scan buffer copy from unknown surface {source:?}"));
             return;
@@ -67,7 +77,7 @@ impl LatteRenderer {
                 },
             ],
         });
-        let pipeline = self.blit_pipeline.clone();
+        let pipeline = if srgb { &self.blit_srgb_pipeline } else { &self.blit_pipeline }.clone();
         let encoder = self.encoder();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shocora present"),
@@ -97,8 +107,8 @@ impl LatteRenderer {
 
     pub(super) fn flip(&mut self) {
         self.end_pass();
-        for (screen, (key, slice)) in std::mem::take(&mut self.pending_scan) {
-            self.present(screen, key, slice);
+        for (screen, (key, slice, srgb)) in std::mem::take(&mut self.pending_scan) {
+            self.present(screen, key, slice, srgb);
         }
         self.submit();
         // A picture this large has nothing left to gain from xBRZ, and it would take too long.

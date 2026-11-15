@@ -22,5 +22,12 @@ wiiu_emu = { workspace = true }
 wiiu_peripherals = { workspace = true }
 wiiu_title = { workspace = true }
 
+# Controller motion sensors are read straight from the HID reports; on Windows without C code.
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(not(windows))'.dependencies]
+hidapi = "2.6"
+
 [lints]
 workspace = true

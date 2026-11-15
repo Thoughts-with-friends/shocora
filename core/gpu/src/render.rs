@@ -443,6 +443,8 @@ pub enum RenderCommand {
         surface: SurfaceKey,
         slice: u32,
         screen: Screen,
+        /// The scan buffer has an sRGB format: the copy encodes linear colour to sRGB.
+        srgb: bool,
     },
     /// Shows the queued scan buffers.
     Flip,

@@ -59,6 +59,129 @@ pub(super) fn with_sign(value: f64, op: Opcode) -> f64 {
     })
 }
 
+/// `(offset, step)` per index of Espresso's `frsqrte` estimate (taken from Cemu).
+const FRSQRTE_TABLE: [(u32, u32); 32] = [
+    (0x1a7_e800, 0x568),
+    (0x17c_b800, 0x4f3),
+    (0x155_2800, 0x48d),
+    (0x130_c000, 0x435),
+    (0x10f_2000, 0x3e7),
+    (0xef_f000, 0x3a2),
+    (0xd2_e000, 0x365),
+    (0xb7_c000, 0x32e),
+    (0x9e_5000, 0x2fc),
+    (0x86_7000, 0x2d0),
+    (0x6f_f000, 0x2a8),
+    (0x5a_b800, 0x283),
+    (0x46_a000, 0x261),
+    (0x33_9800, 0x243),
+    (0x21_8800, 0x226),
+    (0x10_5800, 0x20b),
+    (0x3ff_a000, 0x7a4),
+    (0x3c2_9000, 0x700),
+    (0x38a_a000, 0x670),
+    (0x357_2000, 0x5f2),
+    (0x327_9000, 0x584),
+    (0x2fb_7000, 0x524),
+    (0x2d2_6000, 0x4cc),
+    (0x2ac_0000, 0x47e),
+    (0x288_1000, 0x43a),
+    (0x266_5000, 0x3fa),
+    (0x246_8000, 0x3c2),
+    (0x228_7000, 0x38e),
+    (0x20c_1000, 0x35e),
+    (0x1f1_2000, 0x332),
+    (0x1d7_9000, 0x30a),
+    (0x1bf_4000, 0x2e6),
+];
+
+/// `(offset, step)` per index of Espresso's `fres` estimate (taken from Cemu).
+const FRES_TABLE: [(u32, u32); 32] = [
+    (0x7f_f800, 0x3e1),
+    (0x78_3800, 0x3a7),
+    (0x70_ea00, 0x371),
+    (0x6a_0800, 0x340),
+    (0x63_8800, 0x313),
+    (0x5d_6200, 0x2ea),
+    (0x57_9000, 0x2c4),
+    (0x52_0800, 0x2a0),
+    (0x4c_c800, 0x27f),
+    (0x47_ca00, 0x261),
+    (0x43_0800, 0x245),
+    (0x3e_8000, 0x22a),
+    (0x3a_2c00, 0x212),
+    (0x36_0800, 0x1fb),
+    (0x32_1400, 0x1e5),
+    (0x2e_4a00, 0x1d1),
+    (0x2a_a800, 0x1be),
+    (0x27_2c00, 0x1ac),
+    (0x23_d600, 0x19b),
+    (0x20_9e00, 0x18b),
+    (0x1d_8800, 0x17c),
+    (0x1a_9000, 0x16e),
+    (0x17_ae00, 0x15b),
+    (0x14_f800, 0x15b),
+    (0x12_4400, 0x143),
+    (0xf_be00, 0x143),
+    (0xd_3800, 0x12d),
+    (0xa_de00, 0x12d),
+    (0x8_8400, 0x11a),
+    (0x6_5000, 0x11a),
+    (0x4_1c00, 0x108),
+    (0x2_0c00, 0x106),
+];
+
+const MANTISSA: u64 = (1 << 52) - 1;
+const EXPONENT: u64 = 0x7FF << 52;
+
+/// `frsqrte` as Espresso computes it: a table estimate, not the exact `1/sqrt(x)`.
+/// Titles' physics (BotW's cloth) is tuned to these values, as Cemu found.
+pub(crate) fn frsqrte_espresso(input: f64) -> f64 {
+    let x = input.to_bits();
+    if x << 1 == 0 {
+        return f64::from_bits((x & !(MANTISSA | EXPONENT)) | EXPONENT);
+    }
+    let e = ((x >> 52) & 0x7FF) as u32;
+    if e == 0x7FF {
+        if x & MANTISSA == 0 {
+            return if (x as i64) < 0 { f64::from_bits(0x7FF8_0000_0000_0000) } else { 0.0 };
+        }
+        return input;
+    }
+    if (x as i64) < 0 {
+        return f64::from_bits(0x7FF8_0000_0000_0000);
+    }
+    let index = ((x >> 48) & 0x1F) as usize;
+    let step = ((x >> 37) & 0x7FF) as u32;
+    let (offset, slope) = FRSQRTE_TABLE[index];
+    let sum = offset.wrapping_sub(slope.wrapping_mul(step)) as i32;
+    let e = u64::from(1023_u32.wrapping_sub(e.wrapping_sub(1021) >> 1) & 0x7FF);
+    let x = (x & !(EXPONENT | MANTISSA)) | (e << 52);
+    f64::from_bits(x.wrapping_add((i64::from(sum) as u64) << 26))
+}
+
+/// `fres` as Espresso computes it: a table estimate from 15 mantissa bits.
+pub(crate) fn fres_espresso(input: f64) -> f64 {
+    let x = input.to_bits();
+    let index = ((x >> 47) & 0x1F) as usize;
+    let step = ((x >> 37) & 0x3FF) as u32;
+    let (offset, slope) = FRES_TABLE[index];
+    let sum = offset - (slope * step).div_ceil(2);
+    let e = ((x >> 52) & 0x7FF) as u32;
+    if e == 0 {
+        return f64::from_bits(x | EXPONENT);
+    }
+    if e == 0x7FF {
+        if x & MANTISSA == 0 {
+            return if (x as i64) < 0 { -0.0 } else { 0.0 };
+        }
+        return input;
+    }
+    let e = u64::from(2045_u32.wrapping_sub(e) & 0x7FF);
+    let x = (x & !(EXPONENT | MANTISSA)) | (e << 52);
+    f64::from_bits(x + (u64::from(sum) << 29))
+}
+
 /// Arithmetic shared by double, single and paired-single forms.
 pub(super) fn arith(op: Opcode, a: f64, b: f64, c: f64) -> f64 {
     use Opcode as O;
@@ -71,8 +194,8 @@ pub(super) fn arith(op: Opcode, a: f64, b: f64, c: f64) -> f64 {
         O::Fmsub | O::Fmsubs | O::PsMsub => a.mul_add(c, -b),
         O::Fnmadd | O::Fnmadds | O::PsNmadd => -a.mul_add(c, b),
         O::Fnmsub | O::Fnmsubs | O::PsNmsub => -a.mul_add(c, -b),
-        O::Fres | O::PsRes => 1.0 / b,
-        O::Frsqrte | O::PsRsqrte => 1.0 / b.sqrt(),
+        O::Fres | O::PsRes => fres_espresso(b),
+        O::Frsqrte | O::PsRsqrte => frsqrte_espresso(b),
         O::Fsel | O::PsSel => {
             if a >= 0.0 {
                 c
@@ -193,5 +316,21 @@ mod tests {
         s.fpr[1].ps0 = f64::NAN;
         exec(&mut s, x(63, 6 << 2, 1, 2, 0, false)); // fcmpu cr6, f1, f2
         assert_eq!(s.cr_field(6), 0b0001);
+    }
+}
+
+#[cfg(test)]
+mod estimate_tests {
+    use super::{fres_espresso, frsqrte_espresso};
+
+    #[test]
+    fn estimates_stay_close_to_the_exact_values() {
+        for v in [0.001_f64, 0.5, 1.0, 2.0, 3.7, 100.0, 12345.0] {
+            assert!(frsqrte_espresso(v).mul_add(v.sqrt(), -1.0).abs() < 1e-3, "frsqrte {v}");
+            assert!(fres_espresso(v).mul_add(v, -1.0).abs() < 1e-3, "fres {v}");
+        }
+        assert_eq!(frsqrte_espresso(0.0), f64::INFINITY);
+        assert!(frsqrte_espresso(-1.0).is_nan());
+        assert_eq!(fres_espresso(f64::INFINITY), 0.0);
     }
 }

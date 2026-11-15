@@ -433,12 +433,25 @@ impl LatteRenderer {
             .chain(draw.depth_target.map(|(key, _)| (key.width, key.height)))
             .fold((u32::MAX, u32::MAX), |acc, size| (acc.0.min(size.0), acc.1.min(size.1)));
         let Some(pass) = self.pass.as_mut() else { return };
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &self.arena_group, &[draw.params_offset]);
-        pass.set_bind_group(1, &group, &[]);
-        if draw.vertex.stream_out {
+        // Like Cemu's draw_execute, state equal to what the pass holds is not set again: each
+        // call is recorded and tracked by wgpu, which took a third of the render thread.
+        let bound = &mut self.bound;
+        if bound.pipeline.as_ref() != Some(&pipeline) {
+            pass.set_pipeline(&pipeline);
+            bound.pipeline = Some(Arc::clone(&pipeline));
+        }
+        if bound.params_offset != Some(draw.params_offset) {
+            pass.set_bind_group(0, &self.arena_group, &[draw.params_offset]);
+            bound.params_offset = Some(draw.params_offset);
+        }
+        if bound.resources.as_ref() != Some(&group) {
+            pass.set_bind_group(1, &group, &[]);
+            bound.resources = Some(group.clone());
+        }
+        if draw.vertex.stream_out && !bound.stream {
             if let Some(stream) = &self.stream {
                 pass.set_bind_group(2, &stream.group, &[]);
+                bound.stream = true;
             }
         }
         let [x, y, width, height, near, far] = draw.viewport;
@@ -455,30 +468,36 @@ impl LatteRenderer {
             .or(draw.depth_target.as_ref())
             .map_or(1, |(key, _)| self.resolution.of(key));
         let factor = scale as f32;
-        pass.set_viewport(
-            vx * factor,
-            vy * factor,
-            vw * factor,
-            vh * factor,
-            near.min(far),
-            far.max(near),
-        );
+        let viewport =
+            [vx * factor, vy * factor, vw * factor, vh * factor, near.min(far), far.max(near)];
+        if bound.viewport != Some(viewport) {
+            let [x, y, w, h, near, far] = viewport;
+            pass.set_viewport(x, y, w, h, near, far);
+            bound.viewport = Some(viewport);
+        }
         let [sx, sy, sw, sh] = draw.scissor;
         let (sx, sy) = (sx.min(extent.0), sy.min(extent.1));
-        pass.set_scissor_rect(
-            sx * scale,
-            sy * scale,
-            sw.min(extent.0 - sx) * scale,
-            sh.min(extent.1 - sy) * scale,
-        );
-        pass.set_stencil_reference(u32::from(draw.stencil_reference));
-        let [r, g, b, a] = draw.blend_constant;
-        pass.set_blend_constant(wgpu::Color {
-            r: f64::from(r),
-            g: f64::from(g),
-            b: f64::from(b),
-            a: f64::from(a),
-        });
+        let scissor =
+            [sx * scale, sy * scale, sw.min(extent.0 - sx) * scale, sh.min(extent.1 - sy) * scale];
+        if bound.scissor != Some(scissor) {
+            let [x, y, w, h] = scissor;
+            pass.set_scissor_rect(x, y, w, h);
+            bound.scissor = Some(scissor);
+        }
+        if bound.stencil_reference != Some(draw.stencil_reference) {
+            pass.set_stencil_reference(u32::from(draw.stencil_reference));
+            bound.stencil_reference = Some(draw.stencil_reference);
+        }
+        if bound.blend_constant != Some(draw.blend_constant) {
+            let [r, g, b, a] = draw.blend_constant;
+            pass.set_blend_constant(wgpu::Color {
+                r: f64::from(r),
+                g: f64::from(g),
+                b: f64::from(b),
+                a: f64::from(a),
+            });
+            bound.blend_constant = Some(draw.blend_constant);
+        }
         if let Some(offset) = draw.index_offset {
             pass.set_index_buffer(
                 self.arena.slice(u64::from(offset)..u64::from(offset) + u64::from(draw.count) * 4),

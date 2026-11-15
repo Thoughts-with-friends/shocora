@@ -18,28 +18,33 @@ fn gx2_invalidate(ctx: &mut HleContext<'_>, _flags: u32, address: u32, size: u32
     }
 }
 
+/// `GX2SurfaceFormat` flag of the sRGB formats.
+const FORMAT_BIT_SRGB: u32 = 0x400;
+
 /// Scan buffers are recorded by `GX2CopyColorBufferToScanBuffer`; the TV/DRC
-/// buffer memory itself is not needed.
+/// buffer memory itself is not needed, only whether its format is sRGB.
 #[hle_export(lib = "gx2", name = "GX2SetTVBuffer")]
 fn gx2_set_tv_buffer(
-    _ctx: &mut HleContext<'_>,
+    ctx: &mut HleContext<'_>,
     _buffer: u32,
     _size: u32,
     _mode: u32,
-    _format: u32,
+    format: u32,
     _buffering: u32,
 ) {
+    ctx.os.gx2.tv_srgb = format & FORMAT_BIT_SRGB != 0;
 }
 
 #[hle_export(lib = "gx2", name = "GX2SetDRCBuffer")]
 fn gx2_set_drc_buffer(
-    _ctx: &mut HleContext<'_>,
+    ctx: &mut HleContext<'_>,
     _buffer: u32,
     _size: u32,
     _mode: u32,
-    _format: u32,
+    format: u32,
     _buffering: u32,
 ) {
+    ctx.os.gx2.drc_srgb = format & FORMAT_BIT_SRGB != 0;
 }
 
 #[hle_export(lib = "gx2", name = "GX2SetTVScale")]

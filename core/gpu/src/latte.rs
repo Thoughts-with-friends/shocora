@@ -660,7 +660,8 @@ impl Latte {
         }
     }
 
-    pub fn copy_to_scan(&mut self, words: &SurfaceWords, screen: crate::Screen) {
+    /// `srgb`: the scan buffer has an sRGB format, so the copy encodes the colour.
+    pub fn copy_to_scan(&mut self, words: &SurfaceWords, screen: crate::Screen, srgb: bool) {
         if screen == crate::Screen::Tv && words.width != self.tv_width {
             self.tv_width = words.width;
             self.update_resolution();
@@ -670,6 +671,7 @@ impl Latte {
             surface: key,
             slice: words.slice,
             screen,
+            srgb,
         });
     }
 
@@ -742,8 +744,13 @@ impl Latte {
             log::debug!("texture at {:#010x} outside mapped memory", words.address);
             return;
         };
-        let compressed = addrlib::is_compressed(words.format & 0x3F);
-        let mut hash = texture_hash(base, compressed);
+        // Every byte is hashed. A sampled hash missed partial updates: BotW streams the
+        // near terrain's height and material data into textures in place, and stale ones drew
+        // the ground dark and too high (Link's feet sank into it); Mario Tennis draws glyphs
+        // into a font cache one by one (blank or wrong letters). Measured cost: none visible
+        // in a BotW field run (226 s against 230 s with sampling).
+        let hash_of = xxh3_64;
+        let mut hash = hash_of(base);
         // The smaller levels live elsewhere and are often streamed in after the largest:
         // looking only at that one kept garbage mips, seen as black or striped ground
         // whenever the camera moved (BotW).
@@ -758,7 +765,7 @@ impl Latte {
                     .ok()
             });
             if let Some(mips) = mips {
-                hash ^= texture_hash(mips, compressed).rotate_left(17);
+                hash ^= hash_of(mips).rotate_left(17);
             }
         }
         if let Some(known) = self.textures.get_mut(&key) {
@@ -1866,12 +1873,16 @@ fn read_sampler(regs: &RegisterFile, index: u32, signature: TextureSignature) ->
     let word0 = regs.get(base::SAMPLER + index * 3);
     let word1 = regs.get(base::SAMPLER + index * 3 + 1);
     let non_filterable = signature.kind != TextureKind::Float;
-    let filter = |bits: u32| !non_filterable && matches!(bits & 7, 1 | 5);
+    // As Cemu: only POINT (0) and ANISO_POINT (4) are nearest; every other mode filters.
+    let filter = |bits: u32| !non_filterable && !matches!(bits & 7, 0 | 4);
     let (mag_linear, min_linear) = (filter((word0 >> 9) & 7), filter((word0 >> 12) & 7));
-    let min_lod = (word1 & 0x3FF) as u16;
     let mip_filter = (word0 >> 17) & 3;
-    // Without a mip filter only the first level of the range is read.
-    let max_lod = if mip_filter == 0 { min_lod } else { ((word1 >> 10) & 0x3FF) as u16 };
+    // Without a mip filter only the base level is read, whatever the LOD range says (as Cemu).
+    let (min_lod, max_lod) = if mip_filter == 0 {
+        (0, 0)
+    } else {
+        ((word1 & 0x3FF) as u16, ((word1 >> 10) & 0x3FF) as u16)
+    };
     let aniso_ratio = (word0 >> 19) & 7;
     let anisotropy =
         if mag_linear && min_linear && mip_filter != 0 && aniso_ratio != 0 && !signature.comparison
@@ -1929,25 +1940,6 @@ const fn gx2_dim(dim: TextureDim) -> u32 {
         TextureDim::D3 => addrlib::dim::D3,
         TextureDim::Cube => addrlib::dim::CUBE,
     }
-}
-
-/// Samples a large surface: hashing all of it per frame would dominate.
-/// Whether a texture's guest memory changed. Titles rewrite parts of large textures:
-/// *Breath of the Wild* scrolls its terrain height maps (1024 x 1024 slices, addressed
-/// with wrap-around) a strip at a time, which 256 samples over the whole texture miss,
-/// leaving stale heights as walls. A word every 256 bytes (1 KiB for compressed blocks)
-/// sees such strips in every tile row at little cost; Cemu samples similarly densely.
-fn texture_hash(bytes: &[u8], compressed: bool) -> u64 {
-    if bytes.len() <= 0x4000 {
-        return xxh3_64(bytes);
-    }
-    let step = if compressed { 1024 } else { 256 };
-    let mut hash = bytes.len() as u64;
-    for chunk in bytes.chunks(step) {
-        let Some(word) = chunk.first_chunk::<8>() else { break };
-        hash = hash.wrapping_add(u64::from_ne_bytes(*word)).rotate_left(3);
-    }
-    hash
 }
 
 fn sampled_hash(bytes: &[u8]) -> u64 {
@@ -2152,8 +2144,8 @@ mod tests {
         latte.set_resolution_factor(4);
         assert!(scale_commands(&latte).is_empty(), "no picture yet");
         let tv = SurfaceWords { width: 1280, height: 720, ..SurfaceWords::default() };
-        latte.copy_to_scan(&tv, crate::Screen::Tv);
-        latte.copy_to_scan(&tv, crate::Screen::Tv);
+        latte.copy_to_scan(&tv, crate::Screen::Tv, false);
+        latte.copy_to_scan(&tv, crate::Screen::Tv, false);
         assert_eq!(scale_commands(&latte), [ResolutionScale { factor: 4, limit_width: 1280 }]);
         latte.set_resolution_factor(1);
         assert_eq!(scale_commands(&latte).len(), 2);

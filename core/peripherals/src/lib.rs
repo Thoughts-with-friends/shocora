@@ -5,7 +5,7 @@ pub mod rtc;
 pub mod timebase;
 
 pub use controller::{GamePadState, Stick, VpadButtons};
-pub use motion::{Motion, Pose, TiltMotion};
+pub use motion::{Motion, Pose, SensorFusion, TiltMotion};
 pub use rtc::CalendarTime;
 pub use timebase::{GameSpeed, TimeBase};
 

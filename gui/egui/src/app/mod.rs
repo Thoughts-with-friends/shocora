@@ -174,6 +174,7 @@ impl ShocoraApp {
             window_keys: GamePadState::default(),
             motion: MotionInput::default(),
         };
+        app.update_controller_motion();
 
         app.adopt_old_rom_list();
         app.reload_library();

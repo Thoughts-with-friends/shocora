@@ -29,6 +29,8 @@
 //!   to it, and again every `repeat` frames.
 //! * `SHOCORA_STATES_DIR=dir`: where states go instead of `states/`.
 //! * `SHOCORA_TRACE_UBO="first_flip,last_flip,file"`: uniform blocks of every draw, then exit.
+//!   `SHOCORA_TRACE_UBO_COUNT=n` keeps only draws of `n` indices; `SHOCORA_TRACE_UBO_AT=n` adds
+//!   the four floats at vec4 `n` of each block.
 //! * `SHOCORA_FRAMEGEN`: generates frames; with `SHOCORA_SHOTS`, also saves them as `Gen*`.
 //! * `SHOCORA_RESET_AT=frame`: reboots the title at that frame, like the GUI's Reset.
 //! * `SHOCORA_TOUCH="frame,x,y,frames"`: touches the GamePad's screen (854 x 480 pixels).
@@ -861,7 +863,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     RenderCommand::ArenaWrite { offset, bytes } => {
                         ubo_arena.insert(*offset, std::sync::Arc::clone(bytes));
                     }
-                    RenderCommand::Draw(draw) if flips >= *first && flips <= *last => {
+                    // SHOCORA_TRACE_UBO_COUNT=n: only draws of n indices.
+                    RenderCommand::Draw(draw)
+                        if flips >= *first
+                            && flips <= *last
+                            && std::env::var("SHOCORA_TRACE_UBO_COUNT")
+                                .ok()
+                                .and_then(|n| n.parse::<u32>().ok())
+                                .is_none_or(|n| n == draw.count) =>
+                    {
                         let Some(params) = ubo_arena.get(&draw.params_offset) else { continue };
                         let word = |i: usize| {
                             u32::from_le_bytes([
@@ -890,6 +900,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .collect();
                             let _ =
                                 write!(ubo_log, " | b{block}:{} {}", data.len(), floats.join(","));
+                            // SHOCORA_TRACE_UBO_AT=n: also the four floats at vec4 index n.
+                            if let Some(at) = std::env::var("SHOCORA_TRACE_UBO_AT")
+                                .ok()
+                                .and_then(|n| n.parse::<usize>().ok())
+                                .filter(|at| data.len() >= (at + 1) * 16)
+                            {
+                                let floats: Vec<String> = data[at * 16..at * 16 + 16]
+                                    .as_chunks::<4>()
+                                    .0
+                                    .iter()
+                                    .map(|b| format!("{:.4}", f32::from_le_bytes(*b)))
+                                    .collect();
+                                let _ = write!(ubo_log, " @{at}:{}", floats.join(","));
+                            }
                         }
                         ubo_log.push('\n');
                     }

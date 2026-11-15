@@ -23,8 +23,13 @@ use cpal::{
 const TARGET_FRAMES: usize = 2880;
 /// Stereo frames queued before the oldest are dropped (about 250 ms).
 const MAX_FRAMES: usize = 12_000;
-/// Largest change of the playback rate: 0.5 % is below what can be heard.
-const MAX_RATE_CHANGE: f32 = 0.005;
+/// Largest change of the playback rate. 0.5 % could not follow a title running a few
+/// percent slow (BotW's field at about 56 of 60 vblanks a second): the queue ran dry over
+/// and over, and each time the sound faded out and waited, heard as periodic noise. A few
+/// percent of pitch is far less noticeable than that.
+const MAX_RATE_CHANGE: f32 = 0.08;
+/// How strongly the rate follows the distance from [`TARGET_FRAMES`].
+const RATE_GAIN: f32 = 0.2;
 /// How fast the sound fades per output frame after running out of samples.
 const FADE_OUT: f32 = 0.995;
 
@@ -70,7 +75,7 @@ impl Playback {
     /// The rate that moves the queue towards its target. Called per device buffer.
     fn adjusted_step(&self, queued_frames: usize) -> f32 {
         let error = (queued_frames as f32 - TARGET_FRAMES as f32) / TARGET_FRAMES as f32;
-        self.step * (1.0 + (error * MAX_RATE_CHANGE).clamp(-MAX_RATE_CHANGE, MAX_RATE_CHANGE))
+        self.step * (1.0 + (error * RATE_GAIN).clamp(-MAX_RATE_CHANGE, MAX_RATE_CHANGE))
     }
 
     /// The next output frame, in `-1.0..=1.0`.

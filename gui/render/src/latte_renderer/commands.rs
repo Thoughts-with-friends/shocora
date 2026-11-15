@@ -109,8 +109,8 @@ impl RenderBackend for LatteRenderer {
                         *target_slice,
                     );
                 }
-                RenderCommand::CopyToScanBuffer { surface, slice, screen } => {
-                    self.pending_scan.insert(*screen, (*surface, *slice));
+                RenderCommand::CopyToScanBuffer { surface, slice, screen, srgb } => {
+                    self.pending_scan.insert(*screen, (*surface, *slice, *srgb));
                 }
                 RenderCommand::Flip => self.flip(),
             }
