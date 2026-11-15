@@ -20,6 +20,8 @@ impl LatteRenderer {
         self.pipeline_epoch += 1;
         self.bind_groups.clear();
         self.feedback_copies.clear();
+        self.readbacks_recorded.clear();
+        self.readbacks_in_flight.clear();
         self.pending_scan.clear();
         self.presented.clear();
         self.frame_generator.reset();
@@ -58,6 +60,7 @@ impl RenderBackend for LatteRenderer {
                 | RenderCommand::Clear { .. }
                 | RenderCommand::CopySurface { .. }
                 | RenderCommand::CopyToScanBuffer { .. }
+                | RenderCommand::Readback { .. }
                 | RenderCommand::Flip => None,
             })
             .collect();
@@ -66,6 +69,7 @@ impl RenderBackend for LatteRenderer {
         }
         let deadline = self.pipeline_setting.background().then(|| Instant::now() + PIPELINE_WAIT);
         self.wait_for_pipelines(deadline);
+        self.finish_readbacks();
         for command in commands {
             match command {
                 RenderCommand::ClearScreen { screen, color } => self.clear_screen(*screen, *color),
@@ -113,7 +117,9 @@ impl RenderBackend for LatteRenderer {
                     self.pending_scan.insert(*screen, (*surface, *slice, *srgb));
                 }
                 RenderCommand::Flip => self.flip(),
+                RenderCommand::Readback { target, reply } => self.readback(*target, reply),
             }
         }
+        self.start_readbacks();
     }
 }

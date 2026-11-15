@@ -20,8 +20,9 @@ use crate::{
     regs::{RegisterFile, base, config, context as reg, resource},
     render::{
         AddressMode, BindingKind, BlendState, BorderColor, BoundTexture, DepthClear, DrawCommand,
-        HostFormat, MipData, PipelineState, RenderCommand, ResolutionScale, SamplerDesc,
-        ShaderModule, StencilFace, StreamCopy, SurfaceKey, TextureUpload, Topology,
+        HostFormat, MipData, PipelineState, ReadbackData, ReadbackReply, ReadbackTarget,
+        RenderCommand, ResolutionScale, SamplerDesc, ShaderModule, StencilFace, StreamCopy,
+        SurfaceKey, TextureUpload, Topology,
     },
     shader::{self, PixelInputs, TEXTURE_UNITS, TextureDim, TextureKind, TextureSignature},
     tiling::{Layout, detile, swizzle_from_address},
@@ -375,6 +376,45 @@ struct ProgramPair {
     ps_blocks: u16,
 }
 
+/// Bytes of a texel of `format` when the host keeps its texels exactly as the guest does
+/// (uploads copy them unchanged): what the renderer reads back of a target in this format
+/// can go to guest memory as it is.
+const fn readback_bytes(format: u32) -> Option<u32> {
+    match format {
+        0x001 => Some(1),
+        0x005 | 0x007 | 0x806 => Some(2),
+        0x00F | 0x01A | 0x41A | 0x80E | 0x810 => Some(4),
+        0x01F | 0x81E | 0x820 => Some(8),
+        0x823 => Some(16),
+        _ => None,
+    }
+}
+
+/// Render targets in linear memory, and what the renderer read back of them.
+///
+/// Titles draw small targets in linear memory for the CPU to read: Breath of the Wild has
+/// about thirty (1x1 and 8x8 `R32G32B32A32_FLOAT`, 256x256 `R16_UNORM`, ...). Read nowhere
+/// but on the host, the CPU saw what was there before; Cemu mirrors every such target back.
+struct Readbacks {
+    reply: std::sync::mpsc::Sender<ReadbackData>,
+    results: std::sync::mpsc::Receiver<ReadbackData>,
+    /// Drawn to since the last flip.
+    pending: Vec<ReadbackTarget>,
+}
+
+impl Default for Readbacks {
+    fn default() -> Self {
+        let (reply, results) = std::sync::mpsc::channel();
+        Self { reply, results, pending: Vec::new() }
+    }
+}
+
+impl std::fmt::Debug for Readbacks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Readbacks").field("pending", &self.pending).finish_non_exhaustive()
+    }
+}
+
 /// GPU-side caches and what they need to stay coherent with the renderer.
 #[derive(Debug)]
 pub struct Latte {
@@ -412,6 +452,7 @@ pub struct Latte {
     next_module_id: u64,
     stream_buffers: Vec<StreamBuffer>,
     stream_cursor: u32,
+    readbacks: Readbacks,
     pub skipped_draws: u64,
 }
 
@@ -441,6 +482,7 @@ impl Default for Latte {
             next_module_id: 1,
             stream_buffers: Vec::new(),
             stream_cursor: 0,
+            readbacks: Readbacks::default(),
             skipped_draws: 0,
         }
     }
@@ -603,6 +645,57 @@ impl Latte {
             height: words.height,
             layers: words.depth.max(1),
             format,
+        }
+    }
+
+    /// A draw to `words`: read back at the flip if it is in linear memory.
+    fn note_readback(&mut self, words: &SurfaceWords, surface: SurfaceKey) {
+        if words.tile_mode != tile_mode::TM_LINEAR_ALIGNED
+            || words.level != 0
+            || words.slice != 0
+            || words.aa != 0
+            || surface.layers != 1
+            || self.readbacks.pending.iter().any(|target| target.surface == surface)
+        {
+            return;
+        }
+        let Some(bytes) = readback_bytes(words.format) else { return };
+        if let Ok(only) = std::env::var("TMP_READBACK_ONLY")
+            && !only.split(',').any(|f| u32::from_str_radix(f, 16) == Ok(words.format))
+        {
+            return;
+        }
+        let Some(address) = wiiu_mem_addr::physical_to_effective(words.address) else { return };
+        self.readbacks.pending.push(ReadbackTarget {
+            surface,
+            address,
+            row_pitch: words.pitch * bytes,
+        });
+    }
+
+    /// Asks the renderer for the linear targets drawn since the last flip.
+    pub fn flush_readbacks(&mut self) {
+        for target in self.readbacks.pending.drain(..) {
+            let reply = ReadbackReply(self.readbacks.reply.clone());
+            self.commands.push(RenderCommand::Readback { target, reply });
+        }
+    }
+
+    /// Writes what the renderer has read back so far to guest memory.
+    pub fn apply_readbacks(&mut self, memory: &mut Memory) {
+        while let Ok(data) = self.readbacks.results.try_recv() {
+            let target = data.target;
+            let row_bytes = data.rows.len() / target.surface.height.max(1) as usize;
+            if row_bytes == 0 {
+                continue;
+            }
+            for (row, bytes) in data.rows.chunks_exact(row_bytes).enumerate() {
+                let address = target.address + row as u32 * target.row_pitch;
+                if memory.write_bytes(address, bytes).is_ok() {
+                    // Guest buffers there are read again.
+                    self.note_cpu_write(address, bytes.len() as u32);
+                }
+            }
         }
     }
 
@@ -1386,6 +1479,7 @@ impl Latte {
                 continue;
             }
             let key = Self::key_of_target(&words, false);
+            self.note_readback(&words, key);
             self.note_target(key);
             state.color_formats[target] = Some(key.format);
             state.color_masks[target] = mask;
@@ -2083,6 +2177,58 @@ fn decode_mips(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Intent: what the renderer reads back of a linear target lands in guest memory where
+    /// the CPU (and a linear texture fetch) looks for each texel: row y at y × pitch × bytes.
+    /// Pass: a 2x3 `R32G32B32A32_FLOAT` target with a 64-texel pitch, drawn twice, is asked
+    /// for once at the flip; the answer puts every texel at `Layout::address` and leaves the
+    /// bytes after each row alone.
+    #[test]
+    fn linear_targets_are_read_back_to_their_rows() {
+        use wiiu_mem_addr::{MEM2, Region, effective_to_physical};
+        let mut memory = Memory::new();
+        memory.map(Region::new("MEM2", MEM2.start, 0x10_0000)).unwrap();
+        let base = MEM2.start + 0x1000;
+        let words = SurfaceWords {
+            address: effective_to_physical(base).unwrap(),
+            width: 2,
+            height: 3,
+            depth: 1,
+            pitch: 64,
+            tile_mode: tile_mode::TM_LINEAR_ALIGNED,
+            format: 0x823,
+            ..SurfaceWords::default()
+        };
+        let mut latte = Latte::default();
+        let key = Latte::key_of_target(&words, false);
+        latte.note_readback(&words, key);
+        latte.note_readback(&words, key);
+        latte.flush_readbacks();
+        let [RenderCommand::Readback { target, reply }] = &latte.commands[..] else {
+            panic!("{:?}", latte.commands);
+        };
+        // The renderer's answer: every byte of texel (x, y) is x + 2y.
+        let rows: Vec<u8> = (0..6_u8).flat_map(|texel| [texel; 16]).collect();
+        reply.0.send(ReadbackData { target: *target, rows }).unwrap();
+        latte.apply_readbacks(&mut memory);
+        let layout = Layout {
+            tile_mode: tile_mode::TM_LINEAR_ALIGNED,
+            bpp: 128,
+            pitch: 64,
+            height: 3,
+            samples: 1,
+            is_depth: false,
+            pipe_swizzle: 0,
+            bank_swizzle: 0,
+        };
+        for y in 0..3 {
+            for x in 0..2 {
+                let at = base + layout.address(x, y, 0);
+                assert_eq!(memory.read_u8(at + 15).unwrap(), (x + 2 * y) as u8, "({x}, {y})");
+            }
+            assert_eq!(memory.read_u8(base + layout.address(2, y, 0)).unwrap(), 0);
+        }
+    }
 
     fn target(width: u32, height: u32) -> SurfaceKey {
         SurfaceKey { address: 0x1000, width, height, layers: 1, format: HostFormat::Rgba8Unorm }

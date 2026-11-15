@@ -32,6 +32,9 @@ const MAX_RATE_CHANGE: f32 = 0.08;
 const RATE_GAIN: f32 = 0.2;
 /// How fast the sound fades per output frame after running out of samples.
 const FADE_OUT: f32 = 0.995;
+/// Gain added per output frame when the sound comes back (5 ms at 48 kHz): resuming at
+/// full gain was a step from silence, heard as a click after every time the queue ran dry.
+const FADE_IN: f32 = 1.0 / 240.0;
 
 type Queue = Arc<Mutex<VecDeque<i16>>>;
 
@@ -65,11 +68,13 @@ struct Playback {
     current: [f32; 2],
     /// `false` while waiting for the queue to fill up.
     playing: bool,
+    /// Gain while the sound comes back, up to 1 (see [`FADE_IN`]).
+    gain: f32,
 }
 
 impl Playback {
     const fn new(step: f32) -> Self {
-        Self { step, phase: 0.0, previous: [0.0; 2], current: [0.0; 2], playing: false }
+        Self { step, phase: 0.0, previous: [0.0; 2], current: [0.0; 2], playing: false, gain: 0.0 }
     }
 
     /// The rate that moves the queue towards its target. Called per device buffer.
@@ -87,7 +92,9 @@ impl Playback {
             // Out of samples: a fade instead of a step to a held value.
             self.previous = self.previous.map(|sample| sample * FADE_OUT);
             self.current = self.previous;
-            return self.previous;
+            let gain = self.gain;
+            self.gain = 0.0;
+            return self.previous.map(|sample| sample * gain);
         }
         self.phase += step;
         // Each pass takes one off a small sum of positive steps: this cannot stall.
@@ -105,9 +112,11 @@ impl Playback {
         }
         let [left, right] = self.previous;
         let [next_left, next_right] = self.current;
+        let gain = self.gain;
+        self.gain = (self.gain + FADE_IN).min(1.0);
         [
-            f32::mul_add(next_left - left, self.phase, left),
-            f32::mul_add(next_right - right, self.phase, right),
+            f32::mul_add(next_left - left, self.phase, left) * gain,
+            f32::mul_add(next_right - right, self.phase, right) * gain,
         ]
     }
 
@@ -226,10 +235,25 @@ mod tests {
         let mut playback = Playback::new(0.5);
         let mut queue: VecDeque<i16> =
             (0..TARGET_FRAMES as i32).flat_map(|i| [(i * 4) as i16; 2]).collect();
-        let output: Vec<f32> = (0..64).map(|_| playback.next_frame(&mut queue, 0.5)[0]).collect();
+        let output: Vec<f32> = (0..400).map(|_| playback.next_frame(&mut queue, 0.5)[0]).collect();
         let steps: Vec<f32> = output.windows(2).map(|w| w[1] - w[0]).collect();
         let expected = 2.0 / 32768.0;
-        assert!(steps[8..].iter().all(|step| (step - expected).abs() < 1e-5), "{steps:?}");
+        // After the fade-in.
+        assert!(steps[300..].iter().all(|step| (step - expected).abs() < 1e-5), "{steps:?}");
+    }
+
+    /// Intent: after running dry, the sound comes back with a short fade instead of a step
+    /// from silence, which was heard as a click.
+    /// Pass: refilled with a constant, the first output is near 0, outputs never fall, and
+    /// the full value is reached within `1 / FADE_IN` frames.
+    #[test]
+    fn coming_back_fades_in() {
+        let mut playback = Playback::new(1.0);
+        let mut queue = filled(TARGET_FRAMES * 2, 16384);
+        let output: Vec<f32> = (0..400).map(|_| playback.next_frame(&mut queue, 1.0)[0]).collect();
+        assert!(output[1] < 0.01, "{}", output[1]);
+        assert!(output.windows(2).all(|w| w[1] >= w[0] - 1e-6));
+        assert!((output[300] - 0.5).abs() < 1e-3, "{}", output[300]);
     }
 
     #[test]

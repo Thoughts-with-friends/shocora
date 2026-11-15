@@ -91,6 +91,7 @@ impl Engine {
     /// # Errors
     /// Fails on malformed packets or accesses outside guest memory.
     pub fn submit(&mut self, memory: &mut Memory, words: &[u32]) -> Result<(), GpuError> {
+        self.latte.apply_readbacks(memory);
         self.timestamp += 1;
         let mut ctx = CpContext {
             memory,

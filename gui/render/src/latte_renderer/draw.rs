@@ -55,18 +55,19 @@ impl StreamOutput {
     }
 }
 
-/// Where a draw's copy of its own target goes.
+/// Where a draw's copy of a surface goes (its own target, or a volume made as 2D).
 fn feedback_texture(
     device: &wgpu::Device,
     source: &wgpu::Texture,
     size: wgpu::Extent3d,
+    dimension: wgpu::TextureDimension,
 ) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shocora feedback copy"),
         size,
         mip_level_count: 1,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        dimension,
         format: source.format(),
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
@@ -105,11 +106,13 @@ impl LatteRenderer {
             .feedback_copies
             .entry(bound.key)
             .and_modify(|texture| {
-                if texture.size() != size {
-                    *texture = feedback_texture(&device, &source, size);
+                if texture.size() != size || texture.dimension() != wgpu::TextureDimension::D2 {
+                    *texture = feedback_texture(&device, &source, size, wgpu::TextureDimension::D2);
                 }
             })
-            .or_insert_with(|| feedback_texture(&device, &source, size));
+            .or_insert_with(|| {
+                feedback_texture(&device, &source, size, wgpu::TextureDimension::D2)
+            });
         let target = copy.clone();
         self.encoder().copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
@@ -145,6 +148,51 @@ impl LatteRenderer {
         Some(view)
     }
 
+    /// A volume sampled as 3D whose surface was made as a 2D array (drawn slice by slice,
+    /// as render targets are made): the draw reads its slices copied into a 3D texture.
+    /// A dummy in its place gave Breath of the Wild's 8x8x8 `R11G11B10` volume zeros.
+    fn volume_copy(&mut self, bound: &BoundTexture) -> Option<wgpu::TextureView> {
+        let source = self.surfaces.get(&bound.key)?.texture.clone();
+        if source.dimension() != wgpu::TextureDimension::D2 {
+            return None;
+        }
+        self.end_pass();
+        let size = wgpu::Extent3d {
+            depth_or_array_layers: source.depth_or_array_layers(),
+            ..source.size().mip_level_size(0, wgpu::TextureDimension::D2)
+        };
+        let device = self.device.clone();
+        let volume = wgpu::TextureDimension::D3;
+        let copy = self
+            .feedback_copies
+            .entry(bound.key)
+            .and_modify(|texture| {
+                if texture.size() != size || texture.dimension() != volume {
+                    *texture = feedback_texture(&device, &source, size, volume);
+                }
+            })
+            .or_insert_with(|| feedback_texture(&device, &source, size, volume));
+        let target = copy.clone();
+        self.encoder().copy_texture_to_texture(
+            source.as_image_copy(),
+            target.as_image_copy(),
+            size,
+        );
+        Some(target.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D3),
+            ..Default::default()
+        }))
+    }
+
+    /// Whether `bound` is sampled as 3D but its surface was made as 2D.
+    fn needs_volume_copy(&self, bound: &BoundTexture) -> bool {
+        bound.dim == TextureDim::D3
+            && self
+                .surfaces
+                .get(&bound.key)
+                .is_some_and(|s| s.texture.dimension() == wgpu::TextureDimension::D2)
+    }
+
     /// `group(1)` of a draw. Textures and samplers rarely change between draws.
     fn resource_group(
         &mut self,
@@ -158,13 +206,16 @@ impl LatteRenderer {
             self.surfaces.get(&bound.key).map(|s| s.id).hash(&mut hasher);
         }
         let key = hasher.finish();
-        // A draw sampling its own target reads a fresh copy every time.
+        // A draw sampling its own target, or a volume made as 2D, reads a fresh copy every
+        // time.
         let feedback = draw.textures.iter().any(|t| {
-            draw.color_targets
-                .iter()
-                .flatten()
-                .chain(draw.depth_target.iter())
-                .any(|(target, _)| *target == t.key)
+            self.needs_volume_copy(t)
+                || draw
+                    .color_targets
+                    .iter()
+                    .flatten()
+                    .chain(draw.depth_target.iter())
+                    .any(|(target, _)| *target == t.key)
         });
         if !feedback {
             if let Some(group) = self.bind_groups.get(&key) {
@@ -196,6 +247,13 @@ impl LatteRenderer {
                         {
                             let key = bound.key;
                             self.surfaces.get_mut(&key).map(|s| s.sample_view(&key, &bound))
+                        }
+                        Some(bound)
+                            if *dim == TextureDim::D3
+                                && bound.key.format.kind() == *kind
+                                && self.needs_volume_copy(&bound) =>
+                        {
+                            self.volume_copy(&bound)
                         }
                         _ => None,
                     };

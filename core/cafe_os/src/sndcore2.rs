@@ -10,7 +10,10 @@ use std::collections::{HashMap, VecDeque};
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::Memory;
 use wiiu_peripherals::timebase::FREQUENCY;
-use wiiu_sound::{SampleFormat, SampleMemory, Voice};
+use wiiu_sound::{
+    SampleFormat, SampleMemory, Voice,
+    filter::{Biquad, LowPass},
+};
 
 use crate::{
     CafeOs,
@@ -33,8 +36,15 @@ const FRAME_MILLISECONDS: u64 = 3;
 /// A guest with this many callbacks waiting is not keeping up: frame callbacks
 /// wait for it to catch up, instead of piling up without end.
 const MAX_PENDING_CALLBACKS: usize = 32;
-/// Frames made up for at most when the guest fell behind real time.
+/// Frames mixed at most per tick when the guest fell behind real time.
 const MAX_CATCH_UP: u64 = 16;
+/// Frames the mixer may lag behind real time (300 ms) before the rest is skipped.
+///
+/// A shorter pause (a long compile, the emulation thread waiting for the renderer) is made
+/// up for over the next ticks: dropped, every such pause left the host queue short, and
+/// BotW at about 26 fps was heard with a regular click. A longer pause (loading, a
+/// debugger) starts over from now.
+const MAX_BEHIND: u64 = 100;
 /// Interleaved stereo samples kept for the host (about 200 ms).
 const MAX_QUEUED_OUTPUT: usize = 2 * 9600;
 
@@ -92,6 +102,11 @@ struct AxVoice {
     /// over a frame, as a jump would be heard as a click.
     gains: [f32; 2],
     loop_count: u32,
+    /// `AXSetVoiceBiquad`, then `AXSetVoiceLpf`: applied in this order, as the DSP does.
+    #[serde(default)]
+    biquad: Option<Biquad>,
+    #[serde(default)]
+    lpf: Option<LowPass>,
 }
 
 impl AxVoice {
@@ -106,6 +121,8 @@ impl AxVoice {
             tv_right: 0.0,
             gains: [0.0; 2],
             loop_count: 0,
+            biquad: None,
+            lpf: None,
         }
     }
 }
@@ -134,6 +151,9 @@ pub struct AxState {
     first_tick: u64,
     /// AX frames accounted for since then, whether they were made up for or not.
     frames_due: u64,
+    /// AX frames skipped after long pauses (profiling).
+    #[serde(default)]
+    frames_skipped: u64,
     user_protection: u32,
     /// Interleaved stereo for the host.
     #[serde(skip)]
@@ -149,12 +169,13 @@ impl AxState {
         let audible =
             running.iter().filter(|v| v.volume > 0.0 && v.tv_left + v.tv_right > 0.0).count();
         format!(
-            "voices {} (running {}, volume>0 {loud}, routed to TV {routed}, both {audible}) |              frame callbacks {} | final mix callbacks {:?} | aux callbacks {}",
+            "voices {} (running {}, volume>0 {loud}, routed to TV {routed}, both {audible}) |              frame callbacks {} | final mix callbacks {:?} | aux callbacks {} | frames skipped {}",
             self.voices.len(),
             running.len(),
             self.app_frame_callbacks.len() + usize::from(self.frame_callback != 0),
             self.final_mix_callbacks.keys().collect::<Vec<_>>(),
             self.aux_callbacks.len(),
+            self.frames_skipped,
         )
     }
 
@@ -214,6 +235,14 @@ const fn frames_after(ticks: u64) -> u64 {
     ticks * 1000 / (FRAME_MILLISECONDS * FREQUENCY)
 }
 
+/// Of the AX frames the mixer is `behind` real time, how many to skip and how many to mix
+/// now; the rest wait for the next tick.
+const fn catch_up(behind: u64) -> (u64, u64) {
+    let skipped = behind.saturating_sub(MAX_BEHIND);
+    let left = behind - skipped;
+    (skipped, if left < MAX_CATCH_UP { left } else { MAX_CATCH_UP })
+}
+
 impl CafeOs {
     /// Runs every AX frame that became due: guest callbacks, then the mixer.
     pub fn sound_tick(&mut self, memory: &mut Memory) {
@@ -223,12 +252,14 @@ impl CafeOs {
         }
         let now = self.timebase.ticks_since_boot();
         let frames_due = frames_after(now.saturating_sub(self.ax.first_tick));
-        let due = frames_due - self.ax.frames_due;
-        if due == 0 {
+        let behind = frames_due.saturating_sub(self.ax.frames_due);
+        if behind == 0 {
             return;
         }
-        self.ax.frames_due = frames_due;
-        for _ in 0..due.min(MAX_CATCH_UP) {
+        let (skipped, mixed) = catch_up(behind);
+        self.ax.frames_due += skipped + mixed;
+        self.ax.frames_skipped += skipped;
+        for _ in 0..mixed {
             if self.callbacks.pending() < MAX_PENDING_CALLBACKS {
                 if self.ax.frame_callback != 0 {
                     self.callbacks
@@ -265,7 +296,13 @@ impl CafeOs {
             ];
             let mut gains = voice.gains;
             for frame in mix.as_chunks_mut::<2>().0 {
-                let sample = voice.voice.render(&source);
+                let mut sample = voice.voice.render(&source);
+                if let Some(biquad) = &mut voice.biquad {
+                    sample = biquad.process(sample);
+                }
+                if let Some(lpf) = &mut voice.lpf {
+                    sample = lpf.process(sample);
+                }
                 gains = [gains[0] + step[0], gains[1] + step[1]];
                 frame[0] = f32::mul_add(sample, gains[0], frame[0]);
                 frame[1] = f32::mul_add(sample, gains[1], frame[1]);
@@ -827,6 +864,55 @@ fn ax_set_voice_src_ratio(ctx: &mut HleContext<'_>, voice: u32, ratio: f32) -> i
     0
 }
 
+/// `AXPBLPF`: `on`, then the history and coefficients (16 bits each).
+#[hle_export(lib = "sndcore2", name = "AXSetVoiceLpf")]
+fn ax_set_voice_lpf(ctx: &mut HleContext<'_>, voice: u32, lpf: u32) -> Result<(), HleError> {
+    let field = |i: u32| ctx.memory.read_u16(lpf + 2 * i).map(u16::cast_signed);
+    let (on, yn1, a0, b0) = (field(0)?, field(1)?, field(2)?, field(3)?);
+    if let Some(entry) = ctx.os.ax.voices.get_mut(&voice) {
+        entry.lpf = (on != 0).then(|| LowPass::new(a0, b0, yn1));
+    }
+    Ok(())
+}
+
+#[hle_export(lib = "sndcore2", name = "AXSetVoiceLpfCoefs")]
+fn ax_set_voice_lpf_coefs(ctx: &mut HleContext<'_>, voice: u32, a0: u32, b0: u32) {
+    let lpf = ctx.os.ax.voices.get_mut(&voice).and_then(|entry| entry.lpf.as_mut());
+    if let Some(lpf) = lpf {
+        lpf.set_coefficients((a0 as u16).cast_signed(), (b0 as u16).cast_signed());
+    }
+}
+
+/// `AXPBBIQUAD`: `on`, `xn1, xn2, yn1, yn2`, then `b0, b1, b2, a1, a2` (16 bits each).
+#[hle_export(lib = "sndcore2", name = "AXSetVoiceBiquad")]
+fn ax_set_voice_biquad(ctx: &mut HleContext<'_>, voice: u32, biquad: u32) -> Result<(), HleError> {
+    let mut fields = [0_i16; 10];
+    for (i, field) in fields.iter_mut().enumerate() {
+        *field = ctx.memory.read_u16(biquad + 2 * i as u32)?.cast_signed();
+    }
+    let [on, xn1, xn2, yn1, yn2, b0, b1, b2, a1, a2] = fields;
+    if let Some(entry) = ctx.os.ax.voices.get_mut(&voice) {
+        entry.biquad = (on != 0).then(|| Biquad::new([b0, b1, b2, a1, a2], [xn1, xn2], [yn1, yn2]));
+    }
+    Ok(())
+}
+
+#[hle_export(lib = "sndcore2", name = "AXSetVoiceBiquadCoefs")]
+fn ax_set_voice_biquad_coefs(
+    ctx: &mut HleContext<'_>,
+    voice: u32,
+    b0: u32,
+    b1: u32,
+    b2: u32,
+    a1: u32,
+    a2: u32,
+) {
+    let biquad = ctx.os.ax.voices.get_mut(&voice).and_then(|entry| entry.biquad.as_mut());
+    if let Some(biquad) = biquad {
+        biquad.set_coefficients([b0, b1, b2, a1, a2].map(|c| (c as u16).cast_signed()));
+    }
+}
+
 /// `AXPBVE`: current volume in 1.15 fixed point, and its change per sample.
 #[hle_export(lib = "sndcore2", name = "AXSetVoiceVe")]
 fn ax_set_voice_ve(ctx: &mut HleContext<'_>, voice: u32, ve: u32) -> Result<(), HleError> {
@@ -972,6 +1058,10 @@ pub const EXPORTS: &[HleExport] = &[
     AX_SET_VOICE_ADPCM_LOOP,
     AX_SET_VOICE_SRC,
     AX_SET_VOICE_SRC_RATIO,
+    AX_SET_VOICE_LPF,
+    AX_SET_VOICE_LPF_COEFS,
+    AX_SET_VOICE_BIQUAD,
+    AX_SET_VOICE_BIQUAD_COEFS,
     AX_SET_VOICE_VE,
     AX_SET_VOICE_VE_DELTA,
     AX_SET_VOICE_DEVICE_MIX,
@@ -1153,6 +1243,24 @@ mod tests {
     /// Intent: once the callback queue is full, final mix callbacks stop being queued too,
     /// so the queue can drain and frame callbacks (which feed streamed voices) resume.
     /// Pass: mixing frames with a full queue leaves its length unchanged.
+    /// Intent: a pause shorter than `MAX_BEHIND` is made up for over the next ticks instead
+    /// of dropped (the host heard every dropped stretch as a click); a longer one is skipped.
+    /// Pass: 50 frames behind mix as 16, 16, 16, 2 with none skipped; 400 behind skip all
+    /// but `MAX_BEHIND` and mix 16 of those.
+    #[test]
+    fn short_pauses_are_made_up_for_and_long_ones_skipped() {
+        let mut behind = 50;
+        let mut mixed = Vec::new();
+        while behind > 0 {
+            let (skipped, now) = super::catch_up(behind);
+            assert_eq!(skipped, 0);
+            mixed.push(now);
+            behind -= now;
+        }
+        assert_eq!(mixed, [16, 16, 16, 2]);
+        assert_eq!(super::catch_up(400), (400 - super::MAX_BEHIND, super::MAX_CATCH_UP));
+    }
+
     #[test]
     fn a_full_callback_queue_does_not_grow_with_final_mix_callbacks() {
         let mut env = TestEnv::new();

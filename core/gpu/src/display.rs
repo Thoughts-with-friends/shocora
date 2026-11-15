@@ -11,6 +11,7 @@ impl Display {
     /// Shows every scan buffer copied since the last flip.
     #[inline]
     pub fn swap(&mut self, latte: &mut Latte) {
+        latte.flush_readbacks();
         latte.commands.push(RenderCommand::Flip);
         latte.end_frame();
         self.flips += 1;

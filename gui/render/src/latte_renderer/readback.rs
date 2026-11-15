@@ -1,9 +1,107 @@
-//! Reading surfaces back to the CPU (screenshots, debugging).
+//! Reading surfaces back to the CPU: render targets in linear memory for the guest, and
+//! screenshots and debugging.
 use wiiu_gpu::render::MipData;
 
 use super::*;
 
+/// A render target copied to a buffer for the guest, until the GPU has done it.
+pub(super) struct PendingReadback {
+    buffer: wgpu::Buffer,
+    /// Bytes of a row in `buffer`, padded for the copy.
+    padded_row: u32,
+    /// Bytes of a row of texels.
+    row_bytes: u32,
+    target: ReadbackTarget,
+    reply: ReadbackReply,
+    mapped: Arc<AtomicBool>,
+}
+
 impl LatteRenderer {
+    /// Copies a render target in linear memory for the guest. Targets drawn larger than the
+    /// guest's size, or in a format whose texels differ from the guest's, are left out.
+    pub(super) fn readback(&mut self, target: ReadbackTarget, reply: &ReadbackReply) {
+        let key = target.surface;
+        let Some(texture) = self.surfaces.get(&key).map(|s| s.texture.clone()) else { return };
+        let format = texture.format();
+        let Some(bytes) = format.block_copy_size(None) else { return };
+        if format.is_depth_stencil_format()
+            || texture.width() != key.width
+            || texture.height() != key.height
+        {
+            return;
+        }
+        self.end_pass();
+        let row_bytes = key.width * bytes;
+        let padded_row = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shocora guest readback"),
+            size: u64::from(padded_row) * u64::from(key.height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        self.encoder().copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d { width: key.width, height: key.height, depth_or_array_layers: 1 },
+        );
+        self.readbacks_recorded.push(PendingReadback {
+            buffer,
+            padded_row,
+            row_bytes,
+            target,
+            reply: reply.clone(),
+            mapped: Arc::default(),
+        });
+    }
+
+    /// Submits recorded readbacks and starts mapping them; the GPU is not waited for.
+    pub(super) fn start_readbacks(&mut self) {
+        if self.readbacks_recorded.is_empty() {
+            return;
+        }
+        self.submit();
+        for pending in self.readbacks_recorded.drain(..) {
+            let mapped = Arc::clone(&pending.mapped);
+            pending.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+                if result.is_ok() {
+                    mapped.store(true, Ordering::Release);
+                }
+            });
+            self.readbacks_in_flight.push(pending);
+        }
+    }
+
+    /// Hands the readbacks the GPU has finished to the guest.
+    pub(super) fn finish_readbacks(&mut self) {
+        if self.readbacks_in_flight.is_empty() {
+            return;
+        }
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        self.readbacks_in_flight.retain(|pending| {
+            if !pending.mapped.load(Ordering::Acquire) {
+                return true;
+            }
+            let height = pending.target.surface.height as usize;
+            let mut rows = Vec::with_capacity(pending.row_bytes as usize * height);
+            if let Ok(data) = pending.buffer.slice(..).get_mapped_range() {
+                for line in data.chunks_exact(pending.padded_row as usize) {
+                    rows.extend_from_slice(&line[..pending.row_bytes as usize]);
+                }
+            }
+            pending.buffer.unmap();
+            // Nobody waiting any more is no reason to stop.
+            let _ = pending.reply.0.send(ReadbackData { target: pending.target, rows });
+            false
+        });
+    }
+
     /// Render targets drawn since the last call, with their draw counts (tools).
     pub fn take_target_log(&mut self) -> Vec<(SurfaceKey, u32)> {
         let mut list: Vec<_> = std::mem::take(&mut self.target_log).into_iter().collect();

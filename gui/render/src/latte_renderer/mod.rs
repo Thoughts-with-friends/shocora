@@ -30,8 +30,9 @@ use wiiu_gpu::{
     RenderBackend, RenderCommand, Screen,
     latte::{ARENA_SIZE, STREAM_REGION_BASE, STREAM_REGION_SIZE},
     render::{
-        AddressMode, BindingKind, BorderColor, BoundTexture, DrawCommand, HostFormat,
-        ResolutionScale, SamplerDesc, ShaderModule, SurfaceKey, TextureUpload, Topology,
+        AddressMode, BindingKind, BorderColor, BoundTexture, DrawCommand, HostFormat, ReadbackData,
+        ReadbackReply, ReadbackTarget, ResolutionScale, SamplerDesc, ShaderModule, SurfaceKey,
+        TextureUpload, Topology,
     },
     shader::{TextureDim, TextureKind},
 };
@@ -111,6 +112,10 @@ pub struct LatteRenderer {
     bind_groups: HashMap<u64, wgpu::BindGroup>,
     dummy_textures: HashMap<(TextureDim, TextureKind), wgpu::TextureView>,
     feedback_copies: HashMap<SurfaceKey, wgpu::Texture>,
+    /// Readbacks recorded in the open encoder: mapped once it is submitted.
+    readbacks_recorded: Vec<readback::PendingReadback>,
+    /// Readbacks submitted, waiting for the GPU.
+    readbacks_in_flight: Vec<readback::PendingReadback>,
     encoder: Option<wgpu::CommandEncoder>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: Option<PassKey>,
@@ -324,6 +329,8 @@ impl LatteRenderer {
             bind_groups: HashMap::new(),
             dummy_textures: HashMap::new(),
             feedback_copies: HashMap::new(),
+            readbacks_recorded: Vec::new(),
+            readbacks_in_flight: Vec::new(),
             encoder: None,
             pass: None,
             pass_key: None,

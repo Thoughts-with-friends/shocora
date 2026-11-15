@@ -9,6 +9,7 @@
 //! Voice parameters are written by the `sndcore2` HLE library; this crate only
 //! does the signal processing.
 pub mod adpcm;
+pub mod filter;
 pub mod mixer;
 pub mod speed;
 pub mod voice;

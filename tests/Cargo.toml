@@ -24,5 +24,12 @@ wiiu_emu = { workspace = true }
 wiiu_gpu = { workspace = true }
 wiiu_rpl = { workspace = true }
 
+# Used by the examples only (`headless`, `netclient`).
+[dev-dependencies]
+env_logger = "0.11"
+png = "0.18"
+pollster = "0.4"
+shocora_netplay = { workspace = true }
+
 [lints]
 workspace = true

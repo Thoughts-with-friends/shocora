@@ -3899,8 +3899,12 @@ dependencies = [
 name = "shocora_tests"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "png",
+ "pollster 0.4.0",
  "shocora_game_library",
  "shocora_gui_common",
+ "shocora_netplay",
  "shocora_render",
  "wiiu_cafe_os",
  "wiiu_emu",

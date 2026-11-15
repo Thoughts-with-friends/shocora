@@ -396,6 +396,36 @@ impl PartialEq for SurfaceReply {
     }
 }
 
+/// A render target in linear memory: the CPU reads what the GPU drew there (Cemu mirrors
+/// every such target back to guest memory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadbackTarget {
+    pub surface: SurfaceKey,
+    /// Effective address of its first row.
+    pub address: u32,
+    /// Bytes from one row to the next in guest memory.
+    pub row_pitch: u32,
+}
+
+/// What a render target held, for guest memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadbackData {
+    pub target: ReadbackTarget,
+    /// Texels as the host keeps them, row after row without padding: the same bytes the
+    /// guest keeps, as uploads of these formats copy them as they are.
+    pub rows: Vec<u8>,
+}
+
+/// Where the renderer sends what [`RenderCommand::Readback`] read.
+#[derive(Debug, Clone)]
+pub struct ReadbackReply(pub std::sync::mpsc::Sender<ReadbackData>);
+
+impl PartialEq for ReadbackReply {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
 /// Work for the host renderer, independent of the graphics API.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderCommand {
@@ -448,6 +478,11 @@ pub enum RenderCommand {
     },
     /// Shows the queued scan buffers.
     Flip,
+    /// Reads `target` back once the GPU has drawn it; the answer comes later.
+    Readback {
+        target: ReadbackTarget,
+        reply: ReadbackReply,
+    },
 }
 
 /// A host renderer (wgpu, ...).
