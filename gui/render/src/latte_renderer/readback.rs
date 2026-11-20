@@ -61,13 +61,17 @@ impl LatteRenderer {
         });
     }
 
-    /// Submits recorded readbacks and starts mapping them; the GPU is not waited for.
+    /// Hands recorded readbacks over to be submitted: they are mapped once they are. Neither
+    /// the finishing threads nor the GPU are waited for.
     pub(super) fn start_readbacks(&mut self) {
-        if self.readbacks_recorded.is_empty() {
-            return;
+        if !self.readbacks_recorded.is_empty() {
+            self.cut();
         }
-        self.submit();
-        for pending in self.readbacks_recorded.drain(..) {
+    }
+
+    /// Starts mapping readbacks whose copies were submitted.
+    pub(super) fn map_readbacks(&mut self, submitted: impl Iterator<Item = PendingReadback>) {
+        for pending in submitted {
             let mapped = Arc::clone(&pending.mapped);
             pending.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
                 if result.is_ok() {

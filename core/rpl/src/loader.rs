@@ -207,6 +207,16 @@ pub fn load(
         ))
     });
 
+    let translate = |address: u32| -> u32 {
+        placements
+            .values()
+            .find(|p| address >= p.original_start && address <= p.original_end + 0x8000)
+            .map_or(address, |p| p.translate(address))
+    };
+    let info = &file.file_info;
+    let sda_base = if info.sda_base == 0 { 0 } else { translate(info.sda_base) };
+    let sda2_base = if info.sda2_base == 0 { 0 } else { translate(info.sda2_base) };
+
     // 3. Relocate.
     let mut symbol_cache: HashMap<(usize, u32), u32> = HashMap::new();
     for rela_section in file.sections.iter().filter(|s| s.header.kind == SHT_RELA) {
@@ -246,17 +256,15 @@ pub fn load(
             };
             #[allow(clippy::cast_sign_loss)]
             let value = symbol_value.wrapping_add(rela.addend as u32);
+            if rela.kind == relocation::R_PPC_EMB_SDA21 {
+                relocation::apply_sda21(memory, place, value, sda_base, sda2_base)?;
+                continue;
+            }
             relocation::apply(memory, rela.kind, place, value, &mut trampolines)?;
         }
     }
 
     // 4. Translate addresses from the file info and header.
-    let translate = |address: u32| -> u32 {
-        placements
-            .values()
-            .find(|p| address >= p.original_start && address <= p.original_end + 0x8000)
-            .map_or(address, |p| p.translate(address))
-    };
     let exports = file
         .exports()?
         .into_iter()
@@ -267,13 +275,12 @@ pub fn load(
         .map(|(kind, p)| (*kind, (p.base, p.original_end - p.original_start)))
         .collect();
 
-    let info = &file.file_info;
     Ok(LoadedModule {
         name: name.to_owned(),
         is_rpx: info.is_rpx(),
         entry: translate(file.header.entry),
-        sda_base: if info.sda_base == 0 { 0 } else { translate(info.sda_base) },
-        sda2_base: if info.sda2_base == 0 { 0 } else { translate(info.sda2_base) },
+        sda_base,
+        sda2_base,
         stack_size: info.stack_size,
         segments,
         exports,

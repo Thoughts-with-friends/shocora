@@ -4,6 +4,7 @@
 //! to `MEMCreate*HeapEx` and maps to host-side bookkeeping in [`HeapTable`].
 //! The first bytes of the area are still reserved (as the real header would
 //! be) so no allocation ever equals its heap's handle.
+pub mod block_api;
 pub mod bounds;
 pub mod exp_api;
 pub mod exp_heap;
@@ -35,6 +36,8 @@ pub const BASE_HEAP_SLOTS: usize = 9;
 pub mod magic {
     pub const EXPANDED: u32 = 0x4558_5048; // "EXPH"
     pub const FRAME: u32 = 0x4652_4D48; // "FRMH"
+    pub const BLOCK: u32 = 0x424C_4B48; // "BLKH"
+    pub const UNIT: u32 = 0x554E_5448; // "UNTH"
 }
 
 /// Offsets inside `MEMHeapBase`, which games read directly.
@@ -69,6 +72,14 @@ pub enum Heap {
 }
 
 impl Heap {
+    /// First byte of the heap's area.
+    const fn start(&self) -> u32 {
+        match self {
+            Self::Expanded(h) => h.start(),
+            Self::Frame(h) => h.start(),
+        }
+    }
+
     const fn contains(&self, address: u32) -> bool {
         match self {
             Self::Expanded(h) => address >= h.start() && address < h.end(),
@@ -91,6 +102,14 @@ impl HeapTable {
         let usable = size.checked_sub(EXP_HEAP_HEADER)?;
         self.heaps.insert(start, Heap::Expanded(ExpHeap::new(start + EXP_HEAP_HEADER, usable)));
         Some(start)
+    }
+
+    /// Creates a block heap at `handle` over `[start, end)`: its header lies outside the
+    /// area, so all of it can be handed out. Blocks are kept as an expanded heap keeps them.
+    pub fn create_block(&mut self, handle: u32, start: u32, end: u32) -> Option<u32> {
+        let size = end.checked_sub(start).filter(|size| *size > 0)?;
+        self.heaps.insert(handle, Heap::Expanded(ExpHeap::new(start, size)));
+        Some(handle)
     }
 
     /// Creates a frame heap over `[start, start + size)`; returns its handle.
@@ -156,10 +175,17 @@ impl HeapTable {
         }
     }
 
-    /// Handle of the heap whose area contains `address` (`MEMFindContainHeap`).
+    /// Handle of the innermost heap whose area contains `address` (`MEMFindContainHeap`
+    /// searches the heaps made inside a heap first). A heap made inside another starts
+    /// after it, so the containing heap starting last is the innermost: Wii Sports Club
+    /// finds the parent of its heaps this way, and frees nothing back to an outer one.
     #[inline]
     pub fn find_containing(&self, address: u32) -> Option<u32> {
-        self.heaps.iter().find(|(_, heap)| heap.contains(address)).map(|(handle, _)| *handle)
+        self.heaps
+            .iter()
+            .filter(|(_, heap)| heap.contains(address))
+            .max_by_key(|(_, heap)| heap.start())
+            .map(|(handle, _)| *handle)
     }
 
     /// `(start, size)` of the MEM2 base heap area including its header.
@@ -187,5 +213,16 @@ mod tests {
         assert!(table.frame_mut(exp).is_none());
         assert!(table.destroy(exp).is_none(), "base heaps survive destroy");
         assert_eq!(table.mem2_bounds(), (0x1000, 0x1000));
+    }
+
+    #[test]
+    fn finds_the_innermost_heap() {
+        let mut table = HeapTable::default();
+        let outer = table.create_expanded(0x1000, 0x4000).unwrap();
+        let block = table.expanded_mut(outer).unwrap().alloc(0x2000, 4).unwrap();
+        let inner = table.create_expanded(block, 0x2000).unwrap();
+        let inner_block = table.expanded_mut(inner).unwrap().alloc(0x10, 4).unwrap();
+        assert_eq!(table.find_containing(inner_block), Some(inner));
+        assert_eq!(table.find_containing(block + 0x3000), Some(outer));
     }
 }

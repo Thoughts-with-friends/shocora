@@ -105,6 +105,11 @@ impl Streamer {
     /// After a flip: hands over a finished picture and starts the next one when it is due.
     /// `source` is the screen's new image, if there is one. `pipeline` must render
     /// to RGBA8 from the texture and sampler of `layout`.
+    /// Whether [`Self::update`] has work, and needs the flip's commands submitted first.
+    pub(crate) fn active(&self) -> bool {
+        self.in_flight || self.tap.enabled.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,

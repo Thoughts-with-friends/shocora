@@ -38,7 +38,7 @@ fn gx2_draw_ex(
 }
 
 #[hle_export(lib = "gx2", name = "GX2DrawIndexedEx")]
-fn gx2_draw_indexed_ex(
+pub(super) fn gx2_draw_indexed_ex(
     ctx: &mut HleContext<'_>,
     mode: u32,
     count: u32,
@@ -529,7 +529,7 @@ const NUM_FORMAT_INT: u32 = 1;
 const NUM_FORMAT_SCALED: u32 = 2;
 
 #[hle_export(lib = "gx2", name = "GX2InitTextureRegs")]
-fn gx2_init_texture_regs(ctx: &mut HleContext<'_>, tex: u32) -> Result<(), HleError> {
+pub(super) fn gx2_init_texture_regs(ctx: &mut HleContext<'_>, tex: u32) -> Result<(), HleError> {
     let mut surface = Gx2Surface::read(ctx.memory, tex)?;
     surface.height = surface.height.max(1);
     surface.depth = surface.depth.max(1);
@@ -640,7 +640,11 @@ fn gx2_set_pixel_texture(ctx: &mut HleContext<'_>, tex: u32, unit: u32) -> Resul
 }
 
 #[hle_export(lib = "gx2", name = "GX2SetVertexTexture")]
-fn gx2_set_vertex_texture(ctx: &mut HleContext<'_>, tex: u32, unit: u32) -> Result<(), HleError> {
+pub(super) fn gx2_set_vertex_texture(
+    ctx: &mut HleContext<'_>,
+    tex: u32,
+    unit: u32,
+) -> Result<(), HleError> {
     set_texture(ctx, tex, resource::VS_TEXTURE, unit)
 }
 
@@ -671,7 +675,7 @@ fn gx2_set_pixel_sampler(
 }
 
 #[hle_export(lib = "gx2", name = "GX2SetVertexSampler")]
-fn gx2_set_vertex_sampler(
+pub(super) fn gx2_set_vertex_sampler(
     ctx: &mut HleContext<'_>,
     sampler: u32,
     unit: u32,
@@ -688,7 +692,7 @@ fn gx2_set_geometry_sampler(
     set_sampler(ctx, sampler, unit + SAMPLER_BASE_GEOMETRY)
 }
 
-fn set_border_color(gx2: &mut Gx2State, register: u32, unit: u32, color: [f32; 4]) {
+pub(super) fn set_border_color(gx2: &mut Gx2State, register: u32, unit: u32, color: [f32; 4]) {
     gx2.emit(
         opcode::SET_CONFIG_REG,
         &[

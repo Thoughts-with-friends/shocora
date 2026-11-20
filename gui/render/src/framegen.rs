@@ -221,6 +221,11 @@ impl FrameGenerator {
         self.setting.clone()
     }
 
+    /// Whether [`Self::update`] has work, and needs the flip's commands submitted first.
+    pub(crate) fn active(&self) -> bool {
+        self.setting.enabled()
+    }
+
     /// The last picture generated for `screen`.
     #[inline]
     pub fn image(&self, screen: Screen) -> Option<&ScreenImage> {

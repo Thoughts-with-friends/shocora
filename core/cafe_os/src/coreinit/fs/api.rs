@@ -116,7 +116,12 @@ fn fs_change_dir(
     raw_path: GuestPtr<u8>,
     _error_mask: u32,
 ) -> Result<i32, HleError> {
-    let target = path(ctx, client, raw_path)?;
+    let mut target = path(ctx, client, raw_path)?;
+    // The working directory ends with a slash, as FSGetCwd hands it out: titles append
+    // their relative paths to it (Paper Mario: Color Splash's stream sounds).
+    if !target.ends_with('/') {
+        target.push('/');
+    }
     ctx.os.coreinit.fs.clients.entry(client).or_default().cwd = target;
     Ok(status::OK)
 }

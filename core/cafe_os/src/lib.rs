@@ -16,12 +16,14 @@
 //! other thread exists.
 pub mod aoc;
 pub mod coreinit;
+pub mod dmae;
 pub mod fast;
 pub mod gx2;
 pub mod h264;
 pub mod hle;
 pub mod mic;
 pub mod nn;
+pub mod padscore;
 pub mod patches;
 pub mod proc_ui;
 pub mod process;
@@ -55,7 +57,6 @@ pub struct CafeOs {
     pub settings: coreinit::settings::SystemSettings,
     /// Latest GamePad sample from the front end.
     pub gamepad: GamePadState,
-    pub(crate) gamepad_edges: ButtonEdges,
     /// Wii U Pro Controllers by channel, as `WPAD`/`KPAD` see them.
     pub pro_controllers: [Option<GamePadState>; nn::PRO_CHANNELS],
     pub(crate) pro_edges: [ButtonEdges; nn::PRO_CHANNELS],
@@ -79,6 +80,15 @@ pub struct CafeOs {
     /// The GamePad's microphone.
     #[serde(default)]
     pub mic: mic::MicState,
+    /// WPAD/KPAD channel state.
+    #[serde(default)]
+    pub padscore: padscore::PadscoreState,
+    /// `vpad.rpl` settings and button repeat.
+    #[serde(default)]
+    pub vpad: vpad::VpadState,
+    /// Title ID of the running title (0 for homebrew), for title-specific behaviour.
+    #[serde(default)]
+    pub title_id: u64,
 }
 
 impl CafeOs {
@@ -91,6 +101,8 @@ impl CafeOs {
         registry.register_functions(gx2::EXPORTS);
         registry.register_functions(gx2::command::EXPORTS);
         registry.register_functions(gx2::draw::EXPORTS);
+        registry.register_functions(gx2::resource::EXPORTS);
+        registry.register_functions(gx2::misc::EXPORTS);
         registry.register_functions(gx2::state::EXPORTS);
         registry.register_functions(vpad::EXPORTS);
         registry.register_functions(proc_ui::EXPORTS);
@@ -98,10 +110,12 @@ impl CafeOs {
         registry.register_functions(process::EXPORTS);
         registry.register_functions(coreinit::fs::mutate::EXPORTS);
         registry.register_functions(nn::EXPORTS);
+        registry.register_functions(padscore::EXPORTS);
         registry.register_functions(aoc::EXPORTS);
         registry.register_functions(sndcore2::EXPORTS);
         registry.register_functions(h264::EXPORTS);
         registry.register_functions(mic::EXPORTS);
+        registry.register_functions(dmae::EXPORTS);
         registry.register_functions(patches::EXPORTS);
 
         Self {
@@ -116,7 +130,6 @@ impl CafeOs {
             callbacks: hle::callback::Callbacks::default(),
             settings: coreinit::settings::SystemSettings::default(),
             gamepad: GamePadState::default(),
-            gamepad_edges: ButtonEdges::default(),
             pro_controllers: [None; nn::PRO_CHANNELS],
             pro_edges: [ButtonEdges::default(); nn::PRO_CHANNELS],
             pro_last_read: [None; nn::PRO_CHANNELS],
@@ -127,6 +140,9 @@ impl CafeOs {
             aoc: Vec::new(),
             h264: h264::H264State::default(),
             mic: mic::MicState::default(),
+            padscore: padscore::PadscoreState::default(),
+            vpad: vpad::VpadState::default(),
+            title_id: 0,
         }
     }
 
@@ -210,6 +226,8 @@ impl CafeOs {
     /// Queues handlers of alarms that are due, and of GPU interrupts that came.
     pub fn fire_due_alarms(&mut self) {
         self.fire_gpu_interrupts();
+        self.padscore_tick();
+        self.vpad_tick();
         let now = self.timebase.ticks_since_epoch();
         for call in self.coreinit.alarms.fire_due(now) {
             self.callbacks.push(call);
@@ -303,5 +321,20 @@ mod rom_tests {
         }
         let (total, missing) = &libraries["coreinit"];
         assert!(missing.len() * 10 <= *total, "coreinit: {} of {total} missing", missing.len());
+    }
+}
+
+/// Prints every implemented function export as `library name`, one per line
+/// (`cargo test -p wiiu_cafe_os dump_exports -- --ignored --nocapture`): compared with
+/// Cemu's export list to track what is left to port (docs/todo.md).
+#[cfg(test)]
+#[test]
+#[ignore = "prints the export list"]
+fn dump_exports() {
+    let os = CafeOs::new();
+    let mut names: Vec<_> = os.registry.function_names().collect();
+    names.sort_unstable();
+    for (library, name) in names {
+        println!("EXPORT {library} {name}");
     }
 }

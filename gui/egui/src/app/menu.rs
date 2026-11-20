@@ -192,6 +192,46 @@ impl ShocoraApp {
         });
     }
 
+    /// Sliders for brightness and colour, with a Switch-like preset.
+    pub(super) fn color_grade_menu(&mut self, ui: &mut egui::Ui) {
+        use shocora_render::ColorGrade;
+        ui.label(tr("graphics.color")).on_hover_text(tr("graphics.color_hint"));
+        let mut grade = self.config.color_grade;
+        let sliders = [
+            (tr("graphics.brightness"), &mut grade.brightness, ColorGrade::BRIGHTNESS_RANGE),
+            (tr("graphics.contrast"), &mut grade.contrast, ColorGrade::CONTRAST_RANGE),
+            (tr("graphics.saturation"), &mut grade.saturation, ColorGrade::SATURATION_RANGE),
+            (tr("graphics.vibrance"), &mut grade.vibrance, ColorGrade::VIBRANCE_RANGE),
+            (tr("graphics.gamma"), &mut grade.gamma, ColorGrade::GAMMA_RANGE),
+        ];
+        let mut released = false;
+        for (key, value, range) in sliders {
+            let response = ui.add(egui::Slider::new(value, range).step_by(0.01).text(key));
+            released |= response.drag_stopped() || (response.changed() && !response.dragged());
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .button(tr("graphics.color_switch"))
+                .on_hover_text(tr("graphics.color_switch_hint"))
+                .clicked()
+            {
+                grade = ColorGrade::SWITCH_LIKE;
+                released = true;
+            }
+            if ui.button(tr("graphics.color_reset")).clicked() {
+                grade = ColorGrade::NEUTRAL;
+                released = true;
+            }
+        });
+        if grade != self.config.color_grade {
+            self.config.color_grade = grade;
+            self.presenter.set_color_grade(grade);
+        }
+        if released {
+            self.save_config();
+        }
+    }
+
     pub(super) fn set_frame_generation(&mut self, enabled: bool) {
         self.config.frame_generation = enabled;
         self.presenter.set_frame_generation(enabled);

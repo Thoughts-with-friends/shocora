@@ -1,7 +1,7 @@
 //! Front-end settings, stored as TOML.
 use std::path::{Path, PathBuf};
 
-use shocora_render::{GraphicsApi, UpscaleConfig};
+use shocora_render::{ColorGrade, GraphicsApi, UpscaleConfig};
 use wiiu_title::update::AddOnKind;
 
 use crate::input::{KeyBindings, PadBindings};
@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub pad_bindings: PadBindings,
     /// Screen post-processing.
     pub upscale: UpscaleConfig,
+    /// Brightness and colour of the shown screens.
+    pub color_grade: ColorGrade,
     /// Vertical blanks per flip, whatever the title asks for. `1` is 60 fps, and
     /// double speed in a title made for 30 whose logic counts frames.
     pub swap_interval: Option<u32>,
@@ -84,6 +86,7 @@ impl Default for AppConfig {
             key_bindings: KeyBindings::default(),
             pad_bindings: PadBindings::default(),
             upscale: UpscaleConfig::default(),
+            color_grade: ColorGrade::NEUTRAL,
             swap_interval: None,
             launcher_background: [231, 234, 237, 255],
             frame_generation: false,

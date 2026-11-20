@@ -21,6 +21,9 @@ pub const R_PPC_REL32: u8 = 26;
 pub const R_PPC_DTPMOD32: u8 = 68;
 /// `tls_index::offset`: the symbol's offset inside that block.
 pub const R_PPC_DTPREL32: u8 = 78;
+/// A load or store through `r13` (small data) or `r2` (small data 2): the immediate becomes
+/// the offset from that register's base (Cemu: "SDATA reloc"; Paper Mario: Color Splash).
+pub const R_PPC_EMB_SDA21: u8 = 109;
 pub const R_PPC_GHS_REL16_HA: u8 = 251;
 pub const R_PPC_GHS_REL16_HI: u8 = 252;
 pub const R_PPC_GHS_REL16_LO: u8 = 253;
@@ -80,6 +83,27 @@ impl Trampolines {
 const fn fits_rel24(delta: u32) -> bool {
     let delta = delta as i32;
     delta >= -0x0200_0000 && delta < 0x0200_0000
+}
+
+/// Applies [`R_PPC_EMB_SDA21`] at `place` with `value = S + A`: the instruction's base
+/// register picks the small data area the offset is taken from (`r0` means address zero).
+pub fn apply_sda21(
+    memory: &mut Memory,
+    place: u32,
+    value: u32,
+    sda_base: u32,
+    sda2_base: u32,
+) -> Result<(), LoadError> {
+    let insn = memory.read_u32(place)?;
+    let base = match (insn >> 16) & 0x1F {
+        13 => sda_base,
+        2 => sda2_base,
+        0 => 0,
+        _ => return Err(LoadError::UnsupportedRelocation(R_PPC_EMB_SDA21)),
+    };
+    let offset = value.wrapping_sub(base);
+    memory.write_u32(place, (insn & 0xFFFF_0000) | (offset & 0xFFFF))?;
+    Ok(())
 }
 
 /// Applies relocation `kind` at `place` with `value = S + A`.

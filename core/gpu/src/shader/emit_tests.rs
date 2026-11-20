@@ -54,3 +54,21 @@ fn position_only_vertex_shader_is_valid_wgsl() {
     assert!(shader.samplers.is_empty() && shader.textures.is_empty());
     validate(&shader.wgsl);
 }
+
+/// Intent: two loops one after another (Paper Mario: Color Splash) give valid WGSL.
+/// Both used to declare `loop_sp0` in the same scope, so the host rejected the shader and
+/// every draw with it was skipped.
+/// Pass: naga parses and validates a vertex shader of LOOP_START, LOOP_END twice.
+#[test]
+fn consecutive_loops_are_valid_wgsl() {
+    let textures = [TextureSignature::default(); TEXTURE_UNITS];
+    let loop_start = 0x06 << 23;
+    let loop_end = 0x05 << 23;
+    let mut program: Vec<u8> = [0, loop_start, 0, loop_end, 0, loop_start, 0, loop_end]
+        .iter()
+        .flat_map(|w: &u32| w.to_le_bytes())
+        .collect();
+    program.extend(export_gpr0(1, 60));
+    let shader = translate_vertex(&program, &[], &[], &textures, 0);
+    validate(&shader.wgsl);
+}

@@ -92,6 +92,14 @@ impl Device for Overlay {
         if let Some(contents) = self.files.get(path) {
             return Ok(Metadata { is_dir: false, size: contents.len() as u64 });
         }
+        // Without layers, only the replaced files and the root above them exist.
+        if self.layers.is_empty() && path.as_str() == "/" {
+            return Ok(Metadata { is_dir: true, size: 0 });
+        }
+        // Without layers, only the replaced files and the root above them exist.
+        if self.layers.is_empty() && path.as_str() == "/" {
+            return Ok(Metadata { is_dir: true, size: 0 });
+        }
         self.layer_with(path)?.metadata(path)
     }
 
@@ -119,7 +127,7 @@ impl Device for Overlay {
                 merged.extend(entries.into_iter().map(|e| (e.name.clone(), e)));
             }
         }
-        if !found {
+        if !found && !(self.layers.is_empty() && path.as_str() == "/") {
             return Err(FsError::NotFound(path.to_string()));
         }
         merged.extend(self.files_in(path).map(|e| (e.name.clone(), e)));

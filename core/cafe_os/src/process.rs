@@ -269,7 +269,9 @@ impl CafeOs {
         memory.write_u32(main + thread_offset::STACK_END, main_stack_top - main_stack_size)?;
         self.coreinit.main_thread = main;
         self.coreinit.threads.adopt_running(main, MAIN_THREAD_PRIORITY);
-        if let Some(record) = self.coreinit.threads.threads.get(&main) {
+        let main_name = self.default_thread_name(memory, 1)?;
+        if let Some(record) = self.coreinit.threads.threads.get_mut(&main) {
+            record.name = main_name;
             sync_guest(memory, main, record)?;
         }
 
@@ -287,6 +289,7 @@ impl CafeOs {
             let mut record = ThreadRecord::new(wiiu_cpu::CpuState::new(core), MAIN_THREAD_PRIORITY);
             record.state = ThreadState::Moribund;
             record.suspend_count = 0;
+            record.name = self.default_thread_name(memory, core)?;
             sync_guest(memory, thread, &record)?;
             self.coreinit.threads.threads.insert(thread, record);
             defaults[core as usize] = thread;
@@ -301,6 +304,15 @@ impl CafeOs {
         defaults[1] = main;
         self.coreinit.default_threads = defaults;
         Ok(())
+    }
+
+    /// Guest copy of a default thread's name. Titles read it unchecked
+    /// (Xenoblade Chronicles X copies the name of `OSGetDefaultThread(0)`).
+    fn default_thread_name(&mut self, memory: &mut Memory, core: u32) -> Result<u32, BootError> {
+        let name = format!("{{SYS Thread Default {core}}} ");
+        let address = self.registry.allocate_data(name.len() as u32, 4);
+        memory.write_bytes(address, name.as_bytes())?;
+        Ok(address)
     }
 }
 

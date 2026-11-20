@@ -432,8 +432,16 @@ impl Scheduler {
         self.threads
             .iter()
             .map(|(address, t)| {
+                let owner = match t.state {
+                    ThreadState::Waiting(Wait::Mutex(key)) => self
+                        .mutexes
+                        .get(&key)
+                        .map(|m| format!(" (owner {:#010x} x{})", m.owner, m.count))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
                 format!(
-                    "{address:#010x} core {} prio {} {:?} pc {:#010x} lr {:#010x}",
+                    "{address:#010x} core {} prio {} {:?}{owner} pc {:#010x} lr {:#010x}",
                     t.context.core_id(),
                     t.priority,
                     t.state,

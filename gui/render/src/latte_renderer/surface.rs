@@ -62,6 +62,33 @@ impl HostSurface {
             .clone()
     }
 
+    /// Whether the view [`Self::sample_view`] makes of `bound` covers what a pass attaches of
+    /// this surface: its first level, slice `slice`.
+    pub(super) fn sampled_covers(&self, bound: &BoundTexture, slice: u32) -> bool {
+        let base_level = bound.base_level.min(self.mip_count - 1);
+        if base_level != 0 {
+            return false;
+        }
+        if self.texture.dimension() == wgpu::TextureDimension::D3 {
+            return true;
+        }
+        let layers = self.texture.depth_or_array_layers();
+        let slice = slice.min(layers - 1);
+        let base_layer = bound.base_layer.min(layers - 1);
+        let sampled = match bound.dim {
+            TextureDim::D3 => 0..layers,
+            TextureDim::Cube => {
+                let base = base_layer.min(layers.saturating_sub(6));
+                base..base + 6
+            }
+            TextureDim::D2Array => {
+                base_layer..base_layer + bound.layer_count.min(layers - base_layer).max(1)
+            }
+            TextureDim::D2 => base_layer..base_layer + 1,
+        };
+        sampled.contains(&slice)
+    }
+
     pub(super) fn target_view(&mut self, level: u32, slice: u32) -> wgpu::TextureView {
         let texture = &self.texture;
         let slice = slice.min(texture.depth_or_array_layers() - 1);
@@ -130,8 +157,8 @@ impl LatteRenderer {
             });
             HostSurface {
                 texture,
-                views: HashMap::new(),
-                target_views: HashMap::new(),
+                views: HashMap::default(),
+                target_views: HashMap::default(),
                 mip_count: mip_count.clamp(1, max_levels),
                 id,
             }
@@ -182,6 +209,7 @@ impl LatteRenderer {
     }
 
     pub(super) fn upload(&mut self, upload: &TextureUpload) {
+        self.counters.uploads += 1;
         if self.upload_in_frame(upload) {
             return;
         }
@@ -334,6 +362,7 @@ impl LatteRenderer {
         depth: Option<wiiu_gpu::render::DepthClear>,
     ) {
         self.end_pass();
+        self.counters.passes += 1;
         let color_view = color.map(|(key, slice, _)| {
             self.target_surface(key, 1).target_view(0, slice.min(key.layers.saturating_sub(1)))
         });

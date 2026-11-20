@@ -88,7 +88,10 @@ struct Translator<'a> {
     writes_depth: bool,
     /// Params exported by a vertex shader.
     param_exports: BTreeSet<u32>,
-    loop_depth: u32,
+    /// Ids of the loops open at this point. Each loop has an id of its own, because two
+    /// loops one after another share a scope and cannot both declare `loop_sp0`.
+    open_loops: Vec<u32>,
+    loops_emitted: u32,
     uses_stack: bool,
     /// Writes stream-out buffers (`MEM_STREAM*_WRITE`).
     stream_out: bool,
@@ -109,7 +112,8 @@ impl<'a> Translator<'a> {
             color_exports: 0,
             writes_depth: false,
             param_exports: BTreeSet::new(),
-            loop_depth: 0,
+            open_loops: Vec::new(),
+            loops_emitted: 0,
             uses_stack: false,
             stream_out: false,
         }
@@ -872,7 +876,7 @@ impl<'a> Translator<'a> {
                             self.line("exec_on = !exec_on && stack[sp - 1];");
                         }
                         AluKind::Break => {
-                            if self.loop_depth > 0 {
+                            if !self.open_loops.is_empty() {
                                 self.line("if (!exec_on) { break; }");
                             }
                         }
@@ -881,26 +885,25 @@ impl<'a> Translator<'a> {
                 }
                 Cf::LoopStart => {
                     self.uses_stack = true;
-                    let depth = self.loop_depth;
-                    self.line(&format!("stack[sp] = exec_on; sp += 1; let loop_sp{depth} = sp; var loop_guard{depth} = 0u;"));
+                    let id = self.loops_emitted;
+                    self.loops_emitted += 1;
+                    self.line(&format!("stack[sp] = exec_on; sp += 1; let loop_sp{id} = sp; var loop_guard{id} = 0u;"));
                     self.line("loop {");
                     self.line(&format!(
-                        "loop_guard{depth} += 1u; if (loop_guard{depth} > 4096u) {{ break; }}"
+                        "loop_guard{id} += 1u; if (loop_guard{id} > 4096u) {{ break; }}"
                     ));
                     self.line("if (!exec_on) { break; }");
-                    self.loop_depth += 1;
+                    self.open_loops.push(id);
                 }
                 Cf::LoopEnd => {
-                    if self.loop_depth > 0 {
-                        self.loop_depth -= 1;
-                        let depth = self.loop_depth;
+                    if let Some(id) = self.open_loops.pop() {
                         self.line("if (!exec_on) { break; }");
                         self.line("}");
-                        self.line(&format!("sp = loop_sp{depth}; sp -= 1; exec_on = stack[sp];"));
+                        self.line(&format!("sp = loop_sp{id}; sp -= 1; exec_on = stack[sp];"));
                     }
                 }
                 Cf::LoopBreak => {
-                    if self.loop_depth > 0 {
+                    if !self.open_loops.is_empty() {
                         self.line("if (exec_on) { break; }");
                     }
                 }

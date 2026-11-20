@@ -5,11 +5,13 @@
 //! | `Wgpu`          | best available: Vulkan / DX12 / Metal / GL  |
 //! | `Vulkan`        | Vulkan only                                 |
 //! | `OpenGl`        | OpenGL only (wgpu's GL backend)             |
+pub mod color_grade;
 pub mod framegen;
 mod latte_renderer;
 pub mod stream;
 pub mod upscale;
 
+pub use color_grade::{ColorGrade, ColorGradeSetting};
 pub use egui_wgpu::wgpu;
 pub use framegen::FrameGenSetting;
 pub use latte_renderer::{

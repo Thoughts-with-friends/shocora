@@ -133,6 +133,8 @@ impl ShocoraApp {
         ui.separator();
         self.upscale_menu(ui);
         ui.separator();
+        self.color_grade_menu(ui);
+        ui.separator();
         self.frame_rate_menu(ui);
         ui.separator();
         let mut generate = self.config.frame_generation;

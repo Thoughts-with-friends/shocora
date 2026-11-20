@@ -27,6 +27,7 @@ impl LatteRenderer {
         target_slice: u32,
     ) {
         self.end_pass();
+        self.counters.copies += 1;
         if !self.surfaces.contains_key(&source) {
             return;
         }

@@ -390,7 +390,7 @@ fn submit_copy(
 }
 
 #[hle_export(lib = "gx2", name = "GX2CopySurface")]
-fn gx2_copy_surface(
+pub(super) fn gx2_copy_surface(
     ctx: &mut HleContext<'_>,
     src: u32,
     src_mip: u32,

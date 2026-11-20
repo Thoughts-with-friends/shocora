@@ -13,6 +13,7 @@ version.workspace = true
 
 [dependencies]
 egui-wgpu = "0.37"
+foldhash = "0.2"
 log = { workspace = true }
 pollster = "0.4"
 serde = { workspace = true }

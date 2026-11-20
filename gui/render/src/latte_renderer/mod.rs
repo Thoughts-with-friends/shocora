@@ -12,8 +12,7 @@
 )]
 
 use std::{
-    collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     sync::{
@@ -48,6 +47,7 @@ mod convert;
 mod copy;
 mod device;
 mod draw;
+mod finish;
 mod pipeline;
 mod pipelines;
 mod present;
@@ -58,13 +58,32 @@ mod thread;
 pub use convert::*;
 pub use device::*;
 use draw::*;
+use finish::*;
 pub use pipeline::*;
 use present::*;
 pub use screens::*;
 use surface::*;
 pub use thread::*;
+/// The renderer's maps: their keys are hashed for every draw, which SipHash made a tenth of
+/// the render thread's time.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+type HashSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
+
+/// A hash for keys that only live as long as the process.
+fn fast_hash(value: &impl Hash) -> u64 {
+    fast_hasher().hash_one(value)
+}
+
+fn fast_hasher() -> foldhash::fast::FixedState {
+    foldhash::fast::FixedState::with_seed(0x0053_484f_434f_5241)
+}
+
 /// Size the shader prelude reads through the dynamic binding.
 const PARAMS_BINDING_SIZE: u64 = wiiu_gpu::latte::PARAMS_SIZE as u64;
+
+/// Draws in a part of a frame finished on its own (see [`finish`]): Cemu submits every few
+/// hundred draws too.
+const PART_DRAWS: u32 = 400;
 
 /// Staging space for texture uploads recorded into the frame's commands.
 const UPLOAD_RING_SIZE: u64 = 32 << 20;
@@ -72,8 +91,9 @@ const UPLOAD_RING_SIZE: u64 = 32 << 20;
 /// Address of the surfaces standing in for attachments of the wrong size.
 const STAND_IN_ADDRESS: u32 = 0xFFFF_F000;
 
-/// `(color attachments, depth attachment)` of the open render pass.
-type PassKey = ([Option<(SurfaceKey, u32)>; 8], Option<(SurfaceKey, u32)>);
+/// `(color attachments, depth attachment, depth attachment read-only)` of the open render
+/// pass.
+type PassKey = ([Option<(SurfaceKey, u32)>; 8], Option<(SurfaceKey, u32)>, bool);
 
 /// The wgpu renderer.
 pub struct LatteRenderer {
@@ -117,21 +137,31 @@ pub struct LatteRenderer {
     /// Readbacks submitted, waiting for the GPU.
     readbacks_in_flight: Vec<readback::PendingReadback>,
     encoder: Option<wgpu::CommandEncoder>,
+    /// Draws recorded into `encoder`: past [`PART_DRAWS`], the next pass starts a new part.
+    part_draws: u32,
+    /// Finishes and submits the parts of frames, see [`finish`].
+    finisher: Finisher,
+    /// Readbacks in parts handed over, by part: they are mapped once it is submitted.
+    readbacks_submitting: Vec<(u64, readback::PendingReadback)>,
+    /// Screen images drawn by the commands being recorded, and by parts handed over: they
+    /// are shown once their commands are submitted.
+    shows_recorded: Vec<(Screen, ScreenImage)>,
+    shows_submitting: Vec<(u64, Screen, ScreenImage)>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: Option<PassKey>,
     /// What the open pass has set, so equal state is not set again.
     bound: BoundState,
     blit_pipeline: wgpu::RenderPipeline,
-    /// The blit for scan buffers of an sRGB format: encodes the colour on the way.
-    blit_srgb_pipeline: wgpu::RenderPipeline,
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
+    /// Scan buffer presentation with the user's colour adjustments.
+    present_grade: present::PresentGrade,
     /// Layout and per-target pipelines of depth to color copies, made on first use.
     depth_to_color: Option<(wgpu::BindGroupLayout, wgpu::PipelineLayout, wgpu::ShaderModule)>,
     depth_to_color_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     /// Scan buffer copies of this frame: surface, slice, sRGB scan buffer.
     pending_scan: HashMap<Screen, (SurfaceKey, u32, bool)>,
-    screen_targets: HashMap<Screen, ScreenImage>,
+    screen_targets: std::collections::HashMap<Screen, ScreenImage>,
     screens: ScreenImages,
     generation: u64,
     upscaler: Upscaler,
@@ -143,18 +173,21 @@ pub struct LatteRenderer {
     /// Tells whoever chooses the resolution when video memory ran out.
     memory_watch: MemoryWatch,
     /// Textures the title brought along: these never grow, whatever their size.
-    uploaded: std::collections::HashSet<SurfaceKey>,
+    uploaded: HashSet<SurfaceKey>,
     /// Surfaces the GPU drew to, whose contents only the host has.
     drawn_to: HashSet<SurfaceKey>,
     /// How often the arena started over, for tools.
     arena_wraps: u64,
     /// Screens with a new image since the last flip.
     presented: Vec<Screen>,
-    logged: std::collections::HashSet<String>,
+    logged: HashSet<String>,
     /// Debugging aid: only the first draws of each frame execute (SHOCORA_MAX_DRAWS).
     max_draws: Option<u32>,
     frame_draws: u32,
     target_log: HashMap<SurfaceKey, u32>,
+    /// What frames cost the host, reported with `SHOCORA_PROFILE`.
+    counters: Counters,
+    profile: bool,
     pub draws_executed: u64,
     pub flips: u64,
 }
@@ -293,13 +326,13 @@ impl LatteRenderer {
             })
         };
         let blit_pipeline = blit_with("fs_main");
-        let blit_srgb_pipeline = blit_with("fs_srgb");
 
         let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let present_grade = present::PresentGrade::new(&device);
         let stream = StreamOutput::new(&device);
 
         let (pipeline_jobs, finished_pipelines) = spawn_pipeline_threads();
@@ -312,37 +345,42 @@ impl LatteRenderer {
             upload_ring,
             upload_cursor: 0,
             arena_pending: (0, Vec::new()),
-            surfaces: HashMap::new(),
+            surfaces: HashMap::default(),
             next_surface_id: 1,
             modules: Arc::default(),
             pipeline_cache: None,
-            pipelines: HashMap::new(),
-            compiling: HashSet::new(),
+            pipelines: HashMap::default(),
+            compiling: HashSet::default(),
             pipeline_jobs,
             finished_pipelines,
             pipeline_epoch: 0,
             pipeline_setting: PipelineSetting::default(),
-            resource_layouts: HashMap::new(),
-            pipeline_layouts: HashMap::new(),
+            resource_layouts: HashMap::default(),
+            pipeline_layouts: HashMap::default(),
             stream,
-            samplers: HashMap::new(),
-            bind_groups: HashMap::new(),
-            dummy_textures: HashMap::new(),
-            feedback_copies: HashMap::new(),
+            samplers: HashMap::default(),
+            bind_groups: HashMap::default(),
+            dummy_textures: HashMap::default(),
+            feedback_copies: HashMap::default(),
             readbacks_recorded: Vec::new(),
             readbacks_in_flight: Vec::new(),
             encoder: None,
+            part_draws: 0,
+            finisher: Finisher::new(),
+            readbacks_submitting: Vec::new(),
+            shows_recorded: Vec::new(),
+            shows_submitting: Vec::new(),
             pass: None,
             pass_key: None,
             bound: BoundState::default(),
             blit_pipeline,
-            blit_srgb_pipeline,
             blit_layout,
             blit_sampler,
+            present_grade,
             depth_to_color: None,
-            depth_to_color_pipelines: HashMap::new(),
-            pending_scan: HashMap::new(),
-            screen_targets: HashMap::new(),
+            depth_to_color_pipelines: HashMap::default(),
+            pending_scan: HashMap::default(),
+            screen_targets: std::collections::HashMap::new(),
             screens: ScreenImages::default(),
             generation: 0,
             upscaler: Upscaler::default(),
@@ -350,14 +388,16 @@ impl LatteRenderer {
             streamers: Screen::ALL.map(Streamer::new),
             resolution: ResolutionScale::default(),
             memory_watch: MemoryWatch::default(),
-            uploaded: std::collections::HashSet::new(),
-            drawn_to: HashSet::new(),
+            uploaded: HashSet::default(),
+            drawn_to: HashSet::default(),
             arena_wraps: 0,
             presented: Vec::new(),
-            logged: std::collections::HashSet::new(),
+            logged: HashSet::default(),
             max_draws: std::env::var("SHOCORA_MAX_DRAWS").ok().and_then(|v| v.parse().ok()),
             frame_draws: 0,
-            target_log: HashMap::new(),
+            target_log: HashMap::default(),
+            counters: Counters::default(),
+            profile: std::env::var_os("SHOCORA_PROFILE").is_some(),
             draws_executed: 0,
             flips: 0,
         }
@@ -399,6 +439,12 @@ impl LatteRenderer {
     #[inline]
     pub fn upscale_setting(&self) -> UpscaleSetting {
         self.upscaler.setting()
+    }
+
+    /// Handle to change the colour adjustments of the screens while the renderer runs.
+    #[inline]
+    pub fn color_grade_setting(&self) -> crate::ColorGradeSetting {
+        self.present_grade.setting.clone()
     }
 
     #[inline]
@@ -461,15 +507,103 @@ impl LatteRenderer {
         self.bound = BoundState::default();
     }
 
-    /// Submits everything recorded so far.
-    pub fn submit(&mut self) {
+    /// Hands what is recorded so far to the finishing threads as a part of its own, which is
+    /// submitted once they are done with it.
+    fn cut(&mut self) {
         self.end_pass();
         self.flush_arena();
         if let Some(encoder) = self.encoder.take() {
-            self.queue.submit([encoder.finish()]);
+            self.counters.submits += 1;
+            self.part_draws = 0;
+            self.finisher.hand_over(&self.queue, encoder);
+            let part = self.finisher.handed_over();
+            self.readbacks_submitting
+                .extend(self.readbacks_recorded.drain(..).map(|readback| (part, readback)));
+            self.shows_submitting
+                .extend(self.shows_recorded.drain(..).map(|(screen, image)| (part, screen, image)));
         }
+        self.after_submits();
+    }
+
+    /// Submits everything recorded so far.
+    pub fn submit(&mut self) {
+        self.cut();
+        self.finisher.wait_all(&self.queue);
+        self.after_submits();
         // The queue's writes of the next commands come after these in the queue's order.
         self.upload_cursor = 0;
+    }
+
+    /// Submits the parts finished meanwhile, without waiting for the others.
+    pub(super) fn submit_finished(&mut self) {
+        self.finisher.submit_ready(&self.queue);
+        self.after_submits();
+    }
+
+    /// Submits every part handed over, as there is nothing else to do: what a frame drew
+    /// must not wait for the next frame's commands to reach the screen.
+    pub fn settle(&mut self) {
+        self.finisher.wait_all(&self.queue);
+        self.after_submits();
+        if self.encoder.is_none() {
+            // Every upload recorded so far is submitted: the ring can start over.
+            self.upload_cursor = 0;
+        }
+    }
+
+    /// What waits for its part to be submitted: readbacks can be mapped and screen images
+    /// shown once their commands are in the queue.
+    fn after_submits(&mut self) {
+        let submitted = self.finisher.submitted();
+        if self.readbacks_submitting.iter().any(|(part, _)| *part <= submitted) {
+            let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.readbacks_submitting)
+                .into_iter()
+                .partition(|(part, _)| *part <= submitted);
+            self.readbacks_submitting = waiting;
+            self.map_readbacks(ready.into_iter().map(|(_, readback)| readback));
+        }
+        if self.shows_submitting.iter().any(|(part, ..)| *part <= submitted) {
+            let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.shows_submitting)
+                .into_iter()
+                .partition(|(part, ..)| *part <= submitted);
+            self.shows_submitting = waiting;
+            for (_, screen, image) in ready {
+                self.screens.set(screen, image);
+            }
+        }
+    }
+}
+
+/// Host work since the last report, for finding where frames lose their time.
+#[derive(Debug, Default)]
+struct Counters {
+    flips: u64,
+    passes: u64,
+    submits: u64,
+    uploads: u64,
+    copies: u64,
+    bind_groups_made: u64,
+    /// Textures sampled while attached: depth without and with depth or stencil writes, color
+    /// in the attached slice and level, and color elsewhere in the surface.
+    feedback: [u64; 4],
+}
+
+impl Counters {
+    /// Flips between reports.
+    const EVERY: u64 = 300;
+
+    fn report(&mut self) {
+        let flips = self.flips.max(1) as f64;
+        println!(
+            "renderer per flip: {:.0} passes, {:.1} submits, {:.1} uploads, {:.1} surface copies, {:.1} bind groups made, feedback {:?}",
+            self.passes as f64 / flips,
+            self.submits as f64 / flips,
+            self.uploads as f64 / flips,
+            self.copies as f64 / flips,
+            self.bind_groups_made as f64 / flips,
+            self.feedback.map(|count| (count as f64 / flips).round() as u64),
+        );
+        *self = Self::default();
     }
 }
 

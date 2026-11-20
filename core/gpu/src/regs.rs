@@ -18,6 +18,7 @@ pub mod config {
     pub const SQ_CONFIG: u32 = 0x2300;
     pub const TD_PS_SAMPLER0_BORDER_RED: u32 = 0x2900;
     pub const TD_VS_SAMPLER0_BORDER_RED: u32 = 0x2980;
+    pub const TD_GS_SAMPLER0_BORDER_RED: u32 = 0x2A00;
 }
 
 /// Registers in the context space.

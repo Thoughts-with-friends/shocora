@@ -9,7 +9,9 @@ pub mod command;
 pub(crate) mod display;
 pub mod draw;
 mod interrupt;
+pub mod misc;
 pub mod render_target;
+pub mod resource;
 mod setup;
 pub mod shader;
 pub mod state;
@@ -55,6 +57,9 @@ pub struct Gx2State {
     pub drc_enabled: bool,
     /// `(alloc, free)` callbacks set by `GX2RSetAllocator`.
     pub gx2r_allocator: (u32, u32),
+    /// `(alloc, free)` set by `GX2SetDefaultAllocator`; 0 uses the default heap.
+    #[serde(default)]
+    pub default_allocator: (u32, u32),
     pub flip_requests: u32,
     pub flips_executed: u32,
     pub swap_interval: u32,
@@ -84,6 +89,17 @@ pub struct Gx2State {
     pub tv_srgb: bool,
     #[serde(default)]
     pub drc_srgb: bool,
+    /// `1 - gamma` of `GX2SetTVGamma` / `GX2SetDRCGamma` (not applied to output).
+    #[serde(default)]
+    pub tv_gamma: f32,
+    #[serde(default)]
+    pub drc_gamma: f32,
+    /// Image of `GX2GetLastFrame`, allocated on first use.
+    #[serde(default)]
+    pub last_frame: u32,
+    /// GX2R creations waiting for the title's allocator, by thread.
+    #[serde(default)]
+    pub gx2r_pending: std::collections::BTreeMap<u32, Vec<resource::PendingCreate>>,
 }
 
 impl Default for Gx2State {
@@ -97,6 +113,7 @@ impl Default for Gx2State {
             tv_enabled: false,
             drc_enabled: false,
             gx2r_allocator: (0, 0),
+            default_allocator: (0, 0),
             flip_requests: 0,
             flips_executed: 0,
             swap_interval: 1,
@@ -112,6 +129,10 @@ impl Default for Gx2State {
             pending_interrupts: Vec::new(),
             tv_srgb: false,
             drc_srgb: false,
+            tv_gamma: 0.0,
+            drc_gamma: 0.0,
+            last_frame: 0,
+            gx2r_pending: std::collections::BTreeMap::new(),
         }
     }
 }

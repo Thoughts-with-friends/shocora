@@ -720,6 +720,29 @@ fn ax_get_voice_offsets(ctx: &mut HleContext<'_>, voice: u32, out: u32) -> Resul
     Ok(())
 }
 
+/// Whether the loop, end and current offsets of an `AXPBOFFSET` lie in the same 512 MiB
+/// window of physical memory as each other: the DSP keeps only the low 29 bits of its sample
+/// pointers. Titles stream sounds in pieces until this holds (Paper Mario: Color Splash
+/// waited for it forever while it was missing). As Cemu does.
+#[hle_export(lib = "sndcore2", name = "AXCheckVoiceOffsets")]
+fn ax_check_voice_offsets(ctx: &mut HleContext<'_>, offsets: u32) -> Result<bool, HleError> {
+    let format = ctx.memory.read_u16(offsets)?;
+    let word = |at: u32| ctx.memory.read_u32(offsets + at);
+    let (loop_offset, end_offset, current_offset) = (word(4)?, word(8)?, word(12)?);
+    let samples = word(16)?;
+    let base = wiiu_mem_addr::effective_to_physical(samples).unwrap_or(samples);
+    let window = |offset: u32| -> u32 {
+        let bytes = match format {
+            0x19 => offset,                 // PCM8
+            0x0A => offset.wrapping_mul(2), // PCM16
+            _ => offset / 2,                // ADPCM: nibbles
+        };
+        base.wrapping_add(bytes) >> 29
+    };
+    let current = window(current_offset);
+    Ok(window(loop_offset) == current && window(end_offset) == current)
+}
+
 /// Offset units in `bytes` of sample data: nibbles for ADPCM, samples for PCM.
 fn units_in(format: SampleFormat, bytes: u32) -> u32 {
     match format {
@@ -1043,6 +1066,7 @@ pub const EXPORTS: &[HleExport] = &[
     AX_SET_VOICE_OFFSETS,
     AX_SET_VOICE_OFFSETS_EX,
     AX_GET_VOICE_OFFSETS,
+    AX_CHECK_VOICE_OFFSETS,
     AX_GET_VOICE_CURRENT_OFFSET_EX,
     AX_GET_VOICE_LOOP_COUNT,
     AX_SET_VOICE_LOOP,

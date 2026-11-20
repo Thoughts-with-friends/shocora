@@ -98,7 +98,7 @@ impl crate::CafeOs {
     /// flip is shown once the swap interval has passed: a title swapping faster
     /// fills the queue and blocks in `GX2SwapScanBuffers`, which is what paces it.
     pub fn vsync(&mut self) {
-        let now = self.timebase.ticks_since_epoch();
+        let now = self.timebase.ticks_since_boot();
         self.gx2.vsync_count += 1;
         self.gx2.last_vsync_time = now;
         notify_event(self, event::VSYNC);
@@ -122,7 +122,7 @@ fn gx2_flush(ctx: &mut HleContext<'_>) -> Result<(), HleError> {
 }
 
 #[hle_export(lib = "gx2", name = "GX2DrawDone")]
-fn gx2_draw_done(ctx: &mut HleContext<'_>) -> Result<bool, HleError> {
+pub(super) fn gx2_draw_done(ctx: &mut HleContext<'_>) -> Result<bool, HleError> {
     flush(ctx)?;
     wait_for_gpu(ctx, ctx.gpu.submitted_timestamp());
     Ok(true)
@@ -329,7 +329,10 @@ fn gx2_begin_display_list_ex(ctx: &mut HleContext<'_>, address: u32, size: u32, 
 
 /// Copies the recorded words into the guest buffer and returns their size.
 #[hle_export(lib = "gx2", name = "GX2EndDisplayList")]
-fn gx2_end_display_list(ctx: &mut HleContext<'_>, _address: u32) -> Result<u32, HleError> {
+pub(super) fn gx2_end_display_list(
+    ctx: &mut HleContext<'_>,
+    _address: u32,
+) -> Result<u32, HleError> {
     let Some(list) = ctx.os.gx2.end_display_list() else {
         log::warn!("GX2EndDisplayList without a matching begin");
         return Ok(0);
@@ -373,7 +376,7 @@ fn gx2_call_display_list(ctx: &mut HleContext<'_>, address: u32, size: u32) {
 
 /// Bypasses the write gatherer: earlier commands must reach the GPU first.
 #[hle_export(lib = "gx2", name = "GX2DirectCallDisplayList")]
-fn gx2_direct_call_display_list(
+pub(super) fn gx2_direct_call_display_list(
     ctx: &mut HleContext<'_>,
     address: u32,
     size: u32,

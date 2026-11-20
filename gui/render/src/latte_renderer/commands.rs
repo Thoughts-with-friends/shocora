@@ -69,6 +69,7 @@ impl RenderBackend for LatteRenderer {
         }
         let deadline = self.pipeline_setting.background().then(|| Instant::now() + PIPELINE_WAIT);
         self.wait_for_pipelines(deadline);
+        self.submit_finished();
         self.finish_readbacks();
         for command in commands {
             match command {

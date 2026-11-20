@@ -1,6 +1,8 @@
 //! PM4 type-3 opcodes.
 
 pub const NOP: u8 = 0x10;
+/// `[query physical address, flags]`: conditional rendering (not applied; draws run).
+pub const SET_PREDICATION: u8 = 0x20;
 pub const DRAW_INDEX_2: u8 = 0x27;
 pub const CONTEXT_CONTROL: u8 = 0x28;
 pub const INDEX_TYPE: u8 = 0x2A;
@@ -10,6 +12,8 @@ pub const DRAW_INDEX_IMMD: u8 = 0x2E;
 pub const NUM_INSTANCES: u8 = 0x2F;
 pub const INDIRECT_BUFFER: u8 = 0x32;
 pub const STRMOUT_BUFFER_UPDATE: u8 = 0x34;
+/// `[physical address, control]`: GPU semaphore wait/signal (the GPU never waits here).
+pub const MEM_SEMAPHORE: u8 = 0x39;
 pub const WAIT_REG_MEM: u8 = 0x3C;
 pub const MEM_WRITE: u8 = 0x3D;
 pub const SURFACE_SYNC: u8 = 0x43;
@@ -48,6 +52,11 @@ pub const HLE_COPY_SURFACE: u8 = 0xE4;
 /// `[slot (0..=7 color, 8 depth), surface]`: the bound render target.
 pub const HLE_SET_TARGET: u8 = 0xE5;
 
+/// `[GX2Query address]`: an occlusion query starts (Cemu's `IT_HLE_BEGIN_OCCLUSION_QUERY`).
+pub const HLE_BEGIN_OCCLUSION_QUERY: u8 = 0xFA;
+/// `[GX2Query address]`: an occlusion query ends; the result is written to the query.
+pub const HLE_END_OCCLUSION_QUERY: u8 = 0xFB;
+
 /// `flags` of [`HLE_CLEAR`].
 pub mod clear {
     pub const COLOR: u32 = 1;
@@ -82,6 +91,8 @@ mod tests {
             HLE_CONTEXT_STATE,
             HLE_COPY_SURFACE,
             HLE_SET_TARGET,
+            HLE_BEGIN_OCCLUSION_QUERY,
+            HLE_END_OCCLUSION_QUERY,
         ];
         let hardware =
             [NOP, DRAW_INDEX_2, SET_CONTEXT_REG, SET_ALU_CONST, SET_CTL_CONST, EVENT_WRITE_EOP];

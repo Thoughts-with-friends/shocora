@@ -61,6 +61,58 @@ type ExecResult = Result<StepEvent, Fault>;
 /// with `pc` at the faulting instruction.
 pub fn step<B: Bus>(state: &mut CpuState, bus: &mut B) -> Result<StepEvent, CpuError> {
     let pc = state.pc;
+    // TEMP debug: SHOCORA_TRACE_PC="addr,addr" prints registers at those addresses.
+    {
+        static TRACED: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+        let traced = TRACED.get_or_init(|| {
+            std::env::var("SHOCORA_TRACE_PC")
+                .map(|list| {
+                    list.split(',')
+                        .filter_map(|a| {
+                            u32::from_str_radix(a.trim().trim_start_matches("0x"), 16).ok()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        if traced.contains(&pc) {
+            let r = &state.gpr;
+            let mut chain = String::new();
+            let mut frame = bus.read_u32(r[1]).unwrap_or(0);
+            for _ in 0..12 {
+                if frame == 0 {
+                    break;
+                }
+                let caller = bus.read_u32(frame.wrapping_add(4)).unwrap_or(0);
+                chain.push_str(&format!(" < {caller:#010x}"));
+                frame = bus.read_u32(frame).unwrap_or(0);
+            }
+            eprintln!("TRACE chain{chain}");
+            eprintln!(
+                "TRACE pc {pc:#010x} lr {:#010x} r3 {:#x} r4 {:#x} r5 {:#x} r6 {:#x} r29 {:#x} r30 {:#x} r31 {:#x}",
+                state.lr, r[3], r[4], r[5], r[6], r[29], r[30], r[31]
+            );
+        }
+    }
+    // TEMP debug: SHOCORA_WATCH="addr" prints every change of the word at addr.
+    static WATCH: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    static WATCH_LAST: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let watch = *WATCH.get_or_init(|| {
+        std::env::var("SHOCORA_WATCH")
+            .ok()
+            .and_then(|a| u32::from_str_radix(a.trim().trim_start_matches("0x"), 16).ok())
+    });
+    if let Some(address) = watch
+        && let Ok(now) = bus.read_u32(address)
+    {
+        let last = WATCH_LAST.swap(now, std::sync::atomic::Ordering::Relaxed);
+        if last != now {
+            eprintln!(
+                "WATCH {address:#010x}: {last:#010x} -> {now:#010x} before pc {pc:#010x} lr {:#010x} (outside or previous instr)",
+                state.lr
+            );
+        }
+    }
     let raw = bus.fetch(pc).map_err(|e| CpuError::Bus { pc, address: e.address })?;
     let instr = Instr(raw);
     let op = decode(raw);

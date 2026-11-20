@@ -116,6 +116,7 @@ impl ShocoraApp {
             .as_ref()
             .map_or_else(String::new, |state| state.adapter.get_info().name);
         presenter.set_upscale(config.upscale);
+        presenter.set_color_grade(config.color_grade);
         let ctx = cc.egui_ctx.clone();
 
         crate::fonts::setup_custom_fonts(&ctx, None::<std::path::PathBuf>);

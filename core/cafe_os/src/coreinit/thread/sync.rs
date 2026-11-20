@@ -85,29 +85,62 @@ fn reset_lock(ctx: &mut HleContext<'_>, key: u32) {
     ctx.os.coreinit.threads.mutexes.remove(&key);
 }
 
-#[hle_export(lib = "coreinit", name = "OSInitMutex")]
-fn os_init_mutex(ctx: &mut HleContext<'_>, mutex: u32) {
+/// `OSMutex` fields titles read themselves.
+mod mutex_field {
+    pub const MAGIC: u32 = 0x00;
+    pub const USER_DATA: u32 = 0x04;
+    pub const OWNER: u32 = 0x1C;
+    pub const LOCK_COUNT: u32 = 0x20;
+}
+const MUTEX_MAGIC: u32 = 0x6D55_7458; // "mUtX"
+
+/// Writes the owner and lock count of an `OSMutex` to guest memory, as coreinit keeps them
+/// there: titles check `lockCount` before unlocking (Xenoblade Chronicles X skipped the
+/// unlock of a mutex that read as free and deadlocked a worker).
+fn sync_guest_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> Result<(), HleError> {
+    let (owner, count) =
+        ctx.os.coreinit.threads.mutexes.get(&mutex).map_or((0, 0), |state| {
+            if state.count == 0 { (0, 0) } else { (state.owner, state.count) }
+        });
+    ctx.memory.write_u32(mutex + mutex_field::OWNER, owner)?;
+    ctx.memory.write_u32(mutex + mutex_field::LOCK_COUNT, count)?;
+    Ok(())
+}
+
+fn init_guest_mutex(ctx: &mut HleContext<'_>, mutex: u32, user_data: u32) -> Result<(), HleError> {
     reset_lock(ctx, mutex);
+    ctx.memory.write_u32(mutex + mutex_field::MAGIC, MUTEX_MAGIC)?;
+    ctx.memory.write_u32(mutex + mutex_field::USER_DATA, user_data)?;
+    sync_guest_mutex(ctx, mutex)
+}
+
+#[hle_export(lib = "coreinit", name = "OSInitMutex")]
+fn os_init_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> Result<(), HleError> {
+    init_guest_mutex(ctx, mutex, 0)
 }
 
 #[hle_export(lib = "coreinit", name = "OSInitMutexEx")]
-fn os_init_mutex_ex(ctx: &mut HleContext<'_>, mutex: u32, _name: u32) {
-    reset_lock(ctx, mutex);
+fn os_init_mutex_ex(ctx: &mut HleContext<'_>, mutex: u32, name: u32) -> Result<(), HleError> {
+    init_guest_mutex(ctx, mutex, name)
 }
 
 #[hle_export(lib = "coreinit", name = "OSLockMutex")]
-fn os_lock_mutex(ctx: &mut HleContext<'_>, mutex: u32) {
+fn os_lock_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> Result<(), HleError> {
     lock(ctx, mutex);
+    sync_guest_mutex(ctx, mutex)
 }
 
 #[hle_export(lib = "coreinit", name = "OSTryLockMutex")]
-fn os_try_lock_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> bool {
-    try_lock(ctx, mutex) == Lock::Acquired
+fn os_try_lock_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> Result<bool, HleError> {
+    let acquired = try_lock(ctx, mutex) == Lock::Acquired;
+    sync_guest_mutex(ctx, mutex)?;
+    Ok(acquired)
 }
 
 #[hle_export(lib = "coreinit", name = "OSUnlockMutex")]
-fn os_unlock_mutex(ctx: &mut HleContext<'_>, mutex: u32) {
+fn os_unlock_mutex(ctx: &mut HleContext<'_>, mutex: u32) -> Result<(), HleError> {
     unlock(ctx, mutex);
+    sync_guest_mutex(ctx, mutex)
 }
 
 #[hle_export(lib = "coreinit", name = "OSFastMutex_Init")]
@@ -233,8 +266,9 @@ fn os_init_cond(_ctx: &mut HleContext<'_>, _cond: u32) {}
 fn os_init_cond_ex(_ctx: &mut HleContext<'_>, _cond: u32, _name: u32) {}
 
 #[hle_export(lib = "coreinit", name = "OSWaitCond")]
-fn os_wait_cond(ctx: &mut HleContext<'_>, cond: u32, mutex: u32) {
+fn os_wait_cond(ctx: &mut HleContext<'_>, cond: u32, mutex: u32) -> Result<(), HleError> {
     wait_cond(ctx, cond, mutex);
+    sync_guest_mutex(ctx, mutex)
 }
 
 #[hle_export(lib = "coreinit", name = "OSSignalCond")]

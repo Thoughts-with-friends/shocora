@@ -21,7 +21,19 @@ impl RenderThread {
             std::sync::mpsc::sync_channel::<Vec<RenderCommand>>(RENDER_QUEUE_LENGTH);
         let thread =
             std::thread::Builder::new().name("shocora-render".into()).spawn(move || {
-                while let Ok(commands) = receiver.recv() {
+                loop {
+                    let commands = match receiver.try_recv() {
+                        Ok(commands) => commands,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            // Nothing new: the frame's last parts go to the GPU now.
+                            renderer.settle();
+                            match receiver.recv() {
+                                Ok(commands) => commands,
+                                Err(_) => break,
+                            }
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    };
                     renderer.execute(&commands);
                 }
             })?;

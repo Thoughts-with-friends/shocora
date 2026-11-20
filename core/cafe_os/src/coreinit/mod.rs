@@ -1,7 +1,9 @@
 //! `coreinit.rpl`: the core of Cafe OS.
 pub mod alarm;
+pub mod atomic;
 pub mod cache;
 pub mod core;
+pub mod coroutine;
 pub mod dynload;
 pub mod exit;
 pub mod fs;
@@ -52,6 +54,8 @@ pub struct CoreinitState {
     pub unit_heaps: mem::unit_api::UnitHeaps,
     /// Function table of `MEMInitAllocatorForDefaultHeap` (0 until first call).
     pub default_allocator_functions: u32,
+    /// Function table of `MEMInitAllocatorForExpHeap` (0 until first call).
+    pub exp_allocator_functions: u32,
     /// Slot returned by `__ghs_flock_ptr` (0 until first call).
     pub ghs_flock: u32,
     pub errno: u32,
@@ -93,6 +97,14 @@ pub const EXPORTS: &[HleExport] = &[
     mp::MP_RUN_TASKS_FROM_TASK_Q,
     mp::MP_RUN_TASK,
     mp::MP_TASK_RETURN,
+    mem::block_api::MEM_INIT_BLOCK_HEAP,
+    mem::block_api::MEM_DESTROY_BLOCK_HEAP,
+    mem::block_api::MEM_ADD_BLOCK_HEAP_TRACKING,
+    mem::block_api::MEM_GET_TRACKING_LEFT_IN_BLOCK_HEAP,
+    mem::block_api::MEM_ALLOC_FROM_BLOCK_HEAP_EX,
+    mem::block_api::MEM_FREE_TO_BLOCK_HEAP,
+    mem::block_api::MEM_GET_ALLOCATABLE_SIZE_FOR_BLOCK_HEAP_EX,
+    mem::block_api::MEM_GET_TOTAL_FREE_SIZE_FOR_BLOCK_HEAP,
     mem::unit_api::MEM_CREATE_UNIT_HEAP_EX,
     mem::unit_api::MEM_DESTROY_UNIT_HEAP,
     mem::unit_api::MEM_ALLOC_FROM_UNIT_HEAP,
@@ -102,6 +114,11 @@ pub const EXPORTS: &[HleExport] = &[
     mem::unit_api::ALLOCATOR_DEFAULT_ALLOC,
     mem::unit_api::ALLOCATOR_DEFAULT_FREE,
     mem::unit_api::MEM_INIT_ALLOCATOR_FOR_DEFAULT_HEAP,
+    mem::unit_api::ALLOCATOR_EXP_ALLOC,
+    mem::unit_api::ALLOCATOR_EXP_FREE,
+    mem::unit_api::MEM_INIT_ALLOCATOR_FOR_EXP_HEAP,
+    mem::unit_api::MEM_ALLOC_FROM_ALLOCATOR,
+    mem::unit_api::MEM_FREE_TO_ALLOCATOR,
     system::OS_ENABLE_INTERRUPTS,
     system::OS_IS_ADDRESS_RANGE_DC_VALID,
     system::OS_GET_CURRENT_CONTEXT,
@@ -235,6 +252,21 @@ pub const EXPORTS: &[HleExport] = &[
     memory::OS_DISABLE_OVERLAY_ARENA,
     memory::OS_GET_OVERLAY_ARENA_RANGE,
     memory::OS_IS_ADDRESS_VALID,
+    coroutine::OS_INIT_COROUTINE,
+    coroutine::OS_SWITCH_COROUTINE,
+    coroutine::SWITCH_COROUTINE_RESUME,
+    atomic::OS_SWAP_ATOMIC,
+    atomic::OS_ADD_ATOMIC,
+    atomic::OS_COMPARE_AND_SWAP_ATOMIC,
+    atomic::OS_COMPARE_AND_SWAP_ATOMIC_EX,
+    atomic::OS_GET_ATOMIC64,
+    atomic::OS_SET_ATOMIC64,
+    atomic::OS_SWAP_ATOMIC64,
+    atomic::OS_ADD_ATOMIC64,
+    atomic::OS_AND_ATOMIC64,
+    atomic::OS_OR_ATOMIC64,
+    atomic::OS_COMPARE_AND_SWAP_ATOMIC64,
+    atomic::OS_COMPARE_AND_SWAP_ATOMIC_EX64,
     misc::OS_BLOCK_THREADS_ON_EXIT,
     misc::OS_ENABLE_HOME_BUTTON_MENU,
     misc::OS_IS_HOME_BUTTON_MENU_ENABLED,

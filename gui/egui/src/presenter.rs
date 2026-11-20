@@ -22,6 +22,7 @@ pub struct Presenter {
     render_thread: RenderThread,
     screens: ScreenImages,
     upscale: UpscaleSetting,
+    color_grade: shocora_render::ColorGradeSetting,
     frame_gen: FrameGenSetting,
     pipelines: PipelineSetting,
     /// Where a second player's pictures come from: the TV's, then the GamePad's.
@@ -48,6 +49,7 @@ impl Presenter {
         renderer.use_pipeline_cache(Path::new(PIPELINE_CACHE_DIR), &info);
 
         let upscale = renderer.upscale_setting();
+        let color_grade = renderer.color_grade_setting();
         let frame_gen = renderer.frame_gen_setting();
         let pipelines = renderer.pipeline_setting();
         let stream = Screen::ALL.map(|screen| renderer.stream_tap(screen));
@@ -57,6 +59,7 @@ impl Presenter {
         Ok(Self {
             screens: render_thread.screens(),
             upscale,
+            color_grade,
             frame_gen,
             pipelines,
             stream,
@@ -71,6 +74,11 @@ impl Presenter {
     /// Applies from the next flip on.
     pub fn set_upscale(&self, config: UpscaleConfig) {
         self.upscale.set(config);
+    }
+
+    /// Applies from the next flip on.
+    pub fn set_color_grade(&self, grade: shocora_render::ColorGrade) {
+        self.color_grade.set(grade);
     }
 
     /// Applies from the next flip on.

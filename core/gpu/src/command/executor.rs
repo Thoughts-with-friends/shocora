@@ -159,7 +159,15 @@ impl CommandProcessor {
             | opcode::CONTEXT_CONTROL
             | opcode::SURFACE_SYNC
             | opcode::EVENT_WRITE
-            | opcode::WAIT_REG_MEM => {}
+            | opcode::WAIT_REG_MEM
+            | opcode::MEM_SEMAPHORE
+            | opcode::SET_PREDICATION
+            | opcode::HLE_BEGIN_OCCLUSION_QUERY => {}
+            opcode::HLE_END_OCCLUSION_QUERY => {
+                if let Some(query) = body.first() {
+                    end_occlusion_query(ctx.memory, *query)?;
+                }
+            }
             opcode::SET_CONFIG_REG => self.set_registers(base::CONFIG, body),
             opcode::SET_CONTEXT_REG => self.set_registers(base::CONTEXT, body),
             opcode::SET_ALU_CONST => self.set_registers(base::ALU_CONST, body),
@@ -323,6 +331,20 @@ impl CommandProcessor {
         }
         Ok(())
     }
+}
+
+/// Samples an occlusion query reports as passed: the host renderer does not count
+/// samples, so every query reports its objects as visible (Cemu's Xenoblade X value).
+pub const OCCLUSION_PASSED_SAMPLES: u64 = 0x10_0000;
+
+/// Writes the result of a `GX2Query` (eight little-endian u64 counters, begin/end pairs
+/// per render backend, then the CPU-query ready marker at word 8).
+fn end_occlusion_query(memory: &mut Memory, query: u32) -> Result<(), GpuError> {
+    let mut bytes = [0_u8; 0x28];
+    bytes[8..16].copy_from_slice(&OCCLUSION_PASSED_SAMPLES.to_le_bytes());
+    bytes[0x20..0x24].copy_from_slice(&1_u32.to_le_bytes());
+    memory.write_bytes(query, &bytes)?;
+    Ok(())
 }
 
 #[cfg(test)]

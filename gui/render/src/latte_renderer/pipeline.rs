@@ -5,9 +5,7 @@ use super::*;
 pub(super) type PipelineKey = (u64, u64, u64);
 
 pub(super) fn pipeline_key(draw: &DrawCommand) -> PipelineKey {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    draw.state.hash(&mut hasher);
-    (draw.vertex.id, draw.pixel.id, hasher.finish())
+    (draw.vertex.id, draw.pixel.id, fast_hash(&draw.state))
 }
 
 /// The resources both shaders of a draw use, in binding order.

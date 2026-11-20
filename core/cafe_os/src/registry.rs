@@ -343,6 +343,11 @@ impl HleRegistry {
             .is_some_and(|seen| !std::mem::replace(seen, true))
     }
 
+    /// `(library, name)` of every implemented function export.
+    pub fn function_names(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.functions.keys().map(|(library, name)| (library.as_str(), name.as_str()))
+    }
+
     /// Entry index of an implemented export.
     #[inline]
     pub fn function_index(&self, library: &str, name: &str) -> Option<u32> {

@@ -182,7 +182,12 @@ impl Upscaler {
     /// `true` while the UI should see the upscaled image of `screen`, not the native one.
     #[inline]
     pub fn shows(&self, screen: Screen) -> bool {
-        self.setting.factor() > 1 && self.images.contains_key(&screen)
+        self.active() && self.images.contains_key(&screen)
+    }
+
+    /// Whether [`Self::update`] has work, and needs the flip's commands submitted first.
+    pub(crate) fn active(&self) -> bool {
+        self.setting.factor() > 1
     }
 
     /// Upscales the new images. Call after a flip's work was submitted; `presented`
