@@ -7,7 +7,7 @@
 //!  HLE:  [ call stubs | OSThread of main thread, data imports ...        ]
 //! ```
 use wiiu_hle_macros::hle_export;
-use wiiu_mem_addr::{FOREGROUND, FOREGROUND_FREE_SIZE, LOADER, MEM1, MEM2, TEXT};
+use wiiu_mem_addr::{CODE, FOREGROUND, FOREGROUND_FREE_SIZE, LOADER, MEM1, MEM2};
 use wiiu_memory::{Memory, MemoryError};
 use wiiu_rpl::{LinearAllocator, LoadError, LoadedModule, RplFile, SegmentKind};
 
@@ -121,7 +121,7 @@ impl CafeOs {
         rpx: &[u8],
     ) -> Result<BootInfo, BootError> {
         let file = RplFile::parse(rpx)?;
-        let mut allocator = LinearAllocator::new(TEXT, MEM2, LOADER);
+        let mut allocator = LinearAllocator::new(CODE, MEM2, LOADER);
         let module = wiiu_rpl::load(&file, name, memory, &mut allocator, &mut self.registry)?;
         log::info!("loaded {name}: entry {:#010x}, segments {:x?}", module.entry, module.segments);
         if let Some(&text) = module.segments.get(&SegmentKind::Text) {

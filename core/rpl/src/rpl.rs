@@ -5,7 +5,8 @@ use crate::{
     LoadError,
     elf::{
         ET_RPL, ElfHeader, ReadBe, SECTION_HEADER_SIZE, SHF_RPL_ZLIB, SHT_NOBITS, SHT_RPL_EXPORTS,
-        SHT_RPL_FILEINFO, SHT_RPL_IMPORTS, SHT_SYMTAB, SYMBOL_SIZE, SectionHeader, Symbol, name_at,
+        SHT_RPL_FILEINFO, SHT_RPL_IMPORTS, SHT_STRTAB, SHT_SYMTAB, SYMBOL_SIZE, SectionHeader,
+        Symbol, name_at,
     },
 };
 
@@ -156,6 +157,55 @@ impl RplFile {
         Ok(Self { header, sections, file_info })
     }
 
+    /// Cemu's `patchCRC` (`RPLLoader_BeginCemuhookCRC`): a CRC-32 over the header indices
+    /// and every section's header fields and inflated contents, in host byte order. Graphic
+    /// pack patches name the modules they fit by it.
+    pub fn patch_crc(&self) -> u32 {
+        let names = i32::from(self.header.section_names_index);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let index_of = |pred: &dyn Fn(usize, &Section) -> bool| {
+            self.sections
+                .iter()
+                .enumerate()
+                .find(|(i, s)| pred(*i, s))
+                .map_or(-1, |(i, _)| i as i32)
+        };
+        // The last symbol table, as Cemu keeps overwriting the index.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let symtab = self
+            .sections
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, s)| s.header.kind == SHT_SYMTAB)
+            .map_or(-1, |(i, _)| i as i32);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let strtab = index_of(&|i, s| s.header.kind == SHT_STRTAB && i as i32 != names);
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&[0x7F, b'R', b'P', b'X']);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        hasher.update(&(self.sections.len() as i32).to_le_bytes());
+        hasher.update(&symtab.to_le_bytes());
+        hasher.update(&strtab.to_le_bytes());
+        hasher.update(&names.to_le_bytes());
+        for section in &self.sections {
+            let h = &section.header;
+            #[allow(clippy::cast_possible_truncation)]
+            let raw_size = if h.kind == SHT_NOBITS || h.flags & SHF_RPL_ZLIB == 0 {
+                h.size
+            } else {
+                section.data.len() as u32
+            };
+            for field in [h.name, h.kind, h.flags, h.address, raw_size, h.align] {
+                hasher.update(&field.to_le_bytes());
+            }
+            if h.kind != SHT_NOBITS {
+                hasher.update(&section.data);
+            }
+        }
+        hasher.finalize()
+    }
+
     /// Every entry of the `.fexports` and `.dexports` tables.
     ///
     /// # Errors
@@ -287,5 +337,20 @@ mod rom_tests {
         report("imported libraries", libraries.join(", "));
         report("imported functions / data", format!("{functions} / {}", imports.len() - functions));
         report("exports", file.exports().unwrap().len());
+    }
+}
+
+#[cfg(test)]
+mod patch_crc_tests {
+    /// Intent: the checksum matches Cemu's for a real title, which graphic packs name in
+    /// `moduleMatches` (run with `SHOCORA_RPX` set to an `.rpx`).
+    /// Pass: prints the checksum to compare with the packs' lists.
+    #[test]
+    #[ignore = "needs a title"]
+    fn prints_patch_crc() {
+        let Some(path) = std::env::var_os("SHOCORA_RPX") else { return };
+        let bytes = std::fs::read(path).unwrap();
+        let file = super::RplFile::parse(&bytes).unwrap();
+        eprintln!("patch crc {:#010X}", file.patch_crc());
     }
 }

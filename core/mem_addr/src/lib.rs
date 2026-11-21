@@ -61,6 +61,13 @@ impl Region {
 /// Executable code of the main RPX and every loaded RPL.
 pub const TEXT: Region = Region::new("TEXT", 0x0100_0000, 0x0D00_0000);
 
+/// Code caves of graphic pack patches (Cemu's `MEMORY_CODECAVEAREA`), inside [`TEXT`].
+pub const CODE_CAVE: Region = Region::new("CODE_CAVE", 0x0180_0000, 0x0040_0000);
+
+/// Where modules are loaded, inside [`TEXT`]: from 0x02000000 as on the console and in
+/// Cemu. Graphic pack patches write to and branch to these addresses directly.
+pub const CODE: Region = Region::new("CODE", 0x0200_0000, 0x0C00_0000);
+
 /// Emulator-owned area: HLE call stubs and data exported by HLE libraries.
 pub const HLE: Region = Region::new("HLE", 0x0E00_0000, 0x0200_0000);
 

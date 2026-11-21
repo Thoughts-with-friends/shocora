@@ -139,6 +139,12 @@ impl<'a> Expr<'a> {
         self.constants.get(name).copied()
     }
 
+    /// Every constant, by name.
+    #[inline]
+    pub const fn constants(&self) -> &HashMap<String, f64> {
+        &self.constants
+    }
+
     pub fn set_constant_fallback(&mut self, f: impl Fn(&str) -> Option<f64> + 'a) {
         self.constant_fallback = Some(Box::new(f));
     }

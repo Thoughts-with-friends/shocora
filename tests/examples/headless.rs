@@ -438,6 +438,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         graphic_packs: graphic_packs_from_env(),
         ..Config::default()
     };
+    // `SHOCORA_UPDATE_DIRS="D:\Updates;..."`: update folders besides the default ones, as
+    // the GUI's `update_dirs`.
+    let mut config = config;
+    if let Ok(dirs) = std::env::var("SHOCORA_UPDATE_DIRS") {
+        config.update_dirs.extend(dirs.split(';').filter(|d| !d.is_empty()).map(PathBuf::from));
+    }
 
     let mut emu = Emulator::new(config)?;
 
@@ -523,6 +529,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ubo_arena = std::collections::HashMap::new();
     let mut ubo_log = String::new();
     let memory_watch = renderer.as_ref().map(LatteRenderer::memory_watch);
+
     let mut resolution_factor = emu.config.resolution_factor;
     let second_player = std::sync::Arc::new(std::sync::Mutex::new(None));
     let net_status = std::sync::Arc::new(std::sync::Mutex::new(shocora_netplay::HostStatus {

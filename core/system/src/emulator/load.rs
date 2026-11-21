@@ -40,7 +40,7 @@ impl Emulator {
             .map_or_else(|| "main.rpx".into(), |n| n.to_string_lossy().into_owned());
 
         // The title's RPX is loaded into memory and the main thread is started.
-        self.boot(&name, &rpx, Iosu::new(vfs))?;
+        self.boot(&name, &rpx, Iosu::new(vfs), &packs, &mut notices)?;
         self.gpu.set_texture_rules(
             packs.iter().flat_map(|pack| pack.rules.texture_rules.iter().cloned()).collect(),
         );
@@ -131,7 +131,7 @@ impl Emulator {
     /// # Errors
     /// Fails if the RPX does not load.
     pub fn load_rpx(&mut self, name: &str, rpx: &[u8]) -> Result<(), EmuError> {
-        self.boot(name, rpx, Iosu::default())?;
+        self.boot(name, rpx, Iosu::default(), &[], &mut Vec::new())?;
         self.title = None;
         self.boot_source = Some(BootSource::Rpx(name.to_owned(), rpx.to_vec()));
         Ok(())
@@ -147,11 +147,7 @@ impl Emulator {
         );
         for pack in &packs {
             notices.push(format!("graphic pack: {}", pack.name));
-            // Code patches need Cemu's PowerPC assembler, and replaced shaders are GLSL
-            // written for Cemu's shader translation: neither applies here.
-            if !pack.rules.patch_files.is_empty() {
-                notices.push(format!("graphic pack {}: code patches not supported", pack.name));
-            }
+            // Replaced shaders are GLSL written for Cemu's shader translation.
             if !pack.rules.shaders.is_empty() {
                 notices
                     .push(format!("graphic pack {}: shader replacement not supported", pack.name));
@@ -161,7 +157,8 @@ impl Emulator {
     }
 
     /// Uses the graphic pack folder and choices `packs`. While a title runs, the packs'
-    /// replaced files (mods) take effect at once; their GPU rules wait for the next boot.
+    /// replaced files and code patches (mods) take effect at once; their GPU rules wait
+    /// for the next boot.
     ///
     /// # Errors
     /// Fails if the volumes cannot be mounted again.
@@ -183,6 +180,7 @@ impl Emulator {
         for (point, device) in mounts {
             self.iosu.vfs_mut().mount(&point, device)?;
         }
+        self.apply_patches(&applied, &mut notices, false);
         self.os.console.extend(notices);
         Ok(())
     }
@@ -259,7 +257,14 @@ impl Emulator {
     }
 
     /// Resets the machine and starts `rpx` on the main core.
-    fn boot(&mut self, name: &str, rpx: &[u8], iosu: Iosu) -> Result<(), EmuError> {
+    fn boot(
+        &mut self,
+        name: &str,
+        rpx: &[u8],
+        iosu: Iosu,
+        packs: &[AppliedPack],
+        notices: &mut Vec<String>,
+    ) -> Result<(), EmuError> {
         let gamepad = self.os.gamepad;
         let pro_controllers = self.os.pro_controllers;
 
@@ -288,6 +293,8 @@ impl Emulator {
         self.multi_core_running = false;
 
         let boot = self.os.boot(&mut self.memory, name, rpx)?;
+        self.patches = super::patches::PatchState::for_module(&boot.module);
+        self.apply_patches(packs, notices, true);
         start_main_thread(&mut self.cores[MAIN_CORE], &boot);
 
         self.gpu.blank_screens();

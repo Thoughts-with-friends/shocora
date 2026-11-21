@@ -61,6 +61,10 @@ pub struct LoadedModule {
     pub exports: HashMap<String, u32>,
     /// The module's thread-local storage, if it has any.
     pub tls: Option<TlsImage>,
+    /// Cemu's `patchCRC`: what graphic pack patches name the module by.
+    pub patch_crc: u32,
+    /// Every placed section: link-time address, size and address in memory.
+    pub sections: Vec<(u32, u32, u32)>,
 }
 
 /// TLS index of the main executable. System RPLs are HLE and have no TLS, so
@@ -274,6 +278,11 @@ pub fn load(
         .iter()
         .map(|(kind, p)| (*kind, (p.base, p.original_end - p.original_start)))
         .collect();
+    let sections = file
+        .sections
+        .iter()
+        .filter_map(|s| section_address(s).map(|at| (s.header.address, s.memory_size(), at)))
+        .collect();
 
     Ok(LoadedModule {
         name: name.to_owned(),
@@ -285,6 +294,8 @@ pub fn load(
         segments,
         exports,
         tls: tls.map(|(_, image)| image),
+        patch_crc: file.patch_crc(),
+        sections,
     })
 }
 

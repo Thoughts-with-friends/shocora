@@ -1,11 +1,11 @@
 //! Which packs are enabled with which presets (Cemu's `graphic_pack_entries`), and the
 //! packs that apply to a title at its boot.
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
-use crate::{ActiveRules, GraphicPack, ReplacedVolume, rules::load_all};
+use crate::{ActiveRules, GraphicPack, ReplacedVolume, patch::PatchGroup, rules::load_all};
 
 /// Saved choice for one pack.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -67,6 +67,12 @@ pub struct AppliedPack {
     pub dir: PathBuf,
     pub fs_priority: i32,
     pub rules: ActiveRules,
+    /// The pack's code patches, read from its patch files.
+    pub patches: Vec<PatchGroup>,
+    /// Why the patch files could not be read; none of them apply then.
+    pub patch_error: Option<String>,
+    /// The selected presets' variables (`$name`), which patches may use.
+    pub constants: HashMap<String, f64>,
 }
 
 impl AppliedPack {
@@ -88,12 +94,25 @@ pub fn active_for_title(root: &Path, settings: &PackSettings, title_id: u64) -> 
         .into_iter()
         .filter(|pack| pack.enabled && pack.contains_title_id(title_id))
         .filter_map(|pack| match pack.activate() {
-            Ok(rules) => Some(AppliedPack {
-                name: pack.display_name().to_owned(),
-                dir: pack.dir().to_owned(),
-                fs_priority: pack.fs_priority,
-                rules,
-            }),
+            Ok(rules) => {
+                let (patches, patch_error) = if rules.patch_files.is_empty() {
+                    (Vec::new(), None)
+                } else {
+                    match crate::patch::load(pack.dir()) {
+                        Ok(groups) => (groups, None),
+                        Err(error) => (Vec::new(), Some(error)),
+                    }
+                };
+                Some(AppliedPack {
+                    name: pack.display_name().to_owned(),
+                    dir: pack.dir().to_owned(),
+                    fs_priority: pack.fs_priority,
+                    rules,
+                    patches,
+                    patch_error,
+                    constants: pack.expr().constants().clone(),
+                })
+            }
             Err(error) => {
                 log::warn!("graphic pack {} not applied: {error}", pack.display_name());
                 None

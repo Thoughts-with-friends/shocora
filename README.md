@@ -38,29 +38,22 @@ cargo xtask icon   # gui/egui/assets/shocora.svg -> shocora.png, shocora.ico
 ## Features & Configuration Guide
 
 ### 🎨 Graphics & Display
-
-- **Graphics Backends**:
-  - `wgpu` (default): Automatically selects the best backend (DX12 / Metal / Vulkan / GL).
-  - `vulkan`: Forces wgpu's Vulkan backend.
-  - `opengl`: Uses native OpenGL through `glow`.
-- **3D Resolution**: Scalable from **2x to 8x** (up to 10,240 pixels wide).
-  - *Examples*: 8x at 720p, 5x at 1080p.
-  - *Note*: Significantly increases VRAM usage.
-- **Screen Upscaling**: Runs xBRZ on the GPU at **2x to 6x**.
-  - Included under the default `xbrz` feature of `shocora_render` (GPL-3.0 licensed).
-- **Frame Rate Control**:
-  - **Force 60 fps**: Overrides the title's native swap interval.
-    - *Warning*: Titles logic-bound to 30 fps (e.g., *Twilight Princess HD*) will run up to double speed.
-  - **Default**: Preserves the target frame rate requested by the title.
-  - **Max 30 fps**: Caps titles that run excessively fast while leaving slower ones untouched.
+* **Graphics Backends**:
+  * `wgpu` (default): Automatically selects the best API (DX12 / Metal / Vulkan / GL).
+  * `vulkan` / `opengl`: Forces the specified API.
+* **3D Resolution**: Scalable from **2x to 8x** (up to 10,240px wide). Higher multipliers significantly increase VRAM usage.
+* **Screen Upscaling**: GPU-accelerated xBRZ scaling from **2x to 6x**.
+* **Frame Rate Control**:
+  * **Default**: Preserves the title's native target frame rate.
+  * **Force 60 fps**: Overrides to 60 fps (*Note: 30 fps logic-bound games will run up to double speed*).
+  * **Max 30 fps**: Caps games that run excessively fast at 30 fps.
 
 ---
 
 ### 🎮 Controls & Input
 
 #### Default Keybindings
-
-| Action / Button     | Keyboard Key                 |
+| Button              | Key                          |
 | :------------------ | :--------------------------- |
 | **A / B / X / Y**   | `X` / `Z` / `S` / `A`        |
 | **L / R / ZL / ZR** | `Q` / `W` / `1` / `2`        |
@@ -69,48 +62,34 @@ cargo xtask icon   # gui/egui/assets/shocora.svg -> shocora.png, shocora.ico
 | **Left Stick**      | `I` `J` `K` `L`              |
 
 #### Controller & Hotkeys
-
-- **Gamepad Support**: Powered by [gilrs](https://gitlab.com/gilrs-project/gilrs) with plug-and-play functionality.
-  - Mapped by physical button position (`East` corresponds to the Wii U's **A** button).
-  - Custom mappings can be configured under `[pad_bindings]` in `shocora.toml`.
-- **Game Speed Toggle**: Cycle through speeds (`1x` → `2x` → `3x` → `4x` → `0.5x`) using `Tab`, pressing the Left Stick, or clicking the speed indicator on the status bar.
-  - Audio pitch dynamically scales with speed (tape-style playback).
-  - *Note*: Pressing the Left Stick to change speed prevents the input from reaching the game.
+* **Gamepad**: Plug-and-play support mapped by physical button position (Right face button = Wii U's A). Customize under `[pad_bindings]` in `shocora.toml`.
+* **Game Speed Toggle**: Cycle speeds (`1x` → `2x` → `3x` → `4x` → `0.5x`) via `Tab`, pressing the Left Stick, or clicking the status bar speed indicator.
+  * *Note: Using Left Stick press for speed toggle blocks that input from reaching the game.*
 
 ---
 
 ### 📂 Setup & File Structure
-
-- **Configuration File**: Settings are saved in `shocora.toml` within the working directory.
-- **ROM Directory Management**: Listed under `rom_dirs` in `shocora.toml`. An old `roms.json` is read once when `rom_dirs` is empty.
-  - Supports extracted titles (`<name>/code`, `content`, `meta`) and `.rpx` files.
-  - Detected games appear in the **Games** panel; double-click to boot.
-- **Updates**: An installed update is read from Wii U system storage laid out like Cemu's `mlc01` (`usr/title/0005000e/<id>/`). Set `mlc_dir` in `shocora.toml`; Cemu's own `mlc01` is searched after it.
-  - `skip_update_check = true` (default) lets titles that refuse to start without an update (e.g. *Breath of the Wild* 0.9.0) start anyway.
-- **Shader Cache**: Compiled GPU shaders are saved in `shader_cache/` to minimize stuttering on subsequent runs.
-- **Localization**: Change languages in **Settings > General**.
-  - English is built into the executable and is the default and fallback. Every other language is read at run time from `lang/translation.<code>.json` in the `lang` folder next to the executable (or, failing that, in the working directory), so texts can be edited without rebuilding. A `lang/translation.eng.json` there overrides the built-in English.
-  - **Adding a language**: copy `lang/translation.eng.json` to `lang/translation.<code>.json` (e.g. `translation.fra.json`), translate the values keeping the keys (an LLM can do it), and set `"language.name"` to the language's own name. It appears in **Settings > General**; missing texts show in English.
+* **Configuration File**: Automatically saved to `shocora.toml`.
+* **Game Directories**: Specify folders under `rom_dirs` in `shocora.toml`. Supports extracted titles (`code`/`content`/`meta`) and `.rpx` files. Double-click a title in the list to boot.
+* **Game Updates**: Set `mlc_dir` in `shocora.toml` to a Cemu-style `mlc01` directory. `skip_update_check = true` (default) allows launching titles without required updates.
+* **Shader Cache**: Saved automatically in `shader_cache/` to reduce stuttering on subsequent runs.
+* **Language**: Change in **Settings > General**. Edit or add `lang/translation.<code>.json` to customize translations.
 
 ---
 
 ### 🌐 Local Network Netplay
+Allows 2-player sessions over LAN or VPN (e.g., Radmin VPN).
 
-Allows a second player to join via local network or a VPN such as Radmin VPN.
-
-- **Host Setup**: Hosts on port `47800` at `127.0.0.1` by default, which only this PC can join. To play with another PC, enter this PC's address on the network the guest is on (e.g., `192.168.1.10`, or its VPN address).
-  - Access is limited to this PC and guests within that address's network. The network's size comes from the adapter; `10.1.2.3/16` overrides it.
-  - With such an address the port listens on all of the PC's addresses. Guests on other PCs need inbound TCP `47800` allowed through the firewall.
-  - The addresses entered are saved to `shocora.toml`, which is git-ignored.
-  - **Give player 2 the rights of player 1** lets the guest play on the GamePad while your own input does not reach the game. The rights end when the guest leaves.
-  - Password protection is optional.
-- **Guest Experience**: Connect to the host's IP (`127.0.0.1` on the same PC, the default) to play as a **Pro Controller**. The picture starts once the host runs a title.
-  - **Video**: TV at 640 × 360 and 20 fps, GamePad on its right at 427 × 240 and 10 fps.
-  - **GamePad**: The mouse touches its screen. **Send buttons to the GamePad** moves the controller from the Pro Controller to the GamePad.
-  - **Status Bar**: Shows the host's FPS, title and so on, updated once per second.
-  - **Audio**: 16 kHz stream.
-- **Connection Handling**: Ping checks occur once per second. If no response is received for 3 seconds, the connection closes and the guest continuously attempts reconnection.
-- **Security Warning**: While passwords are not sent in plain text, network traffic is **unencrypted**. Only use Netplay on trusted networks.
+* **Host Setup (Player 1)**:
+  * **Port**: Uses **TCP `47800`** (must be allowed through the firewall for external PCs).
+  * **IP Address**: Enter your local or VPN IP (default `127.0.0.1` is local PC only). Optional password protection is supported.
+  * **Give player 2 the rights of player 1**: Transfers GamePad control to the guest while disabling host inputs.
+* **Guest Experience (Player 2)**:
+  * Connects to the host's IP as a **Pro Controller** (mouse clicks act as GamePad touch inputs).
+  * **Send buttons to the GamePad**: Switches guest controller inputs from Pro Controller to GamePad.
+* **Connection & Security**:
+  * Drops connection after 3 seconds of no response and automatically attempts to reconnect.
+  * ⚠️ **Traffic is unencrypted. Only use Netplay on trusted networks (LAN or trusted VPNs).**
 
 ---
 

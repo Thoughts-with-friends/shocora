@@ -8,6 +8,7 @@
 pub mod expr;
 pub mod ini;
 pub mod pack;
+pub mod patch;
 pub mod rules;
 pub mod settings;
 

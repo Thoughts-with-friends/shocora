@@ -5328,6 +5328,7 @@ dependencies = [
 name = "wiiu_rpl"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "flate2",
  "log",
  "serde",

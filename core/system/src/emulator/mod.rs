@@ -3,6 +3,7 @@ mod bus;
 pub mod emu_config;
 mod load;
 mod multi;
+mod patches;
 mod runner;
 pub mod state;
 
@@ -99,6 +100,8 @@ pub struct Emulator {
     /// Where time slices ran out, when profiling: a guest spinning on something
     /// shows up as one address taking many.
     slice_ends: std::collections::HashMap<u32, u64>,
+    /// Graphic pack code patches in the running title.
+    patches: patches::PatchState,
 }
 
 impl std::fmt::Debug for Emulator {
@@ -154,6 +157,7 @@ impl Emulator {
             next_vsync: None,
             multi_core_running: false,
             slice_ends: std::collections::HashMap::new(),
+            patches: patches::PatchState::default(),
         })
     }
 
