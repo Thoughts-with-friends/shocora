@@ -11,6 +11,10 @@ pub mod spr {
     pub const TBL_READ: u32 = 268;
     pub const TBU_READ: u32 = 269;
     pub const PVR: u32 = 287;
+    /// User-mode aliases of the GQRs (`UGQR0..=7`), what titles running in user mode
+    /// write: the same registers as `GQR0..=7`.
+    pub const UGQR0: u32 = 896;
+    pub const UGQR7: u32 = 903;
     pub const GQR0: u32 = 912;
     pub const GQR7: u32 = 919;
     pub const HID2: u32 = 920;

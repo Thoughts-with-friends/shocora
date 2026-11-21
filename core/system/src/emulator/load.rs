@@ -5,6 +5,7 @@ use wiiu_cafe_os::{BootInfo, CafeOs, aoc::AocTitle};
 use wiiu_cpu::CpuState;
 use wiiu_fs::{HostDirectory, Overlay, Vfs};
 use wiiu_gpu::Gpu;
+use wiiu_graphic_pack::{AppliedPack, ReplacedVolume};
 use wiiu_iosu::Iosu;
 use wiiu_memory::Memory;
 use wiiu_title::{
@@ -22,14 +23,15 @@ impl Emulator {
     /// Fails if the path is not a bootable title or the RPX does not load.
     pub fn load_title(&mut self, path: &Path) -> Result<(), EmuError> {
         let mut info = TitleSource::open(path)?;
-        let notices = self.apply_update(&mut info)?;
+        let mut notices = self.apply_update(&mut info)?;
+        let packs = self.graphic_packs(info.meta.title_id, &mut notices);
 
         // The RPX is the title's entry point, and the volumes are its file system.
         let rpx = std::fs::read(&info.rpx_path)
             .map_err(|source| EmuError::Io { path: info.rpx_path.clone(), source })?;
 
         // The volumes are mounted read-only, except for `/vol/save` which is writable.
-        let vfs = self.mount_volumes(&info)?;
+        let vfs = self.mount_volumes(&info, &packs)?;
 
         // The RPX is the title's entry point, and the volumes are its file system.
         let name = info
@@ -39,6 +41,9 @@ impl Emulator {
 
         // The title's RPX is loaded into memory and the main thread is started.
         self.boot(&name, &rpx, Iosu::new(vfs))?;
+        self.gpu.set_texture_rules(
+            packs.iter().flat_map(|pack| pack.rules.texture_rules.iter().cloned()).collect(),
+        );
         self.os.title_id = info.meta.title_id.unwrap_or(0);
         self.os.aoc = info
             .dlc
@@ -132,38 +137,68 @@ impl Emulator {
         Ok(())
     }
 
-    fn mount_volumes(&self, info: &TitleInfo) -> Result<Vfs, EmuError> {
-        // An installed update's files lie over the title's.
-        let volume = |base: &Path, name: &str| {
-            let update = info.update_dir.as_ref().map(|dir| dir.join(name)).filter(|d| d.is_dir());
-            update
-                .into_iter()
-                .fold(Overlay::new(), |overlay, dir| overlay.layer(HostDirectory::read_only(dir)))
-                .layer(HostDirectory::read_only(base))
-        };
-
-        let mut vfs = Vfs::new();
-        vfs.mount("/vol/code", volume(&info.code_dir, "code"))?;
-
-        if let Some(content) = &info.content_dir {
-            let mut content = volume(content, "content");
-            let gate = info.meta.title_id.and_then(update::version_gate);
-            if let Some(gate) =
-                gate.filter(|_| info.update_dir.is_none() && self.config.skip_update_check)
-            {
-                log::info!("no update installed: skipping the title's update check");
-                content = content.file(gate.file, gate.contents)?;
+    /// The enabled graphic packs made for `title_id`, each named in `notices`.
+    fn graphic_packs(&self, title_id: Option<u64>, notices: &mut Vec<String>) -> Vec<AppliedPack> {
+        let Some(title_id) = title_id else { return Vec::new() };
+        let packs = wiiu_graphic_pack::active_for_title(
+            &self.config.graphic_pack_dir,
+            &self.config.graphic_packs,
+            title_id,
+        );
+        for pack in &packs {
+            notices.push(format!("graphic pack: {}", pack.name));
+            // Code patches need Cemu's PowerPC assembler, and replaced shaders are GLSL
+            // written for Cemu's shader translation: neither applies here.
+            if !pack.rules.patch_files.is_empty() {
+                notices.push(format!("graphic pack {}: code patches not supported", pack.name));
             }
-            vfs.mount("/vol/content", content)?;
+            if !pack.rules.shaders.is_empty() {
+                notices
+                    .push(format!("graphic pack {}: shader replacement not supported", pack.name));
+            }
         }
+        packs
+    }
+
+    /// Uses the graphic pack folder and choices `packs`. While a title runs, the packs'
+    /// replaced files (mods) take effect at once; their GPU rules wait for the next boot.
+    ///
+    /// # Errors
+    /// Fails if the volumes cannot be mounted again.
+    pub fn set_graphic_packs(
+        &mut self,
+        dir: std::path::PathBuf,
+        packs: wiiu_graphic_pack::PackSettings,
+    ) -> Result<(), EmuError> {
+        self.config.graphic_pack_dir = dir;
+        self.config.graphic_packs = packs;
+        let Some(info) = &self.title else { return Ok(()) };
+        let mut notices = Vec::new();
+        let applied = self.graphic_packs(info.meta.title_id, &mut notices);
+        let mut mounts = Vec::new();
+        self.mount_replaceable(info, &applied, &mut |point, device| {
+            mounts.push((point.to_owned(), device));
+            Ok(())
+        })?;
+        for (point, device) in mounts {
+            self.iosu.vfs_mut().mount(&point, device)?;
+        }
+        self.os.console.extend(notices);
+        Ok(())
+    }
+
+    fn mount_volumes(&self, info: &TitleInfo, packs: &[AppliedPack]) -> Result<Vfs, EmuError> {
+        let mut vfs = Vfs::new();
+        self.mount_replaceable(info, packs, &mut |point, device| vfs.mount(point, device))?;
 
         if let Some(meta) = &info.meta_dir {
-            vfs.mount("/vol/meta", volume(meta, "meta"))?;
-        }
-
-        if let Some(dlc) = &info.dlc {
-            let aoc = AocTitle { title_id: dlc.title_id, version: dlc.version };
-            vfs.mount(&aoc.path(), HostDirectory::read_only(dlc.dir.join("content")))?;
+            let update =
+                info.update_dir.as_ref().map(|dir| dir.join("meta")).filter(|d| d.is_dir());
+            let meta = update
+                .into_iter()
+                .fold(Overlay::new(), |overlay, dir| overlay.layer(HostDirectory::read_only(dir)))
+                .layer(HostDirectory::read_only(meta));
+            vfs.mount("/vol/meta", meta)?;
         }
 
         let title_id =
@@ -177,6 +212,50 @@ impl Emulator {
         vfs.mount("/vol/save", HostDirectory::writable(self.config.save_dir.join(title_id)))?;
 
         Ok(vfs)
+    }
+
+    /// Mounts the volumes graphic packs can replace files of: code, content and the DLC's.
+    fn mount_replaceable(
+        &self,
+        info: &TitleInfo,
+        packs: &[AppliedPack],
+        mount: &mut dyn FnMut(&str, Overlay) -> Result<(), wiiu_fs::FsError>,
+    ) -> Result<(), EmuError> {
+        // The graphic packs' files lie over an installed update's, which lie over the
+        // title's; the first pack has the highest priority.
+        let replaced = |volume: ReplacedVolume| {
+            packs.iter().map(move |pack| pack.replacement_dir(volume)).filter(|dir| dir.is_dir())
+        };
+        let volume = |base: &Path, name: &str, replacing: ReplacedVolume| {
+            let update = info.update_dir.as_ref().map(|dir| dir.join(name)).filter(|d| d.is_dir());
+            replaced(replacing)
+                .chain(update)
+                .fold(Overlay::new(), |overlay, dir| overlay.layer(HostDirectory::read_only(dir)))
+                .layer(HostDirectory::read_only(base))
+        };
+
+        mount("/vol/code", volume(&info.code_dir, "code", ReplacedVolume::Code))?;
+
+        if let Some(content) = &info.content_dir {
+            let mut content = volume(content, "content", ReplacedVolume::Content);
+            let gate = info.meta.title_id.and_then(update::version_gate);
+            if let Some(gate) =
+                gate.filter(|_| info.update_dir.is_none() && self.config.skip_update_check)
+            {
+                log::info!("no update installed: skipping the title's update check");
+                content = content.file(gate.file, gate.contents)?;
+            }
+            mount("/vol/content", content)?;
+        }
+
+        if let Some(dlc) = &info.dlc {
+            let aoc = AocTitle { title_id: dlc.title_id, version: dlc.version };
+            let content = replaced(ReplacedVolume::Aoc)
+                .fold(Overlay::new(), |overlay, dir| overlay.layer(HostDirectory::read_only(dir)))
+                .layer(HostDirectory::read_only(dlc.dir.join("content")));
+            mount(&aoc.path(), content)?;
+        }
+        Ok(())
     }
 
     /// Resets the machine and starts `rpx` on the main core.

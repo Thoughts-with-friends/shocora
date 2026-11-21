@@ -226,6 +226,10 @@ impl Emulator {
     }
 
     /// Where the cheat codes of the running title are kept.
+    pub fn title_id(&self) -> Option<u64> {
+        self.title.as_ref()?.meta.title_id
+    }
+
     pub fn cheats_path(&self) -> Option<std::path::PathBuf> {
         let title_id = self.title.as_ref()?.meta.title_id?;
         Some(self.config.cheats_dir.join(format!("{title_id:016x}.txt")))

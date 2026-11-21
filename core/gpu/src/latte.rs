@@ -436,6 +436,10 @@ pub struct Latte {
     host_surfaces: HashMap<(u32, u32, u32), SurfaceKey>,
     /// Factor the user asked for.
     requested_factor: u32,
+    /// `[TextureRedefine]` rules of the enabled graphic packs.
+    pub(crate) texture_rules: Vec<wiiu_graphic_pack::TextureRule>,
+    /// The ones of them setting anisotropy: looked at on every texture bind.
+    sampler_rules: Vec<wiiu_graphic_pack::TextureRule>,
     /// Width of the TV picture, once the title has shown one.
     tv_width: u32,
     /// What the renderer was told last.
@@ -471,6 +475,8 @@ impl Default for Latte {
             buffer_cache: std::env::var_os("SHOCORA_NO_BUFFER_CACHE").is_none(),
             host_surfaces: HashMap::new(),
             requested_factor: 1,
+            texture_rules: Vec::new(),
+            sampler_rules: Vec::new(),
             tv_width: 0,
             resolution: ResolutionScale::default(),
             textures: HashMap::new(),
@@ -734,6 +740,29 @@ impl Latte {
         self.commands.push(RenderCommand::Clear { color: color_clear, depth: depth_clear });
     }
 
+    /// Uses the `[TextureRedefine]` rules of the enabled graphic packs.
+    pub fn set_texture_rules(&mut self, rules: Vec<wiiu_graphic_pack::TextureRule>) {
+        self.sampler_rules =
+            rules.iter().filter(|r| r.overwrite_anisotropy != -1).cloned().collect();
+        self.texture_rules = rules;
+        self.update_resolution();
+    }
+
+    /// The scale a graphic pack asks for: its rule for targets as wide as the TV picture,
+    /// rounded up to a whole factor (shocora draws every scaled target at one factor;
+    /// Cemu sizes each target as the rule says).
+    fn pack_factor(&self) -> u32 {
+        let width = self.tv_width;
+        let factor = self
+            .texture_rules
+            .iter()
+            .filter(|r| r.width == width.cast_signed() && r.overwrite_width > 0)
+            .map(|r| r.overwrite_width.cast_unsigned().div_ceil(width.max(1)))
+            .max()
+            .unwrap_or(1);
+        factor.clamp(1, *ResolutionScale::FACTORS.last().unwrap_or(&1))
+    }
+
     #[inline]
     pub fn set_resolution_factor(&mut self, factor: u32) {
         self.requested_factor = factor.max(1);
@@ -746,7 +775,8 @@ impl Latte {
         if self.tv_width == 0 {
             return;
         }
-        let new = ResolutionScale::for_tv(self.requested_factor, self.tv_width);
+        let factor = self.requested_factor.max(self.pack_factor());
+        let new = ResolutionScale::for_tv(factor, self.tv_width);
         if new != self.resolution {
             self.resolution = new;
             self.commands.push(RenderCommand::SetResolution(new));
@@ -1237,8 +1267,28 @@ impl Latte {
                 key
             };
             let is_multi_level = host.is_none();
-            let sampler =
+            let mut sampler =
                 sampler_unit.map(|s| read_sampler(regs, sampler_base + u32::from(s), signature));
+            if let Some(sampler) = sampler.as_mut().filter(|_| !self.sampler_rules.is_empty()) {
+                let desc = wiiu_graphic_pack::TextureDesc {
+                    width,
+                    height,
+                    depth: depth_field,
+                    format,
+                    tile_mode: tile,
+                    in_mem1: address < wiiu_mem_addr::MEM1.size,
+                };
+                let overwrite = wiiu_graphic_pack::overwrite_for(&self.sampler_rules, &desc);
+                // As Cemu's samplers: the pack's level replaces the title's anisotropy.
+                if let Some(level) = overwrite.anisotropy {
+                    let filtered = sampler.mag_linear && sampler.min_linear && sampler.max_lod > 0;
+                    sampler.anisotropy = if level > 0 && filtered && sampler.compare.is_none() {
+                        1 << level.min(4)
+                    } else {
+                        0
+                    };
+                }
+            }
             out.push(BoundTexture {
                 binding: (binding_base + u32::from(unit)) * 2,
                 key,
@@ -2295,6 +2345,30 @@ mod tests {
         assert_eq!(scale_commands(&latte), [ResolutionScale { factor: 4, limit_width: 1280 }]);
         latte.set_resolution_factor(1);
         assert_eq!(scale_commands(&latte).len(), 2);
+    }
+
+    /// Intent: a graphic pack's resolution rule for the TV-sized target sets the scale, and
+    /// the user's own factor still wins when larger.
+    /// Pass: 1280 -> 2560 gives factor 2; asking for 3 gives 3; dropping the rules gives 1.
+    #[test]
+    fn a_resolution_pack_sets_the_scale() {
+        let mut latte = Latte::default();
+        let tv = SurfaceWords { width: 1280, height: 720, ..SurfaceWords::default() };
+        latte.copy_to_scan(&tv, crate::Screen::Tv, false);
+        let rule = wiiu_graphic_pack::TextureRule {
+            width: 1280,
+            height: 720,
+            overwrite_width: 2560,
+            overwrite_height: 1440,
+            ..wiiu_graphic_pack::TextureRule::default()
+        };
+        latte.set_texture_rules(vec![rule]);
+        assert_eq!(latte.resolution.factor, 2);
+        latte.set_resolution_factor(3);
+        assert_eq!(latte.resolution.factor, 3);
+        latte.set_resolution_factor(1);
+        latte.set_texture_rules(Vec::new());
+        assert_eq!(latte.resolution.factor, 1);
     }
 
     #[test]

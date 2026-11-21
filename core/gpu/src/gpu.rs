@@ -72,6 +72,7 @@ impl Engine {
 
     /// Goes on from `state`; the host renderer starts over like at a boot.
     pub fn restore_state(&mut self, state: GpuState, resolution_factor: u32) {
+        let texture_rules = std::mem::take(&mut self.latte.texture_rules);
         *self = Self {
             cp: state.cp,
             display: state.display,
@@ -83,6 +84,7 @@ impl Engine {
         self.latte.depth_target = state.depth_target;
         self.reset_renderer();
         self.set_resolution_factor(resolution_factor);
+        self.latte.set_texture_rules(texture_rules);
         self.latte.restore_surfaces(state.surfaces);
     }
 
@@ -108,6 +110,12 @@ impl Engine {
     #[inline]
     pub fn set_resolution_factor(&mut self, factor: u32) {
         self.latte.set_resolution_factor(factor);
+    }
+
+    /// Uses the `[TextureRedefine]` rules of the enabled graphic packs.
+    #[inline]
+    pub fn set_texture_rules(&mut self, rules: Vec<wiiu_graphic_pack::TextureRule>) {
+        self.latte.set_texture_rules(rules);
     }
 
     /// Makes the host renderer forget everything of the previous boot.

@@ -64,6 +64,12 @@ pub enum ConsoleCommand {
     Speed(GameSpeed),
     /// Least vertical blanks per flip from now on: never faster than this.
     MinSwapInterval(Option<u32>),
+    /// The graphic pack folder and the enabled packs: replaced files at once, the rest from
+    /// the next boot on.
+    GraphicPacks {
+        dir: PathBuf,
+        packs: wiiu_graphic_pack::PackSettings,
+    },
 }
 
 /// State published by the emulation thread.
@@ -80,6 +86,8 @@ pub struct Snapshot {
     pub load_error: Option<String>,
     /// Where the running title's cheat codes are kept.
     pub cheats_path: Option<PathBuf>,
+    /// The running title's id.
+    pub title_id: Option<u64>,
 }
 
 type Shared = Arc<Mutex<Snapshot>>;
@@ -326,6 +334,11 @@ impl EmuThread {
             }
             ConsoleCommand::AudioTap(tap) => self.audio_tap = tap,
             ConsoleCommand::FontsDir(dir) => self.emulator.config.fonts_dir = dir,
+            ConsoleCommand::GraphicPacks { dir, packs } => {
+                if let Err(error) = self.emulator.set_graphic_packs(dir, packs) {
+                    log::warn!("graphic packs: {error}");
+                }
+            }
             ConsoleCommand::AddOnDirs { update_dirs, dlc_dirs } => {
                 self.emulator.config.update_dirs = update_dirs;
                 self.emulator.config.dlc_dirs = dlc_dirs;
@@ -369,6 +382,7 @@ impl EmuThread {
         shared.stats = self.emulator.stats();
         shared.fps = fps;
         shared.cheats_path = self.emulator.cheats_path();
+        shared.title_id = self.emulator.title_id();
     }
 
     /// Emulation Start: runs the emulator until the UI thread drops its handle.

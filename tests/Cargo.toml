@@ -21,6 +21,7 @@ shocora_gui_common = { workspace = true }
 shocora_render = { workspace = true }
 wiiu_cafe_os = { workspace = true }
 wiiu_emu = { workspace = true }
+wiiu_graphic_pack = { workspace = true }
 wiiu_gpu = { workspace = true }
 wiiu_rpl = { workspace = true }
 

@@ -40,6 +40,7 @@ wiiu_cpu = { path = "./core/cpu" }
 wiiu_emu = { path = "./core/system" }
 wiiu_fs = { path = "./core/fs" }
 wiiu_gpu = { path = "./core/gpu" }
+wiiu_graphic_pack = { path = "./core/graphic_pack" }
 wiiu_hle_macros = { path = "./core/hle_macros" }
 wiiu_interrupt = { path = "./core/interrupt" }
 wiiu_iosu = { path = "./core/iosu" }

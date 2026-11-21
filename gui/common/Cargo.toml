@@ -21,6 +21,10 @@ toml = "0.9"
 wiiu_emu = { workspace = true }
 wiiu_peripherals = { workspace = true }
 wiiu_title = { workspace = true }
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+zip = { version = "9.8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+serde_json = "1.0"
+wiiu_graphic_pack = { workspace = true }
 
 # Controller motion sensors are read straight from the HID reports; on Windows without C code.
 [target.'cfg(windows)'.dependencies]
@@ -31,3 +35,4 @@ hidapi = "2.6"
 
 [lints]
 workspace = true
+

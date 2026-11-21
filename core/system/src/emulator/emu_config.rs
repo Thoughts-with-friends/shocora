@@ -49,6 +49,10 @@ pub struct Config {
     /// but a third as fast for a title keeping every core busy. Only with
     /// [`Self::paced`].
     pub multi_core: bool,
+    /// Folder holding Cemu graphic packs (each a folder with a `rules.txt`).
+    pub graphic_pack_dir: PathBuf,
+    /// The packs the user enabled and their presets; applied at the next boot.
+    pub graphic_packs: wiiu_graphic_pack::PackSettings,
 }
 
 impl Default for Config {
@@ -72,6 +76,8 @@ impl Default for Config {
             skip_update_check: true,
             gpu_thread: true,
             multi_core: true,
+            graphic_pack_dir: PathBuf::from("graphicPacks"),
+            graphic_packs: wiiu_graphic_pack::PackSettings::new(),
         }
     }
 }

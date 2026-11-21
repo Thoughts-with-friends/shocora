@@ -22,6 +22,7 @@ wiiu_cafe_os = { workspace = true }
 wiiu_cpu = { workspace = true }
 wiiu_fs = { workspace = true }
 wiiu_gpu = { workspace = true }
+wiiu_graphic_pack = { workspace = true }
 wiiu_iosu = { workspace = true }
 wiiu_mem_addr = { workspace = true }
 wiiu_memory = { workspace = true }

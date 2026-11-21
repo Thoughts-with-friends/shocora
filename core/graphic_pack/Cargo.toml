@@ -1,0 +1,20 @@
+[package]
+name = "wiiu_graphic_pack"
+description = "Cemu graphic packs: rules.txt, presets, texture rules, file replacement and code patches"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

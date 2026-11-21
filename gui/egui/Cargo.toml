@@ -17,6 +17,7 @@ env_logger = "0.11"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga", "webp"] }
 shocora_game_library = { workspace = true }
 shocora_gui_common = { workspace = true }
+wiiu_graphic_pack = { workspace = true }
 shocora_netplay = { workspace = true }
 shocora_render = { workspace = true }
 log = { workspace = true }

@@ -391,6 +391,26 @@ fn capture_frame(
     Ok(())
 }
 
+/// `SHOCORA_GRAPHIC_PACKS="Game/Graphics/rules.txt|Resolution=2560x1440 (2K);..."`: packs
+/// to enable (paths inside `SHOCORA_GRAPHIC_PACK_DIR`), each with `category=preset` choices.
+fn graphic_packs_from_env() -> wiiu_graphic_pack::PackSettings {
+    let text = std::env::var("SHOCORA_GRAPHIC_PACKS").unwrap_or_default();
+    text.split(';')
+        .filter(|entry| !entry.trim().is_empty())
+        .map(|entry| {
+            let mut parts = entry.split('|');
+            let key = parts.next().unwrap_or_default().trim().to_owned();
+            let presets = parts
+                .map(|choice| match choice.split_once('=') {
+                    Some((category, name)) => (category.to_owned(), name.to_owned()),
+                    None => (String::new(), choice.to_owned()),
+                })
+                .collect();
+            (key, wiiu_graphic_pack::PackSetting { enabled: true, presets })
+        })
+        .collect()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let mut args = std::env::args_os().skip(1);
@@ -413,6 +433,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_or_else(|| PathBuf::from("states"), PathBuf::from),
         gpu_thread: std::env::var_os("SHOCORA_SYNC_GPU").is_none(),
         multi_core: std::env::var_os("SHOCORA_SINGLE_CORE").is_none(),
+        graphic_pack_dir: std::env::var_os("SHOCORA_GRAPHIC_PACK_DIR")
+            .map_or_else(|| PathBuf::from("graphicPacks"), PathBuf::from),
+        graphic_packs: graphic_packs_from_env(),
         ..Config::default()
     };
 
@@ -1162,6 +1185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(path) = &wav {
         save_wav(path, &sound)?;
+        println!("sound: {}", emu.sound_summary());
     }
 
     let stats = emu.stats();

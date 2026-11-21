@@ -73,6 +73,12 @@ pub struct AppConfig {
     pub mic_strength: u8,
     /// Use the motion sensors of a connected controller as the GamePad's.
     pub controller_motion: bool,
+    /// Folder holding Cemu graphic packs; downloads go to `downloadedGraphicPacks` in it.
+    pub graphic_pack_dir: PathBuf,
+    /// Look for a newer release of the community graphic packs at start.
+    pub check_graphic_pack_updates: bool,
+    /// Enabled graphic packs and their presets, by `rules.txt` path inside the folder.
+    pub graphic_packs: wiiu_graphic_pack::PackSettings,
 }
 
 impl Default for AppConfig {
@@ -108,6 +114,9 @@ impl Default for AppConfig {
             volume: 100,
             mic_strength: 80,
             controller_motion: true,
+            graphic_pack_dir: PathBuf::from("graphicPacks"),
+            check_graphic_pack_updates: true,
+            graphic_packs: wiiu_graphic_pack::PackSettings::new(),
         }
     }
 }
@@ -165,6 +174,8 @@ impl AppConfig {
             skip_update_check: self.skip_update_check,
             multi_core: self.multi_core,
             gpu_thread: self.gpu_thread,
+            graphic_pack_dir: self.graphic_pack_dir.clone(),
+            graphic_packs: self.graphic_packs.clone(),
             ..wiiu_emu::Config::default()
         }
     }
@@ -186,6 +197,19 @@ mod tests {
             rom_dirs: vec![PathBuf::from("D:\\Roms")],
             netplay_host: "10.0.0.2".to_owned(),
             netplay_address: "10.0.0.1/8".to_owned(),
+            graphic_packs: std::iter::once((
+                "downloadedGraphicPacks/XCX/Graphics/rules.txt".to_owned(),
+                wiiu_graphic_pack::PackSetting {
+                    enabled: true,
+                    presets: [
+                        (String::new(), "2560x1440".to_owned()),
+                        ("Mode".to_owned(), "A".to_owned()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ))
+            .collect(),
             ..AppConfig::default()
         };
         let text = toml::to_string_pretty(&config).unwrap();

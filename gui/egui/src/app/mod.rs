@@ -22,6 +22,7 @@ use crate::{
 };
 
 mod cheats;
+mod graphic_packs;
 mod input;
 mod library;
 mod menu;
@@ -31,6 +32,7 @@ mod screens;
 mod settings;
 mod status_bar;
 use cheats::*;
+use graphic_packs::PackWindow;
 use motion::MotionInput;
 use screens::*;
 use settings::*;
@@ -97,6 +99,14 @@ pub struct ShocoraApp {
     cheats_path: Option<PathBuf>,
     /// What the backdrop picture's path field shows while being edited.
     picture_path: String,
+    /// The graphic pack window, while it is open.
+    graphic_packs: Option<PackWindow>,
+    /// Downloads Cemu's community graphic packs.
+    pack_updater: shocora_gui_common::graphic_packs::Updater,
+    /// The running title's id.
+    title_id: Option<u64>,
+    /// Translations of graphic pack descriptions asked for.
+    translator: shocora_gui_common::translate::Translator,
 }
 
 impl ShocoraApp {
@@ -142,6 +152,10 @@ impl ShocoraApp {
             netplay_password: String::new(),
             netplay_network: String::new(),
             cheats: None,
+            graphic_packs: None,
+            pack_updater: shocora_gui_common::graphic_packs::Updater::default(),
+            title_id: None,
+            translator: shocora_gui_common::translate::Translator::default(),
             volume,
             cheats_path: None,
             picture_path,
@@ -176,6 +190,7 @@ impl ShocoraApp {
             motion: MotionInput::default(),
         };
         app.update_controller_motion();
+        app.check_graphic_pack_updates();
 
         app.adopt_old_rom_list();
         app.reload_library();
@@ -232,6 +247,7 @@ impl ShocoraApp {
         self.log.drain(..overflow);
         self.status = snapshot.status;
         self.cheats_path = snapshot.cheats_path;
+        self.title_id = snapshot.title_id;
         self.paused = snapshot.paused;
         self.title = snapshot.title;
         self.fps = snapshot.fps;
@@ -297,6 +313,7 @@ impl eframe::App for ShocoraApp {
                 egui::CentralPanel::default().frame(screen).show(ui, |ui| self.screens(ui));
             }
             self.cheat_window(&ctx);
+            self.graphic_pack_window(&ctx);
             self.settings_window(&ctx);
             return;
         }
@@ -325,6 +342,7 @@ impl eframe::App for ShocoraApp {
             egui::CentralPanel::default().show(ui, |ui| self.screens(ui));
         }
         self.cheat_window(ui.ctx());
+        self.graphic_pack_window(ui.ctx());
         self.settings_window(ui.ctx());
         self.launcher.paint_transition(ui.ctx());
     }

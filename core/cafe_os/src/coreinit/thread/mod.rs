@@ -92,7 +92,9 @@ pub fn new_context(
     context.gpr[3] = argc;
     context.gpr[4] = argv;
     context.gpr[13] = parent.gpr[13];
-    context.gqr = parent.gqr;
+    // As coreinit (Cemu's `__OSThreadInit`): GQR0/1/6/7 cleared,
+    // GQR2..=5 the u8/u16/s8/s16 presets, whatever the creating thread had set.
+    context.gqr = [0, 0, 0x0004_0004, 0x0005_0005, 0x0006_0006, 0x0007_0007, 0, 0];
     context
 }
 

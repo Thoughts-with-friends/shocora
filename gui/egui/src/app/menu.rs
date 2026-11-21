@@ -95,6 +95,11 @@ impl ShocoraApp {
                         self.settings_tab = Some(tab);
                     }
                 }
+                ui.separator();
+                if ui.button(tr("menu.graphic_packs")).clicked() {
+                    ui.close();
+                    self.open_graphic_packs();
+                }
             });
             ui.menu_button(tr("menu.view"), |ui| {
                 ui.checkbox(&mut self.show_library, tr("menu.game_library"));

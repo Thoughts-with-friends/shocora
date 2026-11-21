@@ -20,6 +20,7 @@ fn read_spr<B: Bus>(s: &CpuState, bus: &mut B, number: u32) -> u32 {
         spr::LR => s.lr,
         spr::CTR => s.ctr,
         spr::GQR0..=spr::GQR7 => s.gqr[(number - spr::GQR0) as usize],
+        spr::UGQR0..=spr::UGQR7 => s.gqr[(number - spr::UGQR0) as usize],
         spr::TBL_READ => bus.timebase() as u32,
         spr::TBU_READ => (bus.timebase() >> 32) as u32,
         _ => s.spr[number as usize],
@@ -32,6 +33,9 @@ fn write_spr(s: &mut CpuState, number: u32, value: u32) {
         spr::LR => s.lr = value,
         spr::CTR => s.ctr = value,
         spr::GQR0..=spr::GQR7 => s.gqr[(number - spr::GQR0) as usize] = value,
+        // Xenoblade X sets UGQR7 to s16 before converting its mixed sound with
+        // `psq_st`; ignored, the PCM16 ring buffers got float32 and played as noise.
+        spr::UGQR0..=spr::UGQR7 => s.gqr[(number - spr::UGQR0) as usize] = value,
         // Read-only identification registers.
         spr::PVR | spr::UPIR => {}
         _ => s.spr[number as usize] = value,
@@ -129,6 +133,20 @@ mod tests {
         bus.timebase = 0x1_0000_0005;
         run_one(&mut s, &mut bus, x(31, 5, 13, 8, 371, false)); // mftbu r5
         assert_eq!(s.gpr[5], 1);
+    }
+
+    /// Intent: the user-mode GQR aliases (SPR 896..=903) are the GQRs.
+    /// Pass: `mtspr 903, r30` (Xenoblade X's sound mixer) sets GQR7, and `mfspr` from
+    /// UGQR7 reads it back.
+    #[test]
+    fn user_gqrs_are_the_gqrs() {
+        let mut bus = TestBus::new();
+        let mut s = CpuState::new(0);
+        s.gpr[30] = 0x0007_0007;
+        run_one(&mut s, &mut bus, 0x7fc7_e3a6); // mtspr 903, r30
+        assert_eq!(s.gqr[7], 0x0007_0007);
+        run_one(&mut s, &mut bus, 0x7fa7_e2a6); // mfspr r29, 903
+        assert_eq!(s.gpr[29], 0x0007_0007);
     }
 
     #[test]

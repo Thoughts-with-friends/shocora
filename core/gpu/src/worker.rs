@@ -378,6 +378,12 @@ impl Gpu {
         self.call(move |engine| engine.set_resolution_factor(factor));
     }
 
+    /// Uses the `[TextureRedefine]` rules of the enabled graphic packs.
+    #[inline]
+    pub fn set_texture_rules(&mut self, rules: Vec<wiiu_graphic_pack::TextureRule>) {
+        self.call(move |engine| engine.set_texture_rules(rules));
+    }
+
     /// Makes the host renderer forget everything of the previous boot.
     #[inline]
     pub fn reset_renderer(&mut self) {

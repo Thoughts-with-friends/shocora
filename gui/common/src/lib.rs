@@ -5,4 +5,6 @@ pub mod audio;
 pub mod config;
 pub mod console;
 pub mod controller_motion;
+pub mod graphic_packs;
 pub mod input;
+pub mod translate;

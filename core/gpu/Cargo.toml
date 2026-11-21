@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 wiiu_interrupt = { workspace = true }
 wiiu_mem_addr = { workspace = true }
 wiiu_memory = { workspace = true }
+wiiu_graphic_pack = { workspace = true }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
