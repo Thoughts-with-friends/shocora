@@ -1,6 +1,8 @@
 //! `cargo xtask <build|run|test> [--release] [--toolchain gnu|msvc|<name>]
 //!     [--graphics wgpu|vulkan|opengl] [-- ARGS...]`
 //! `cargo xtask icon`: makes the PNG and ICO icons from `gui/egui/assets/shocora.svg`.
+//! `cargo xtask <patch|minor|major> [-m MESSAGE]...`: bumps the version and releases it
+//! (see `release.rs`).
 //!
 //! Thin dispatcher so the common invocations are one short command.
 //!
@@ -11,12 +13,14 @@
 //! xtask itself is linked by the toolchain that starts it, so with no MSVC linker installed:
 //! `cargo +stable-x86_64-pc-windows-gnu xtask build`.
 mod icon;
+mod release;
 
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo xtask <build|run|test> [--release] [--toolchain gnu|msvc|<name>]
            [--graphics wgpu|vulkan|opengl] [-- ARGS...]
-       cargo xtask icon";
+       cargo xtask icon
+       cargo xtask <patch|minor|major> [-m MESSAGE]...";
 
 /// Rustup toolchain for a `--toolchain` value.
 fn toolchain_name(value: &str) -> String {
@@ -35,6 +39,16 @@ fn main() -> ExitCode {
 
     if task == "icon" {
         return match icon::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    if let Some(level) = release::Level::parse(&task) {
+        return match release::run_release(level, args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");

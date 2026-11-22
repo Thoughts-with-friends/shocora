@@ -54,9 +54,18 @@ jobs:
           no_default_features: ${{ matrix.app.no_default_features || false }}
           asset_name: ${{ matrix.app.asset || matrix.app.app_name }}-${{ matrix.target.target }}
 
+      # `cargo xtask <patch|minor|major> -m ...` puts the message in the annotated tag.
+      # Checkout leaves the tag lightweight, so fetch its annotation explicitly.
+      - name: Read tag message
+        shell: bash
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)' > release-notes.md
+
       - name: Release
         uses: ncipollo/release-action@v1.21.0
         with:
           allowUpdates: true
+          bodyFile: release-notes.md
           artifacts: ${{ matrix.app.asset || matrix.app.app_name }}-${{ matrix.target.target }}${{ runner.os == 'Windows' && '.zip' || '.tar.gz' }}
           generateReleaseNotes: true
