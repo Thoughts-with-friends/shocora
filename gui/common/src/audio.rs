@@ -22,8 +22,15 @@ use cpal::{
 
 /// Stereo frames kept queued (about 60 ms at 48 kHz); playback starts at this level.
 const TARGET_FRAMES: usize = 2880;
-/// Stereo frames queued before the oldest are dropped (about 250 ms).
+/// Stereo frames queued before the oldest are skipped (about 250 ms).
 const MAX_FRAMES: usize = 12_000;
+/// Stereo frames over which a skip crossfades (10 ms). After a stall the guest mixes up to
+/// 300 ms at once; cutting the oldest away was a jump in the waveform, heard as a crackle
+/// when Xenoblade X opened its menus.
+const SKIP_FADE_FRAMES: usize = 480;
+/// Stereo frames queued before samples are dropped outright: only reached when nothing
+/// plays them.
+const HARD_LIMIT_FRAMES: usize = MAX_FRAMES * 4;
 /// Largest change of the playback rate. 0.5 % could not follow a title running a few
 /// percent slow (BotW's field at about 56 of 60 vblanks a second): the queue ran dry over
 /// and over, and each time the sound faded out and waited, heard as periodic noise. A few
@@ -89,6 +96,10 @@ struct Playback {
     current: [f32; 2],
     /// `false` while waiting for the queue to fill up.
     playing: bool,
+    /// Frames cut out of the queue by a skip, faded into what follows it.
+    skipped: Vec<[f32; 2]>,
+    /// How many of [`Self::skipped`] were mixed in so far.
+    skipped_at: usize,
     /// Gain while the sound comes back, up to 1 (see [`FADE_IN`]).
     gain: f32,
     /// Arrival rate of the input over the nominal one, averaged.
@@ -107,6 +118,8 @@ impl Playback {
             previous: [0.0; 2],
             current: [0.0; 2],
             playing: false,
+            skipped: Vec::new(),
+            skipped_at: 0,
             gain: 0.0,
             rate: 1.0,
             level: TARGET_FRAMES as f32,
@@ -161,6 +174,14 @@ impl Playback {
 
             if let (Some(left), Some(right)) = (queue.pop_front(), queue.pop_front()) {
                 self.current = [f32::from(left) / 32768.0, f32::from(right) / 32768.0];
+                if let Some(old) = self.skipped.get(self.skipped_at) {
+                    self.skipped_at += 1;
+                    let t = self.skipped_at as f32 / (self.skipped.len() + 1) as f32;
+                    self.current = [
+                        f32::mul_add(self.current[0] - old[0], t, old[0]),
+                        f32::mul_add(self.current[1] - old[1], t, old[1]),
+                    ];
+                }
             } else {
                 self.playing = false;
                 self.phase = 0.0;
@@ -179,6 +200,26 @@ impl Playback {
         ]
     }
 
+    /// With far too much queued, skips back to the target level: the frames that would
+    /// have come next fade into the ones after the gap.
+    fn skip_excess(&mut self, queue: &mut VecDeque<i16>) {
+        let queued = queue.len() / 2;
+        if queued <= MAX_FRAMES || self.skipped_at < self.skipped.len() {
+            return;
+        }
+        self.skipped = queue
+            .drain(..SKIP_FADE_FRAMES * 2)
+            .collect::<Vec<i16>>()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| [f32::from(pair[0]) / 32768.0, f32::from(pair[1]) / 32768.0])
+            .collect();
+        self.skipped_at = 0;
+        let excess = (queue.len() / 2).saturating_sub(TARGET_FRAMES);
+        queue.drain(..excess * 2);
+    }
+
     /// Fills a device buffer of interleaved frames.
     fn fill<T>(
         &mut self,
@@ -190,6 +231,7 @@ impl Playback {
     ) {
         let arrived = queue.pushed - self.pushed_seen;
         self.pushed_seen = queue.pushed;
+        self.skip_excess(&mut queue.samples);
 
         let frames = data.len() / channels.max(1);
         let step = self.adjusted_step(frames, arrived, queue.samples.len() / 2);
@@ -278,7 +320,7 @@ impl AudioOutput {
         queue.samples.extend(samples.iter().copied());
         queue.pushed += samples.len() as u64 / 2;
 
-        let excess = queue.samples.len().saturating_sub(MAX_FRAMES * 2);
+        let excess = queue.samples.len().saturating_sub(HARD_LIMIT_FRAMES * 2);
         queue.samples.drain(..excess);
     }
 }
@@ -340,6 +382,26 @@ mod tests {
         assert!(output[1] < 0.01, "{}", output[1]);
         assert!(output.windows(2).all(|w| w[1] >= w[0] - 1e-6));
         assert!((output[300] - 0.5).abs() < 1e-3, "{}", output[300]);
+    }
+
+    /// Intent: a skip after a burst of input is a crossfade, not a jump (heard as a crackle).
+    /// Pass: a queue over the limit is cut to the target level, and the output moves from
+    /// the old level to the new one in steps no larger than one crossfade step.
+    #[test]
+    fn skipping_excess_crossfades() {
+        let mut playback = Playback::new(1.0);
+        playback.playing = true;
+        playback.gain = 1.0;
+        let mut queue = filled(SKIP_FADE_FRAMES, 8192);
+        queue.extend(filled(MAX_FRAMES + 1, -8192));
+        playback.skip_excess(&mut queue);
+        assert_eq!(queue.len() / 2, TARGET_FRAMES);
+
+        let output: Vec<f32> =
+            (0..SKIP_FADE_FRAMES + 8).map(|_| playback.next_frame(&mut queue, 1.0)[0]).collect();
+        let largest = output[2..].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+        assert!(largest < 0.6 / SKIP_FADE_FRAMES as f32 * 2.0, "{largest}");
+        assert!((output[SKIP_FADE_FRAMES + 4] + 0.25).abs() < 1e-3);
     }
 
     #[test]

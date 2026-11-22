@@ -183,6 +183,21 @@ pub fn host_format(gx2_format: u32) -> HostFormat {
     }
 }
 
+/// 32-bit colour formats whose bits the renderer can move into one another.
+fn same_bits(format: HostFormat) -> bool {
+    use HostFormat as H;
+    matches!(
+        format,
+        H::Rgba8Unorm
+            | H::Rgba8Snorm
+            | H::Rg16Float
+            | H::Rg16Unorm
+            | H::R32Float
+            | H::Rgb10a2Unorm
+            | H::Rg11b10Float
+    )
+}
+
 /// `E_GX2SURFFMT` of a depth buffer → host format.
 pub fn host_depth_format(gx2_format: u32) -> HostFormat {
     match gx2_format {
@@ -1279,7 +1294,18 @@ impl Latte {
             let masked = masked_address(address, tile);
             let host = self.host_surfaces.get(&(masked, width, height)).copied();
             let key = if let Some(key) = host {
-                key
+                // Drawn in another format of the same texel size: the title reads the same bits
+                // in its own format (Xenoblade X's G-buffer under its R11G11B10 light buffer),
+                // and the renderer brings them over.
+                let wanted = match host_format(format) {
+                    HostFormat::Rgba8Srgb => HostFormat::Rgba8Unorm,
+                    wanted => wanted,
+                };
+                if wanted != key.format && same_bits(key.format) && same_bits(wanted) {
+                    SurfaceKey { format: wanted, ..key }
+                } else {
+                    key
+                }
             } else {
                 let key = SurfaceKey {
                     address: masked,
