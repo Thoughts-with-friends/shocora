@@ -11,7 +11,7 @@ use shocora_gui_common::{
 use shocora_netplay::{
     DEFAULT_PORT, FrameRate, HostConfig, HostState, HostStatus, LinkState, Refusal,
 };
-use shocora_render::{GraphicsApi, ResolutionScale, Screen, UpscaleMethod, upscale};
+use shocora_render::{GraphicsApi, ResolutionScale, Screen, StreamFormat, UpscaleMethod, upscale};
 use wiiu_emu::{GamePadState, GameSpeed, Status, VpadButtons};
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
 mod cheats;
 mod graphic_packs;
 mod input;
+mod keyboard;
 mod library;
 mod menu;
 mod motion;
@@ -105,6 +106,10 @@ pub struct ShocoraApp {
     pack_updater: shocora_gui_common::graphic_packs::Updater,
     /// The running title's id.
     title_id: Option<u64>,
+    /// The title's software keyboard text while it waits for some.
+    keyboard_text: Option<String>,
+    /// What is typed into the keyboard window.
+    keyboard_edit: Option<String>,
     /// Translations of graphic pack descriptions asked for.
     translator: shocora_gui_common::translate::Translator,
 }
@@ -155,6 +160,8 @@ impl ShocoraApp {
             graphic_packs: None,
             pack_updater: shocora_gui_common::graphic_packs::Updater::default(),
             title_id: None,
+            keyboard_text: None,
+            keyboard_edit: None,
             translator: shocora_gui_common::translate::Translator::default(),
             volume,
             cheats_path: None,
@@ -248,6 +255,8 @@ impl ShocoraApp {
         self.status = snapshot.status;
         self.cheats_path = snapshot.cheats_path;
         self.title_id = snapshot.title_id;
+        self.keyboard_text = snapshot.keyboard_text;
+        self.presenter.set_output_filter(snapshot.output_filter);
         self.paused = snapshot.paused;
         self.title = snapshot.title;
         self.fps = snapshot.fps;
@@ -312,6 +321,7 @@ impl eframe::App for ShocoraApp {
             } else {
                 egui::CentralPanel::default().frame(screen).show(ui, |ui| self.screens(ui));
             }
+            self.keyboard_window(&ctx);
             self.cheat_window(&ctx);
             self.graphic_pack_window(&ctx);
             self.settings_window(&ctx);
@@ -341,6 +351,7 @@ impl eframe::App for ShocoraApp {
         } else {
             egui::CentralPanel::default().show(ui, |ui| self.screens(ui));
         }
+        self.keyboard_window(ui.ctx());
         self.cheat_window(ui.ctx());
         self.graphic_pack_window(ui.ctx());
         self.settings_window(ui.ctx());

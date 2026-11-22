@@ -19,6 +19,7 @@
 pub mod client;
 pub mod host;
 pub mod protocol;
+pub mod video;
 
 use std::{net::Ipv4Addr, time::Duration};
 
@@ -26,7 +27,8 @@ pub use client::{Client, ClientEvents};
 pub use host::{Host, HostConfig, HostEvents};
 use if_addrs::IfAddr;
 pub use protocol::{
-    DEFAULT_PORT, Display, Frame, FrameRate, GuestInput, HostState, HostStatus, Refusal,
+    Codec, DEFAULT_PORT, Display, Frame, FrameRate, GuestInput, HostState, HostStatus, Picture,
+    Pixels, Refusal,
 };
 
 /// How often each side asks whether the other is still there.

@@ -128,6 +128,7 @@ impl LatteRenderer {
             | wgpu::TextureFormat::Rgba16Float
             | wgpu::TextureFormat::Rgba8Snorm
             | wgpu::TextureFormat::R16Float
+            | wgpu::TextureFormat::Rg16Float
             | wgpu::TextureFormat::R8Unorm
             | wgpu::TextureFormat::Rg8Unorm
             | wgpu::TextureFormat::Depth16Unorm => {
@@ -157,6 +158,16 @@ impl LatteRenderer {
                             let value = half(u16::from_le_bytes(*p)).abs();
                             let v = eight(value.fract());
                             [v, v, eight(value / 256.0), 255]
+                        })
+                        .collect(),
+                    wgpu::TextureFormat::Rg16Float => raw
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .flat_map(|p| {
+                            let r = half(u16::from_le_bytes([p[0], p[1]])).abs();
+                            let g = half(u16::from_le_bytes([p[2], p[3]])).abs();
+                            [eight(r.fract()), eight(g.fract()), eight(r / 256.0), 255]
                         })
                         .collect(),
                     wgpu::TextureFormat::Rgba16Float => raw
@@ -343,6 +354,75 @@ impl LatteRenderer {
         let mut out = Vec::with_capacity((width * height * bytes) as usize);
         for line in data.chunks_exact(row as usize) {
             out.extend_from_slice(&line[..(width * bytes) as usize]);
+        }
+        drop(data);
+        buffer.unmap();
+        Some((width, height, out))
+    }
+
+    /// The bytes of a surface's first level as the host keeps them. For tools.
+    pub fn read_surface_bytes(&mut self, key: SurfaceKey) -> Option<(u32, u32, Vec<u8>)> {
+        self.submit();
+        let texture = self.surfaces.get(&key)?.texture.clone();
+        let format = texture.format();
+        if format.is_depth_stencil_format() || format.is_compressed() {
+            return None;
+        }
+        self.read_raw(&texture, texture.width(), texture.height(), format)
+    }
+
+    /// The depth of a depth target (through its alias when it is drawn as one), when its
+    /// format lets the depth be copied out (32-bit float depth). For tools.
+    pub fn read_depth(&mut self, key: SurfaceKey) -> Option<(u32, u32, Vec<f32>)> {
+        self.submit();
+        let key = self.aliases.get(&key).copied().unwrap_or(key);
+        let texture = self.surfaces.get(&key)?.texture.clone();
+        if !matches!(
+            texture.format(),
+            wgpu::TextureFormat::Depth32Float | wgpu::TextureFormat::Depth32FloatStencil8
+        ) {
+            return None;
+        }
+        let (width, height) = (texture.width(), texture.height());
+        let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shocora depth readback"),
+            size: u64::from(row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("shocora depth readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                ..texture.as_image_copy()
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((width * height) as usize);
+        for line in data.chunks_exact(row as usize) {
+            out.extend(
+                line[..(width * 4) as usize]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|b| f32::from_le_bytes(*b)),
+            );
         }
         drop(data);
         buffer.unmap();

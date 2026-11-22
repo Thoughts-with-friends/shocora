@@ -52,6 +52,7 @@ mod pipeline;
 mod pipelines;
 mod present;
 mod readback;
+mod reinterpret;
 mod screens;
 mod surface;
 mod thread;
@@ -90,6 +91,10 @@ const UPLOAD_RING_SIZE: u64 = 32 << 20;
 
 /// Address of the surfaces standing in for attachments of the wrong size.
 const STAND_IN_ADDRESS: u32 = 0xFFFF_F000;
+/// How much larger than a pass an attachment may be and still be the same picture with its
+/// tile padding (Latte pads surfaces to whole tiles; Xenoblade Chronicles X draws a
+/// 768x620 picture over a 768x624 depth buffer).
+const ALIAS_PADDING: u32 = 32;
 
 /// `(color attachments, depth attachment, depth attachment read-only)` of the open render
 /// pass.
@@ -132,6 +137,12 @@ pub struct LatteRenderer {
     bind_groups: HashMap<u64, wgpu::BindGroup>,
     dummy_textures: HashMap<(TextureDim, TextureKind), wgpu::TextureView>,
     feedback_copies: HashMap<SurfaceKey, wgpu::Texture>,
+    /// What each feedback copy holds, so that only what draws changed since is copied.
+    feedback_sync: HashMap<SurfaceKey, draw::FeedbackSync>,
+    /// Attachments larger than the pass (a depth buffer 768x624 under a 768x620 picture,
+    /// as Xenoblade Chronicles X has) are drawn into a surface of the pass's size, which
+    /// clears and copies of the large one reach too.
+    aliases: HashMap<SurfaceKey, SurfaceKey>,
     /// Readbacks recorded in the open encoder: mapped once it is submitted.
     readbacks_recorded: Vec<readback::PendingReadback>,
     /// Readbacks submitted, waiting for the GPU.
@@ -159,6 +170,8 @@ pub struct LatteRenderer {
     /// Layout and per-target pipelines of depth to color copies, made on first use.
     depth_to_color: Option<(wgpu::BindGroupLayout, wgpu::PipelineLayout, wgpu::ShaderModule)>,
     depth_to_color_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    /// Surfaces drawn at one place in two formats of the same texel size.
+    reinterpret: reinterpret::Reinterpret,
     /// Scan buffer copies of this frame: surface, slice, sRGB scan buffer.
     pending_scan: HashMap<Screen, (SurfaceKey, u32, bool)>,
     screen_targets: std::collections::HashMap<Screen, ScreenImage>,
@@ -362,6 +375,8 @@ impl LatteRenderer {
             bind_groups: HashMap::default(),
             dummy_textures: HashMap::default(),
             feedback_copies: HashMap::default(),
+            feedback_sync: HashMap::default(),
+            aliases: HashMap::default(),
             readbacks_recorded: Vec::new(),
             readbacks_in_flight: Vec::new(),
             encoder: None,
@@ -379,6 +394,7 @@ impl LatteRenderer {
             present_grade,
             depth_to_color: None,
             depth_to_color_pipelines: HashMap::default(),
+            reinterpret: reinterpret::Reinterpret::default(),
             pending_scan: HashMap::default(),
             screen_targets: std::collections::HashMap::new(),
             screens: ScreenImages::default(),

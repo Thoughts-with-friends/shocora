@@ -3980,6 +3980,7 @@ dependencies = [
  "log",
  "sha2",
  "wiiu_peripherals",
+ "windows",
 ]
 
 [[package]]

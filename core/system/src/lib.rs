@@ -11,7 +11,9 @@
 mod emulator;
 mod error;
 
-pub use emulator::{EmuStats, Emulator, Status, emu_config::Config, state::STATE_SLOTS};
+pub use emulator::{
+    EmuStats, Emulator, OutputFilter, Status, emu_config::Config, state::STATE_SLOTS,
+};
 pub use error::EmuError;
 pub use wiiu_gpu::{RenderCommand, Screen};
 pub mod cheat;

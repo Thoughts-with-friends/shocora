@@ -13,7 +13,11 @@ use std::{
 
 use crate::{
     LinkState, PEER_TIMEOUT, PING_INTERVAL, local_addresses,
-    protocol::{self, Downsampler, Frame, GuestInput, HostStatus, Message, Refusal},
+    protocol::{
+        self, Codec, Downsampler, Frame, GuestInput, HostStatus, Message, Picture, Pixels, Refusal,
+        VideoPacket,
+    },
+    video::{self, Nv12, VideoEncoder},
 };
 
 /// Size of the network when only an address is given and no adapter of this machine has it:
@@ -34,6 +38,8 @@ const AUDIO_QUEUE: usize = 60;
 /// buffers: the guest would see the game later and later, and its input would seem to lag.
 /// The newest picture waits for its turn instead, and older ones are dropped.
 const PICTURES_IN_FLIGHT: u8 = 1;
+/// Frame rate video encoders are told to expect.
+const STREAM_FPS: u32 = 60;
 /// How often the guest hears about the host's state.
 const STATUS_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -44,7 +50,7 @@ pub trait HostEvents: Send + Sync + 'static {
     /// Whether anyone looks at the pictures, which cost time to make.
     fn streaming(&self, wanted: bool);
     /// The newest picture of each screen since the last call.
-    fn take_frames(&self) -> Vec<Frame>;
+    fn take_frames(&self) -> Vec<Picture>;
     /// What the guest's status bar shows.
     fn status(&self) -> HostStatus;
     /// The guest gives the first player's rights back.
@@ -129,7 +135,14 @@ struct Session {
     /// Pictures of each screen sent and not yet taken in by the guest, by [`Display`].
     in_flight: Arc<[AtomicU8; 2]>,
     /// The newest picture of each screen waiting for its turn.
-    waiting: [Option<Frame>; 2],
+    waiting: [Option<Picture>; 2],
+    /// What the guest decodes, as [`Codec::bit`]s; JPEG until it says.
+    codecs: Arc<AtomicU8>,
+    /// Codecs whose encoder failed here: not tried again in this session.
+    broken: u8,
+    /// The guest asked for a picture that stands alone, by `Display`.
+    keyframe_wanted: Arc<[AtomicBool; 2]>,
+    encoders: [Option<VideoEncoder>; 2],
 }
 
 impl Session {
@@ -323,15 +336,25 @@ fn open<E: HostEvents>(
     let writer = Arc::new(Mutex::new(stream));
     let alive = Arc::new(AtomicBool::new(true));
     let in_flight: Arc<[AtomicU8; 2]> = Arc::default();
+    let codecs = Arc::new(AtomicU8::new(Codec::Jpeg.bit()));
+    let keyframe_wanted: Arc<[AtomicBool; 2]> = Arc::default();
     let started = Instant::now();
     set_state(state, LinkState::Connected { peer: peer.to_string(), round_trip: None });
     let reader = std::thread::Builder::new().name("shocora-net-read".into()).spawn({
         let (writer, alive) = (Arc::clone(&writer), Arc::clone(&alive));
         let (events, state) = (Arc::clone(events), Arc::clone(state));
         let in_flight = Arc::clone(&in_flight);
+        let (codecs, keyframe_wanted) = (Arc::clone(&codecs), Arc::clone(&keyframe_wanted));
         move || {
-            let link =
-                Link { writer: &writer, state: &state, in_flight: &in_flight, peer, started };
+            let link = Link {
+                writer: &writer,
+                state: &state,
+                in_flight: &in_flight,
+                codecs: &codecs,
+                keyframe_wanted: &keyframe_wanted,
+                peer,
+                started,
+            };
             if let Err(error) = listen(&mut reading, &link, events.as_ref()) {
                 log::info!("netplay: lost the guest: {error}");
             }
@@ -349,6 +372,10 @@ fn open<E: HostEvents>(
         last_status: None,
         in_flight,
         waiting: [None, None],
+        codecs,
+        broken: 0,
+        keyframe_wanted,
+        encoders: [None, None],
     })
 }
 
@@ -357,6 +384,8 @@ struct Link<'a> {
     writer: &'a Mutex<TcpStream>,
     state: &'a Mutex<LinkState>,
     in_flight: &'a [AtomicU8; 2],
+    codecs: &'a AtomicU8,
+    keyframe_wanted: &'a [AtomicBool; 2],
     peer: SocketAddr,
     started: Instant,
 }
@@ -385,9 +414,86 @@ fn listen(reading: &mut TcpStream, link: &Link<'_>, events: &impl HostEvents) ->
                 );
             }
             Message::ReturnPlayer1 => events.return_player1(),
+            Message::Codecs(bits) => {
+                link.codecs.store(bits | Codec::Jpeg.bit(), Ordering::Release);
+            }
+            Message::Keyframe(display) => {
+                link.keyframe_wanted[display as usize].store(true, Ordering::Release);
+            }
             _ => {}
         }
     }
+}
+
+/// Compresses a picture with the best codec both sides have: a video codec where the
+/// picture is NV12 and the guest decodes one, JPEG otherwise.
+fn compress(session: &mut Session, picture: Picture) -> io::Result<Option<VideoPacket>> {
+    let Picture { display, width, height, pixels } = picture;
+    let slot = display as usize;
+    let taken = protocol::nanos(session.started);
+    let side =
+        |value: u32| u16::try_from(value).map_err(|_| protocol::invalid("picture too large"));
+    let (packet_width, packet_height) = (side(width)?, side(height)?);
+    let rgba = match pixels {
+        Pixels::Rgba(rgba) => rgba,
+        Pixels::Nv12(data) => {
+            let picture = Nv12 { width, height, data };
+            let usable = session.codecs.load(Ordering::Acquire) & !session.broken;
+            let wanted = session.keyframe_wanted[slot].swap(false, Ordering::AcqRel);
+            for codec in [Codec::H264, Codec::Hevc] {
+                if usable & codec.bit() == 0 || width > codec.max_width() {
+                    continue;
+                }
+                let fresh = !session.encoders[slot]
+                    .as_ref()
+                    .is_some_and(|e| e.codec == codec && (e.width, e.height) == (width, height));
+                if fresh {
+                    match VideoEncoder::new(codec, width, height, STREAM_FPS) {
+                        Ok(encoder) => session.encoders[slot] = Some(encoder),
+                        Err(error) => {
+                            log::warn!(
+                                "netplay: no {codec:?} encoder at {width}x{height}: {error}"
+                            );
+                            session.broken |= codec.bit();
+                            continue;
+                        }
+                    }
+                }
+                let Some(encoder) = session.encoders[slot].as_mut() else { continue };
+                let keyframe = fresh || wanted;
+                match encoder.encode(&picture, Duration::from_nanos(taken), keyframe) {
+                    Ok(data) if data.is_empty() => return Ok(None),
+                    Ok(data) => {
+                        return Ok(Some(VideoPacket {
+                            display,
+                            codec,
+                            keyframe,
+                            width: packet_width,
+                            height: packet_height,
+                            taken,
+                            data,
+                        }));
+                    }
+                    Err(error) => {
+                        log::warn!("netplay: {codec:?} encoding failed: {error}");
+                        session.encoders[slot] = None;
+                        session.broken |= codec.bit();
+                    }
+                }
+            }
+            video::nv12_to_rgba(&picture)
+        }
+    };
+    let frame = Frame { display, width, height, rgba };
+    Ok(Some(VideoPacket {
+        display,
+        codec: Codec::Jpeg,
+        keyframe: true,
+        width: packet_width,
+        height: packet_height,
+        taken,
+        data: protocol::encode_frame(&frame)?,
+    }))
 }
 
 /// Sends what is due.
@@ -413,9 +519,11 @@ fn pump(session: &mut Session, sound: &[Vec<i16>], events: &impl HostEvents) -> 
         if session.in_flight[slot].load(Ordering::Acquire) >= PICTURES_IN_FLIGHT {
             continue;
         }
-        let Some(frame) = session.waiting[slot].take() else { continue };
+        let Some(picture) = session.waiting[slot].take() else { continue };
+        // An encoder holding on to the picture has nothing to send yet.
+        let Some(packet) = compress(session, picture)? else { continue };
         session.in_flight[slot].fetch_add(1, Ordering::AcqRel);
-        session.send(&Message::Video(frame.display, protocol::encode_frame(&frame)?))?;
+        session.send(&Message::Video(packet))?;
     }
     let status = events.status();
     // Rights change at once, the rest is thinned out.

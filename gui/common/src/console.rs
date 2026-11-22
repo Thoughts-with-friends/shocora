@@ -66,6 +66,11 @@ pub enum ConsoleCommand {
     MinSwapInterval(Option<u32>),
     /// The graphic pack folder and the enabled packs: replaced files at once, the rest from
     /// the next boot on.
+    /// Text typed into the title's software keyboard; `decide` confirms it.
+    KeyboardText {
+        text: String,
+        decide: bool,
+    },
     GraphicPacks {
         dir: PathBuf,
         packs: wiiu_graphic_pack::PackSettings,
@@ -88,6 +93,10 @@ pub struct Snapshot {
     pub cheats_path: Option<PathBuf>,
     /// The running title's id.
     pub title_id: Option<u64>,
+    /// The software keyboard's text while the title waits for some.
+    pub keyboard_text: Option<String>,
+    /// The picture's filtering asked for by the running title's graphic packs.
+    pub output_filter: wiiu_emu::OutputFilter,
 }
 
 type Shared = Arc<Mutex<Snapshot>>;
@@ -334,6 +343,9 @@ impl EmuThread {
             }
             ConsoleCommand::AudioTap(tap) => self.audio_tap = tap,
             ConsoleCommand::FontsDir(dir) => self.emulator.config.fonts_dir = dir,
+            ConsoleCommand::KeyboardText { text, decide } => {
+                self.emulator.set_keyboard_text(&text, decide);
+            }
             ConsoleCommand::GraphicPacks { dir, packs } => {
                 if let Err(error) = self.emulator.set_graphic_packs(dir, packs) {
                     log::warn!("graphic packs: {error}");
@@ -383,6 +395,8 @@ impl EmuThread {
         shared.fps = fps;
         shared.cheats_path = self.emulator.cheats_path();
         shared.title_id = self.emulator.title_id();
+        shared.keyboard_text = self.emulator.keyboard_text();
+        shared.output_filter = self.emulator.output_filter();
     }
 
     /// Emulation Start: runs the emulator until the UI thread drops its handle.

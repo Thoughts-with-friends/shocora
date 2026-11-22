@@ -9,10 +9,12 @@ impl ShocoraApp {
                     ui.close();
                     self.pick_and_boot(false);
                 }
+
                 if ui.button(tr("menu.open_title")).clicked() {
                     ui.close();
                     self.pick_and_boot(true);
                 }
+
                 if let Some(last) = self.config.last_title.clone() {
                     if ui
                         .button(trf("menu.reload_title", &[("title", &short_name(&last))]))
@@ -22,22 +24,27 @@ impl ShocoraApp {
                         self.boot(last);
                     }
                 }
+
                 if ui.button(tr("menu.select_rom_folder")).clicked() {
                     ui.close();
                     self.pick_rom_folder();
                 }
+
                 if ui.button(tr("menu.reload_library")).clicked() {
                     ui.close();
                     self.reload_library();
                 }
                 ui.separator();
+
                 if ui.button(tr("menu.exit")).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+
             ui.menu_button(tr("menu.emulation"), |ui| {
                 let running = self.status == Some(Status::Running);
                 let label = if self.paused { tr("menu.resume") } else { tr("menu.pause") };
+
                 if ui.add_enabled(running, egui::Button::new(label)).clicked() {
                     self.console.send(if self.paused {
                         ConsoleCommand::Resume
@@ -46,6 +53,7 @@ impl ShocoraApp {
                     });
                     ui.close();
                 }
+
                 if ui
                     .add_enabled(self.cheats_path.is_some(), egui::Button::new(tr("menu.cheats")))
                     .clicked()
@@ -53,6 +61,7 @@ impl ShocoraApp {
                     self.open_cheats();
                     ui.close();
                 }
+
                 let running = self.title.is_some();
                 ui.add_enabled_ui(running, |ui| {
                     ui.menu_button(tr("menu.save_state"), |ui| {
@@ -63,6 +72,7 @@ impl ShocoraApp {
                             }
                         }
                     });
+
                     ui.menu_button(tr("menu.load_state"), |ui| {
                         for slot in 0..wiiu_emu::STATE_SLOTS {
                             if ui.button(trf("menu.state_slot", &[("slot", &slot)])).clicked() {
@@ -72,6 +82,7 @@ impl ShocoraApp {
                         }
                     });
                 });
+
                 if ui
                     .add_enabled(self.title.is_some(), egui::Button::new(tr("menu.reset")))
                     .clicked()
@@ -80,6 +91,7 @@ impl ShocoraApp {
                     self.console.send(ConsoleCommand::Reset);
                     ui.close();
                 }
+
                 if ui
                     .add_enabled(self.title.is_some(), egui::Button::new(tr("menu.stop")))
                     .clicked()
@@ -88,6 +100,7 @@ impl ShocoraApp {
                     ui.close();
                 }
             });
+
             ui.menu_button(tr("menu.settings"), |ui| {
                 for tab in SettingsTab::ALL {
                     if ui.button(tab.menu_label()).clicked() {
@@ -96,19 +109,23 @@ impl ShocoraApp {
                     }
                 }
                 ui.separator();
+
                 if ui.button(tr("menu.graphic_packs")).clicked() {
                     ui.close();
                     self.open_graphic_packs();
                 }
             });
+
             ui.menu_button(tr("menu.view"), |ui| {
                 ui.checkbox(&mut self.show_library, tr("menu.game_library"));
                 ui.checkbox(&mut self.show_log, tr("menu.guest_log"));
                 ui.separator();
+
                 if ui.checkbox(&mut self.config.gamepad_window, tr("menu.gamepad_window")).changed()
                 {
                     self.save_config();
                 }
+
                 let mut fullscreen = is_fullscreen(ui.ctx());
                 if ui
                     .checkbox(&mut fullscreen, tr("menu.fullscreen"))
@@ -126,14 +143,17 @@ impl ShocoraApp {
 impl ShocoraApp {
     pub(super) fn frame_rate_menu(&mut self, ui: &mut egui::Ui) {
         ui.label(tr("graphics.frame_rate"));
+
         let current = self.frame_rate();
         let title = ui.radio(current == FrameRate::Title, tr("graphics.as_title"));
         let capped = ui
             .radio(current == FrameRate::Max30, tr("graphics.max30"))
             .on_hover_text(tr("graphics.max30_hint"));
+
         let forced = ui
             .radio(current == FrameRate::Force60, tr("graphics.force60"))
             .on_hover_text(tr("graphics.force60_hint"));
+
         let chosen = if title.clicked() {
             FrameRate::Title
         } else if capped.clicked() {
@@ -143,6 +163,7 @@ impl ShocoraApp {
         } else {
             current
         };
+
         if chosen != current {
             self.set_frame_rate(chosen);
         }
@@ -164,6 +185,7 @@ impl ShocoraApp {
             FrameRate::Max30 => (None, Some(2)),
             FrameRate::Force60 => (Some(1), None),
         };
+
         self.config.swap_interval = forced;
         self.config.min_swap_interval = least;
         self.console.send(ConsoleCommand::SwapInterval(forced));
@@ -175,21 +197,26 @@ impl ShocoraApp {
         let usable = upscale::available() && self.config.resolution_factor == 1;
         ui.add_enabled_ui(usable, |ui| {
             ui.label(tr("graphics.xbrz")).on_disabled_hover_text(tr("graphics.xbrz_unavailable"));
+
             let mut changed = ui
                 .radio(self.config.upscale.method == UpscaleMethod::None, tr("graphics.off"))
                 .clicked();
+
             if changed {
                 self.config.upscale.method = UpscaleMethod::None;
             }
+
             for factor in 2..=upscale::MAX_FACTOR {
                 let selected = self.config.upscale.method == UpscaleMethod::Xbrz
                     && self.config.upscale.factor == factor;
+
                 if ui.radio(selected, format!("{factor}x")).clicked() {
                     self.config.upscale.method = UpscaleMethod::Xbrz;
                     self.config.upscale.factor = factor;
                     changed = true;
                 }
             }
+
             if changed {
                 self.presenter.set_upscale(self.config.upscale);
                 self.save_config();

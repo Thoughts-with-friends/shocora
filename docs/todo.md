@@ -6,7 +6,7 @@ Cemu (`src/Cafe`) の機能を shocora (`core/`) へ移植する作業の一覧�
   レジストリに登録済みの関数。再生成の手順はスクリプト冒頭を参照。
 - 登録済みでも、中身が Cemu より簡略な関数がある。動作の一致は個別に確認する。
 
-## 進捗: HLE export 701 / 1452
+## 進捗: HLE export 718 / 1452
 
 | ライブラリ | 実装済み | 全体 |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ Cemu (`src/Cafe`) の機能を shocora (`core/`) へ移植する作業の一覧�
 | [proc_ui](#lib-proc_ui) | 19 | 19 |
 | [sndcore2](#lib-sndcore2) | 52 | 77 |
 | [snduser2](#lib-snduser2) | 4 | 34 |
-| [swkbd](#lib-swkbd) | 0 | 17 |
+| [swkbd](#lib-swkbd) | 17 | 17 |
 | [sysapp](#lib-sysapp) | 0 | 16 |
 | [TCL](#lib-tcl) | 0 | 3 |
 | [vpad](#lib-vpad) | 33 | 33 |
@@ -1578,23 +1578,23 @@ export 表以外の Cemu 実装。shocora 側の設計に合わせて移植す�
 
 ### <a id="lib-swkbd"></a>swkbd
 
-- [ ] `SwkbdAppearInputForm__3RplFRCQ3_2nn5swkbd9AppearArg` (swkbd/swkbd.cpp)
-- [ ] `SwkbdAppearKeyboard__3RplFRCQ3_2nn5swkbd11KeyboardArg` (swkbd/swkbd.cpp)
-- [ ] `SwkbdCalcSubThreadFont__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdCalcSubThreadPredict__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdCalc__3RplFRCQ3_2nn5swkbd14ControllerInfo` (swkbd/swkbd.cpp)
-- [ ] `SwkbdCreate__3RplFPUcQ3_2nn5swkbd10RegionTypeUiP8FSClient` (swkbd/swkbd.cpp)
-- [ ] `SwkbdDisappearInputForm__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdDisappearKeyboard__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdGetDrawStringInfo__3RplFPQ3_2nn5swkbd14DrawStringInfo` (swkbd/swkbd.cpp)
-- [ ] `SwkbdGetInputFormString__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdGetStateInputForm__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdGetStateKeyboard__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdInitLearnDic__3RplFPv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdIsDecideOkButton__3RplFPb` (swkbd/swkbd.cpp)
-- [ ] `SwkbdIsNeedCalcSubThreadFont__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdIsNeedCalcSubThreadPredict__3RplFv` (swkbd/swkbd.cpp)
-- [ ] `SwkbdSetReceiver__3RplFRCQ3_2nn5swkbd11ReceiverArg` (swkbd/swkbd.cpp)
+- [x] `SwkbdAppearInputForm__3RplFRCQ3_2nn5swkbd9AppearArg` (swkbd/swkbd.cpp)
+- [x] `SwkbdAppearKeyboard__3RplFRCQ3_2nn5swkbd11KeyboardArg` (swkbd/swkbd.cpp)
+- [x] `SwkbdCalcSubThreadFont__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdCalcSubThreadPredict__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdCalc__3RplFRCQ3_2nn5swkbd14ControllerInfo` (swkbd/swkbd.cpp)
+- [x] `SwkbdCreate__3RplFPUcQ3_2nn5swkbd10RegionTypeUiP8FSClient` (swkbd/swkbd.cpp)
+- [x] `SwkbdDisappearInputForm__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdDisappearKeyboard__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdGetDrawStringInfo__3RplFPQ3_2nn5swkbd14DrawStringInfo` (swkbd/swkbd.cpp)
+- [x] `SwkbdGetInputFormString__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdGetStateInputForm__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdGetStateKeyboard__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdInitLearnDic__3RplFPv` (swkbd/swkbd.cpp)
+- [x] `SwkbdIsDecideOkButton__3RplFPb` (swkbd/swkbd.cpp)
+- [x] `SwkbdIsNeedCalcSubThreadFont__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdIsNeedCalcSubThreadPredict__3RplFv` (swkbd/swkbd.cpp)
+- [x] `SwkbdSetReceiver__3RplFRCQ3_2nn5swkbd11ReceiverArg` (swkbd/swkbd.cpp)
 
 ### <a id="lib-sysapp"></a>sysapp
 

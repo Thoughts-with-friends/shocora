@@ -405,6 +405,9 @@ pub struct ReadbackTarget {
     pub address: u32,
     /// Bytes from one row to the next in guest memory.
     pub row_pitch: u32,
+    /// How the target is tiled when it is not linear: its texels go to their tiled
+    /// addresses one by one.
+    pub tiled: Option<crate::tiling::Layout>,
 }
 
 /// What a render target held, for guest memory.

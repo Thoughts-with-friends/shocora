@@ -13,7 +13,8 @@ use std::{
 
 use crate::{
     DEFAULT_PORT, LinkState, PEER_TIMEOUT, PING_INTERVAL,
-    protocol::{self, Frame, GuestInput, HostStatus, Message, Refusal},
+    protocol::{self, Codec, Frame, GuestInput, HostStatus, Message, Refusal, VideoPacket},
+    video::{self, VideoDecoder},
 };
 
 /// What keeps a guest out.
@@ -247,6 +248,7 @@ fn serve(
     *shared.writer.lock().unwrap_or_else(PoisonError::into_inner) = Some(reading.try_clone()?);
     let input = *shared.input.lock().unwrap_or_else(PoisonError::into_inner);
     shared.send(&Message::Input(input))?;
+    shared.send(&Message::Codecs(video::decodable()))?;
     let started = Instant::now();
     let ended = Arc::new(AtomicBool::new(false));
     let pinger = std::thread::Builder::new().name("shocora-net-ping".into()).spawn({
@@ -281,15 +283,22 @@ fn receive(
     state: &Mutex<LinkState>,
     started: Instant,
 ) -> io::Result<()> {
+    let mut decoders: [Option<VideoDecoder>; 2] = [None, None];
     loop {
         match protocol::read_message(reading)? {
             Message::Status(status) => events.status(status),
-            Message::Video(display, jpeg) => {
-                match protocol::decode_frame(display, &jpeg) {
-                    Ok(frame) => events.frame(frame),
-                    Err(error) => log::warn!("netplay: bad picture: {error}"),
+            Message::Video(packet) => {
+                let display = packet.display;
+                match picture(&mut decoders[display as usize], packet) {
+                    Ok(Some(frame)) => events.frame(frame),
+                    Ok(None) => {}
+                    Err(error) => {
+                        log::warn!("netplay: bad picture: {error}");
+                        decoders[display as usize] = None;
+                        shared.send(&Message::Keyframe(display))?;
+                    }
                 }
-                // The host sends the next picture of this screen only now: pictures never
+                // The host sends more pictures of this screen only now: pictures never
                 // pile up on the way, so what shows is close to what the host has.
                 shared.send(&Message::FrameShown(display))?;
             }
@@ -305,6 +314,32 @@ fn receive(
             _ => {}
         }
     }
+}
+
+/// The picture `packet` holds. A video stream starts at a keyframe: pictures before it
+/// cannot be decoded and ask the host for one.
+fn picture(decoder: &mut Option<VideoDecoder>, packet: VideoPacket) -> io::Result<Option<Frame>> {
+    let (width, height) = (u32::from(packet.width), u32::from(packet.height));
+    if packet.codec == Codec::Jpeg {
+        return protocol::decode_frame(packet.display, &packet.data).map(Some);
+    }
+    let fits = decoder
+        .as_ref()
+        .is_some_and(|d| d.codec == packet.codec && (d.width, d.height) == (width, height));
+    if !fits {
+        if !packet.keyframe {
+            return Err(io::Error::other("a stream does not start here"));
+        }
+        *decoder = Some(VideoDecoder::new(packet.codec, width, height)?);
+    }
+    let Some(decoder) = decoder.as_mut() else { return Ok(None) };
+    let time = Duration::from_nanos(packet.taken);
+    Ok(decoder.decode(&packet.data, time)?.map(|picture| Frame {
+        display: packet.display,
+        width,
+        height,
+        rgba: video::nv12_to_rgba(&picture),
+    }))
 }
 
 #[cfg(test)]

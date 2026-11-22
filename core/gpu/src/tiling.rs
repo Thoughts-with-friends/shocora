@@ -45,7 +45,7 @@ fn pixel_index_in_micro_tile(
 }
 
 /// Everything constant while decoding one surface.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     pub tile_mode: u32,
     pub bpp: u32,

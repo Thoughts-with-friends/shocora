@@ -9,7 +9,7 @@ use shocora_gui_common::{
 };
 use shocora_netplay::{
     Client, ClientEvents, Display, Frame, GuestInput, Host, HostConfig, HostEvents, HostStatus,
-    protocol,
+    Picture, Pixels, protocol,
 };
 use shocora_render::{Screen, StreamTap};
 use wiiu_emu::GamePadState;
@@ -140,12 +140,14 @@ impl HostEvents for HostLink {
         self.gamepad.set_enabled(wanted);
     }
 
-    fn take_frames(&self) -> Vec<Frame> {
+    fn take_frames(&self) -> Vec<Picture> {
         [(Display::Tv, &self.tv), (Display::GamePad, &self.gamepad)]
             .into_iter()
             .filter_map(|(display, tap)| {
                 let frame = tap.take()?;
-                Some(Frame { display, width: frame.width, height: frame.height, rgba: frame.rgba })
+                let pixels =
+                    if frame.nv12 { Pixels::Nv12(frame.data) } else { Pixels::Rgba(frame.data) };
+                Some(Picture { display, width: frame.width, height: frame.height, pixels })
             })
             .collect()
     }

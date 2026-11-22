@@ -19,6 +19,7 @@ impl ShocoraApp {
         self.netplay_network = config.network();
         let address = config.address;
         let [tv, gamepad] = self.presenter.stream_taps();
+        tv.set_format(self.stream_format());
         match netplay::host(config, commands, tv, gamepad, self.last_gamepad) {
             Ok(hosting) => {
                 self.console.send(ConsoleCommand::AudioTap(Some(hosting.host.audio_sink())));
@@ -101,7 +102,57 @@ impl ShocoraApp {
         }
     }
 
+    /// The TV pictures a guest gets, as chosen.
+    fn stream_format(&self) -> StreamFormat {
+        match self.config.netplay_stream_height {
+            0 => StreamFormat::TV_DEFAULT,
+            height => StreamFormat::tv(height, self.config.netplay_stream_fps.max(1)),
+        }
+    }
+
+    /// Size and rate of the guest's picture. Changes apply at once while hosting.
+    fn stream_quality(&mut self, ui: &mut egui::Ui) {
+        const HEIGHTS: [(u32, &str); 7] = [
+            (0, "JPEG 360p"),
+            (720, "720p"),
+            (1080, "1080p"),
+            (1440, "1440p"),
+            (2160, "4K"),
+            (2880, "5K"),
+            (4320, "8K"),
+        ];
+        let before = (self.config.netplay_stream_height, self.config.netplay_stream_fps);
+        ui.label(tr("netplay.stream_quality")).on_hover_text(tr("netplay.stream_quality_hint"));
+        ui.horizontal(|ui| {
+            let current = HEIGHTS
+                .iter()
+                .find(|(height, _)| *height == self.config.netplay_stream_height)
+                .map_or("1080p", |(_, name)| name);
+            egui::ComboBox::from_id_salt("netplay_stream_height").selected_text(current).show_ui(
+                ui,
+                |ui| {
+                    for (height, name) in HEIGHTS {
+                        ui.selectable_value(&mut self.config.netplay_stream_height, height, name);
+                    }
+                },
+            );
+            for fps in [30, 60] {
+                ui.radio_value(&mut self.config.netplay_stream_fps, fps, format!("{fps} fps"));
+            }
+        });
+        if before != (self.config.netplay_stream_height, self.config.netplay_stream_fps) {
+            self.save_config();
+            if matches!(self.netplay, Netplay::Host(_)) {
+                self.presenter.stream_taps()[0].set_format(self.stream_format());
+            }
+        }
+    }
+
     pub(super) fn netplay_settings(&mut self, ui: &mut egui::Ui) {
+        if !matches!(self.netplay, Netplay::Guest(_)) {
+            self.stream_quality(ui);
+            ui.separator();
+        }
         match self.netplay {
             Netplay::Off => {
                 ui.label(tr("netplay.password"));
@@ -222,6 +273,9 @@ impl ShocoraApp {
                 ui.separator();
                 ui.label(link);
             }
+            // The guest hears the host's title at its own volume, set here too.
+            ui.separator();
+            self.volume_slider(ui);
             self.netplay_controls(ui);
         });
     }

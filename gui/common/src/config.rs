@@ -46,6 +46,11 @@ pub struct AppConfig {
     /// This machine's address when hosting, optionally with `/prefix`. Open to this machine
     /// only until told otherwise.
     pub netplay_address: String,
+    /// Lines of the TV picture a guest gets (16:9), as H.264 or HEVC. Zero sends small JPEG
+    /// pictures as older versions did.
+    pub netplay_stream_height: u32,
+    /// Pictures per second a guest gets.
+    pub netplay_stream_fps: u32,
     /// How many times larger than on the console the title's pictures are drawn.
     pub resolution_factor: u32,
     /// Least vertical blanks per flip: `2` caps a title at 30 fps.
@@ -102,6 +107,8 @@ impl Default for AppConfig {
             rom_dirs: Vec::new(),
             netplay_host: "127.0.0.1".to_owned(),
             netplay_address: "127.0.0.1".to_owned(),
+            netplay_stream_height: 1080,
+            netplay_stream_fps: 60,
             resolution_factor: 1,
             min_swap_interval: None,
             mlc_dir: None,

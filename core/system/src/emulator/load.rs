@@ -44,6 +44,17 @@ impl Emulator {
         self.gpu.set_texture_rules(
             packs.iter().flat_map(|pack| pack.rules.texture_rules.iter().cloned()).collect(),
         );
+        self.pack_frame_time = pack_frame_time(&packs, &mut notices);
+        // Cemu takes the output settings of the last pack with an `[OutputShader]`.
+        self.output_nearest = packs
+            .iter()
+            .rev()
+            .map(|pack| super::OutputFilter {
+                upscale_nearest: pack.rules.upscale_nearest,
+                downscale_nearest: pack.rules.downscale_nearest,
+            })
+            .find(|filter| *filter != super::OutputFilter::default())
+            .unwrap_or_default();
         self.os.title_id = info.meta.title_id.unwrap_or(0);
         self.os.aoc = info
             .dlc
@@ -133,6 +144,8 @@ impl Emulator {
     pub fn load_rpx(&mut self, name: &str, rpx: &[u8]) -> Result<(), EmuError> {
         self.boot(name, rpx, Iosu::default(), &[], &mut Vec::new())?;
         self.title = None;
+        self.pack_frame_time = None;
+        self.output_nearest = super::OutputFilter::default();
         self.boot_source = Some(BootSource::Rpx(name.to_owned(), rpx.to_vec()));
         Ok(())
     }
@@ -454,6 +467,31 @@ const COUNTRIES: &[(usize, &str)] = &[
 
 /// `language.txt` and `country.txt` of the language data title, as Cemu makes them: one
 /// quoted code and a comma per line.
+/// The vertical blank period of the first pack setting `vsyncFrequency`
+/// (Cemu's `LatteTiming_setCustomVsyncFrequency`). Packs asking for another frequency are
+/// named in `notices` and ignored, as in Cemu.
+fn pack_frame_time(
+    packs: &[AppliedPack],
+    notices: &mut Vec<String>,
+) -> Option<std::time::Duration> {
+    let mut chosen: Option<u32> = None;
+    for pack in packs {
+        let Some(hz) = pack.rules.vsync_frequency else { continue };
+        match chosen {
+            None => {
+                chosen = Some(hz);
+                notices.push(format!("graphic pack {}: vsync frequency {hz} Hz", pack.name));
+            }
+            Some(first) if first != hz => notices.push(format!(
+                "graphic pack {}: vsync frequency {hz} Hz ignored, {first} Hz is set",
+                pack.name
+            )),
+            Some(_) => {}
+        }
+    }
+    chosen.map(|hz| std::time::Duration::from_secs_f64(1.0 / f64::from(hz)))
+}
+
 fn language_data() -> Result<Overlay, EmuError> {
     let languages: String = LANGUAGES.iter().map(|code| format!("\"{code}\",\n")).collect();
     let last = COUNTRIES.last().map_or(0, |(index, _)| *index);

@@ -5,7 +5,7 @@ use wiiu_peripherals::{GamePadState, controller::VpadButtons};
 use super::*;
 use crate::{
     host::{Host, HostConfig, HostEvents},
-    protocol::{Display, HostState},
+    protocol::{Display, HostState, Picture, Pixels},
 };
 
 const LOOPBACK: &str = "127.0.0.1";
@@ -44,16 +44,16 @@ impl HostEvents for RecordingHost {
         let _ = self.wanted.lock().unwrap().send(wanted);
     }
 
-    fn take_frames(&self) -> Vec<Frame> {
+    fn take_frames(&self) -> Vec<Picture> {
         if !self.streaming.swap(false, Ordering::Relaxed) {
             return Vec::new();
         }
         [(Display::Tv, 16), (Display::GamePad, 8)]
-            .map(|(display, width)| Frame {
+            .map(|(display, width)| Picture {
                 display,
                 width,
                 height: 8,
-                rgba: [10, 200, 30, 255].repeat(width as usize * 8),
+                pixels: Pixels::Rgba([10, 200, 30, 255].repeat(width as usize * 8)),
             })
             .to_vec()
     }
@@ -393,9 +393,14 @@ impl HostEvents for BusyHost {
 
     fn streaming(&self, _wanted: bool) {}
 
-    fn take_frames(&self) -> Vec<Frame> {
+    fn take_frames(&self) -> Vec<Picture> {
         [Display::Tv, Display::GamePad]
-            .map(|display| Frame { display, width: 8, height: 8, rgba: vec![0; 8 * 8 * 4] })
+            .map(|display| Picture {
+                display,
+                width: 8,
+                height: 8,
+                pixels: Pixels::Rgba(vec![0; 8 * 8 * 4]),
+            })
             .to_vec()
     }
 
@@ -427,8 +432,8 @@ fn join_by_hand(port: u16) -> std::net::TcpStream {
 fn pictures_until_quiet(stream: &mut std::net::TcpStream) -> [usize; 2] {
     let mut counts = [0; 2];
     while let Ok(message) = protocol::read_message(stream) {
-        if let Message::Video(display, _) = message {
-            counts[display as usize] += 1;
+        if let Message::Video(packet) = message {
+            counts[packet.display as usize] += 1;
         }
     }
     counts

@@ -101,9 +101,13 @@ impl ShocoraApp {
         window.loaded_version = graphic_packs::installed_version(root);
     }
 
-    /// Titles whose packs the tree shows with "installed games" on.
+    /// Titles whose packs the tree shows with "installed games" on: the running title
+    /// alone while one runs, otherwise those of the library.
     fn installed_titles(&self) -> HashSet<u64> {
-        self.library.games.iter().filter_map(|g| g.title_id).chain(self.title_id).collect()
+        match self.title_id {
+            Some(id) => HashSet::from([id]),
+            None => self.library.games.iter().filter_map(|g| g.title_id).collect(),
+        }
     }
 
     /// Saves the window's choices and hands them to the emulator.

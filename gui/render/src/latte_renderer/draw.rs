@@ -74,6 +74,22 @@ fn feedback_texture(
     })
 }
 
+/// What a feedback copy holds: the surface, level and layers it was copied from, and
+/// the part of level 0 that draws changed since (host texels, `[x0, y0, x1, y1]`).
+///
+/// Cemu samples a target while drawing to it (Vulkan's general layout or feedback loop);
+/// wgpu does not allow that, so the draw reads a copy. Copying the whole surface for every
+/// such draw (600 a frame in Breath of the Wild) grew with the square of the resolution
+/// factor and made 4K and 8K crawl; only what was drawn since the last copy is copied now.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FeedbackSync {
+    surface_id: u64,
+    level: u32,
+    first_layer: u32,
+    layers: u32,
+    dirty: Option<[u32; 4]>,
+}
+
 /// What a draw samples of what it draws to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Conflict {
@@ -152,6 +168,40 @@ impl LatteRenderer {
             depth_or_array_layers: if dim == TextureDim::D2 { 1 } else { layers },
             ..source.size().mip_level_size(level, wgpu::TextureDimension::D2)
         };
+        let surface_id = self.surfaces.get(&bound.key).map_or(0, |s| s.id);
+        let reusable = self.feedback_copies.get(&bound.key).is_some_and(|texture| {
+            texture.size() == size && texture.dimension() == wgpu::TextureDimension::D2
+        });
+        let synced = self.feedback_sync.get(&bound.key).filter(|sync| {
+            reusable
+                && sync.surface_id == surface_id
+                && sync.level == level
+                && sync.first_layer == first_layer
+                && sync.layers == size.depth_or_array_layers
+        });
+        // Depth and stencil can only be copied whole.
+        let partial = !wgpu_format(bound.key.format).is_depth_stencil_format();
+        let region = match synced {
+            Some(sync) if partial => sync.dirty.map(|[x0, y0, x1, y1]| {
+                let round_up = (1 << level) - 1;
+                let (x0, y0) = ((x0 >> level).min(size.width), (y0 >> level).min(size.height));
+                let x1 = ((x1 + round_up) >> level).min(size.width);
+                let y1 = ((y1 + round_up) >> level).min(size.height);
+                (x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0))
+            }),
+            Some(sync) if sync.dirty.is_none() => None,
+            _ => Some((0, 0, size.width, size.height)),
+        };
+        self.feedback_sync.insert(
+            bound.key,
+            FeedbackSync {
+                surface_id,
+                level,
+                first_layer,
+                layers: size.depth_or_array_layers,
+                dirty: None,
+            },
+        );
         let device = self.device.clone();
         let copy = self
             .feedback_copies
@@ -165,16 +215,21 @@ impl LatteRenderer {
                 feedback_texture(&device, &source, size, wgpu::TextureDimension::D2)
             });
         let target = copy.clone();
-        self.counters.copies += 1;
-        self.encoder().copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                mip_level: level,
-                origin: wgpu::Origin3d { x: 0, y: 0, z: first_layer },
-                ..source.as_image_copy()
-            },
-            target.as_image_copy(),
-            size,
-        );
+        if let Some((x, y, width, height)) = region.filter(|r| r.2 > 0 && r.3 > 0) {
+            self.counters.copies += 1;
+            self.encoder().copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    mip_level: level,
+                    origin: wgpu::Origin3d { x, y, z: first_layer },
+                    ..source.as_image_copy()
+                },
+                wgpu::TexelCopyTextureInfo {
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    ..target.as_image_copy()
+                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: size.depth_or_array_layers },
+            );
+        }
         let aspect = if bound.key.format.has_stencil() {
             wgpu::TextureAspect::DepthOnly
         } else {
@@ -205,6 +260,7 @@ impl LatteRenderer {
     /// A dummy in its place gave Breath of the Wild's 8x8x8 `R11G11B10` volume zeros.
     fn volume_copy(&mut self, bound: &BoundTexture) -> Option<wgpu::TextureView> {
         let source = self.surfaces.get(&bound.key)?.texture.clone();
+        self.feedback_sync.remove(&bound.key);
         if source.dimension() != wgpu::TextureDimension::D2 {
             return None;
         }
@@ -439,20 +495,47 @@ impl LatteRenderer {
         // Latte draws to attachments of different sizes (the smaller one bounds the
         // draw); the host insists on one size, the first color target's. A misfit gets
         // a throwaway surface of the right size.
-        let extent =
-            draw.color_targets.iter().flatten().next().map(|(key, _)| (key.width, key.height));
+        let first = draw.color_targets.iter().flatten().next().map(|(key, _)| *key);
+        let extent = first.map(|key| (key.width, key.height));
+        // Drawn larger or not, all attachments must be so: an array target is never drawn
+        // larger, and next to a larger one it made the pass invalid (and the device lost).
+        let resolution = self.resolution;
+        let scale = first.map(|key| resolution.of(&key));
         // The host also refuses one slice attached twice: Latte lets the later attachment
         // write the same memory, here it writes a throwaway surface.
         let mut attached = HashSet::default();
+        let mut aliases = Vec::new();
+        let self_aliases = self.aliases.clone();
         let mut fitted = |index: u32, key: SurfaceKey, slice: u32| {
             let slice = slice.min(key.layers.saturating_sub(1));
             let (width, height) = extent.unwrap_or((key.width, key.height));
-            if (key.width, key.height) == (width, height) && attached.insert((key, slice)) {
+            if (key.width, key.height) == (width, height)
+                && scale.is_none_or(|scale| resolution.of(&key) == scale)
+                && attached.insert((key, slice))
+            {
                 return (key, slice, false);
             }
-            // One stand-in per attachment, so that they never meet in a pass either.
+            // Larger than the pass only by its tile padding (a depth buffer 768x624 under
+            // a 768x620 picture): Latte draws its top left part, which lives on in a surface
+            // of the pass's size. A surface much larger than the pass (a full-size target
+            // next to a half-size one) is another picture, not padding: redirecting its
+            // later reads to the small surface lost the scene's depth and lit it white.
+            let alias = SurfaceKey { width, height, ..key };
+            let padding = key.width.checked_sub(width).is_some_and(|w| w < ALIAS_PADDING)
+                && key.height.checked_sub(height).is_some_and(|h| h < ALIAS_PADDING);
+            if padding
+                && self_aliases.get(&key).is_none_or(|known| *known == alias)
+                && scale.is_none_or(|scale| resolution.of(&alias) == scale)
+                && attached.insert((alias, slice))
+            {
+                aliases.push((key, alias));
+                return (alias, slice, false);
+            }
+            // One stand-in per attachment, so that they never meet in a pass either. It takes
+            // the first target's layer count, and with it the first target's scale.
             let address = STAND_IN_ADDRESS + index * 0x100;
-            (SurfaceKey { address, width, height, layers: 1, format: key.format }, 0, true)
+            let layers = first.map_or(1, |key| key.layers.max(1));
+            (SurfaceKey { address, width, height, layers, format: key.format }, 0, true)
         };
         let mut color_views: Vec<Option<(wgpu::TextureView, bool)>> = Vec::with_capacity(8);
         for (index, target) in (0..).zip(&draw.color_targets) {
@@ -465,6 +548,9 @@ impl LatteRenderer {
             let (key, slice, stand_in) = fitted(8, key, slice);
             (self.target_surface(key, 1).target_view(0, slice), stand_in)
         });
+        for (key, alias) in aliases {
+            self.aliases.insert(key, alias);
+        }
         let last = color_views.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
         let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = color_views[..last]
             .iter()
@@ -678,6 +764,16 @@ impl LatteRenderer {
         self.part_draws += 1;
         for (key, _) in draw.color_targets.iter().flatten() {
             *self.target_log.entry(*key).or_insert(0) += 1;
+        }
+        // What the draw may have changed of the copies its targets have.
+        let [x, y, w, h] = scissor;
+        let drawn = [x, y, x + w, y + h];
+        for (key, _) in draw.color_targets.iter().flatten().chain(draw.depth_target.as_ref()) {
+            if let Some(sync) = self.feedback_sync.get_mut(key) {
+                sync.dirty = Some(sync.dirty.map_or(drawn, |[x0, y0, x1, y1]| {
+                    [x0.min(drawn[0]), y0.min(drawn[1]), x1.max(drawn[2]), y1.max(drawn[3])]
+                }));
+            }
         }
         self.finish_stream_out(draw);
     }

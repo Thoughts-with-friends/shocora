@@ -1,7 +1,7 @@
 //! How messages look on the wire: a tag, a length and the payload.
 use super::*;
 
-pub(super) fn invalid(what: &str) -> io::Error {
+pub(crate) fn invalid(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, what.to_owned())
 }
 
@@ -155,12 +155,17 @@ pub fn write_message(out: &mut impl Write, message: &Message) -> io::Result<()> 
         Message::Ping(value) => (tag::PING, value.to_be_bytes().to_vec()),
         Message::Pong(value) => (tag::PONG, value.to_be_bytes().to_vec()),
         Message::Input(input) => (tag::INPUT, encode_input(input)),
-        Message::Video(display, jpeg) => {
-            let mut payload = Vec::with_capacity(1 + jpeg.len());
-            payload.push(*display as u8);
-            payload.extend(jpeg);
+        Message::Video(packet) => {
+            let mut payload = Vec::with_capacity(VideoPacket::HEADER + packet.data.len());
+            payload.extend([packet.display as u8, packet.codec as u8, u8::from(packet.keyframe)]);
+            payload.extend(packet.width.to_be_bytes());
+            payload.extend(packet.height.to_be_bytes());
+            payload.extend(packet.taken.to_be_bytes());
+            payload.extend(&packet.data);
             (tag::VIDEO, payload)
         }
+        Message::Codecs(bits) => (tag::CODECS, vec![*bits]),
+        Message::Keyframe(display) => (tag::KEYFRAME, vec![*display as u8]),
         Message::Audio(samples) => {
             (tag::AUDIO, samples.iter().flat_map(|sample| sample.to_be_bytes()).collect())
         }
@@ -180,6 +185,36 @@ pub fn write_message(out: &mut impl Write, message: &Message) -> io::Result<()> 
     packet.extend(payload);
     // In one piece: with `TCP_NODELAY` a header on its own would be a packet of its own.
     out.write_all(&packet)
+}
+
+fn decode_video(mut payload: Vec<u8>) -> io::Result<VideoPacket> {
+    if payload.len() < VideoPacket::HEADER {
+        return Err(invalid("bad picture message"));
+    }
+    let display = match payload[0] {
+        0 => Display::Tv,
+        1 => Display::GamePad,
+        _ => return Err(invalid("bad picture message")),
+    };
+    let codec = Codec::from_u8(payload[1]).ok_or_else(|| invalid("unknown codec"))?;
+    let width = u16::from_be_bytes([payload[3], payload[4]]);
+    let height = u16::from_be_bytes([payload[5], payload[6]]);
+    if u32::from(width) > MAX_FRAME_SIDE || u32::from(height) > MAX_FRAME_SIDE {
+        return Err(invalid("picture too large"));
+    }
+    let mut taken = [0; 8];
+    taken.copy_from_slice(&payload[7..15]);
+    let keyframe = payload[2] != 0;
+    let data = payload.split_off(VideoPacket::HEADER);
+    Ok(VideoPacket {
+        display,
+        codec,
+        keyframe,
+        width,
+        height,
+        taken: u64::from_be_bytes(taken),
+        data,
+    })
 }
 
 /// Reads one message.
@@ -210,15 +245,16 @@ pub fn read_message(input: &mut impl Read) -> io::Result<Message> {
         tag::PING => Ok(Message::Ping(value()?)),
         tag::PONG => Ok(Message::Pong(value()?)),
         tag::INPUT => decode_input(&payload).map(Message::Input),
-        tag::VIDEO => {
-            let display = match payload.first() {
-                Some(0) => Display::Tv,
-                Some(1) => Display::GamePad,
-                _ => return Err(invalid("bad picture message")),
-            };
-            payload.remove(0);
-            Ok(Message::Video(display, payload))
-        }
+        tag::VIDEO => decode_video(payload).map(Message::Video),
+        tag::CODECS => match payload.as_slice() {
+            [bits] => Ok(Message::Codecs(*bits)),
+            _ => Err(invalid("bad codec list")),
+        },
+        tag::KEYFRAME => match payload.as_slice() {
+            [0] => Ok(Message::Keyframe(Display::Tv)),
+            [1] => Ok(Message::Keyframe(Display::GamePad)),
+            _ => Err(invalid("bad keyframe request")),
+        },
         tag::AUDIO => Ok(Message::Audio(
             payload.as_chunks::<2>().0.iter().map(|bytes| i16::from_be_bytes(*bytes)).collect(),
         )),

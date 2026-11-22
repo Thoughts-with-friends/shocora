@@ -29,6 +29,7 @@ pub mod proc_ui;
 pub mod process;
 pub mod registry;
 pub mod sndcore2;
+pub mod swkbd;
 pub mod vpad;
 pub mod zlib125;
 
@@ -86,6 +87,9 @@ pub struct CafeOs {
     /// `vpad.rpl` settings and button repeat.
     #[serde(default)]
     pub vpad: vpad::VpadState,
+    /// The software keyboard.
+    #[serde(default)]
+    pub swkbd: swkbd::Swkbd,
     /// Title ID of the running title (0 for homebrew), for title-specific behaviour.
     #[serde(default)]
     pub title_id: u64,
@@ -117,6 +121,7 @@ impl CafeOs {
         registry.register_functions(mic::EXPORTS);
         registry.register_functions(dmae::EXPORTS);
         registry.register_functions(patches::EXPORTS);
+        registry.register_functions(swkbd::EXPORTS);
 
         Self {
             registry,
@@ -142,6 +147,7 @@ impl CafeOs {
             mic: mic::MicState::default(),
             padscore: padscore::PadscoreState::default(),
             vpad: vpad::VpadState::default(),
+            swkbd: swkbd::Swkbd::default(),
             title_id: 0,
         }
     }

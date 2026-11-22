@@ -213,6 +213,30 @@ fn fs_read_file_with_pos(
     read(ctx, dst, size, count, Some(position), handle)
 }
 
+/// Shared body of the `FSWriteFile*` calls: returns elements written.
+fn write(
+    ctx: &mut HleContext<'_>,
+    src: GuestPtr<u8>,
+    size: u32,
+    count: u32,
+    position: Option<u32>,
+    handle: u32,
+) -> Result<i32, HleError> {
+    if let Some(position) = position {
+        if let Err(error) = ctx.iosu.fsa.set_position(handle, u64::from(position)) {
+            return Ok(finish(Err(error), "FSWriteFile", "seek"));
+        }
+    }
+    let mut bytes = vec![0; size.saturating_mul(count) as usize];
+    ctx.memory.read_bytes(src.address(), &mut bytes)?;
+    let result = ctx.iosu.fsa.write_file(handle, &bytes);
+    Ok(finish(
+        result.map(|written| (written as u32).checked_div(size).unwrap_or(0) as i32),
+        "FSWriteFile",
+        "",
+    ))
+}
+
 #[hle_export(lib = "coreinit", name = "FSWriteFile")]
 fn fs_write_file(
     ctx: &mut HleContext<'_>,
@@ -225,14 +249,23 @@ fn fs_write_file(
     _flag: u32,
     _error_mask: u32,
 ) -> Result<i32, HleError> {
-    let mut bytes = vec![0; size.saturating_mul(count) as usize];
-    ctx.memory.read_bytes(src.address(), &mut bytes)?;
-    let result = ctx.iosu.fsa.write_file(handle, &bytes);
-    Ok(finish(
-        result.map(|written| (written as u32).checked_div(size).unwrap_or(0) as i32),
-        "FSWriteFile",
-        "",
-    ))
+    write(ctx, src, size, count, None, handle)
+}
+
+#[hle_export(lib = "coreinit", name = "FSWriteFileWithPos")]
+fn fs_write_file_with_pos(
+    ctx: &mut HleContext<'_>,
+    _client: u32,
+    _block: GuestPtr<u8>,
+    src: GuestPtr<u8>,
+    size: u32,
+    count: u32,
+    position: u32,
+    handle: u32,
+    _flag: u32,
+    _error_mask: u32,
+) -> Result<i32, HleError> {
+    write(ctx, src, size, count, Some(position), handle)
 }
 
 #[hle_export(lib = "coreinit", name = "FSGetPosFile")]
@@ -418,7 +451,9 @@ pub(super) fn complete_async(
         ] {
             ctx.memory.write_u32(result + offset, value)?;
         }
-        crate::coreinit::thread::message::send(ctx, queue, result + 0x0C, 0, false)?;
+        if !crate::coreinit::thread::message::send(ctx, queue, result + 0x0C, 0, false)? {
+            ctx.os.coreinit.fs.undelivered.push((queue, result + 0x0C));
+        }
     } else if callback != 0 {
         ctx.os.callbacks.push(crate::hle::callback::GuestCall {
             function: callback,
@@ -564,6 +599,57 @@ fn fs_read_dir_async(
 ) -> Result<i32, HleError> {
     let status = fs_read_dir(ctx, client, block, handle, entry_out, error_mask)?;
     complete_async(ctx, client, block, params, status)
+}
+
+// Xenoblade Chronicles X writes its saves with these and waits for their completion
+// message, so a missing one froze it on every save.
+#[hle_export(lib = "coreinit", name = "FSWriteFileAsync")]
+fn fs_write_file_async(
+    ctx: &mut HleContext<'_>,
+    client: u32,
+    block: GuestPtr<u8>,
+    src: GuestPtr<u8>,
+    size: u32,
+    count: u32,
+    handle: u32,
+    _flag: u32,
+    _error_mask: u32,
+    params: u32,
+) -> Result<i32, HleError> {
+    let status = write(ctx, src, size, count, None, handle)?;
+    complete_async(ctx, client, block, params, status)
+}
+
+#[hle_export(lib = "coreinit", name = "FSWriteFileWithPosAsync")]
+fn fs_write_file_with_pos_async(
+    ctx: &mut HleContext<'_>,
+    client: u32,
+    block: GuestPtr<u8>,
+    src: GuestPtr<u8>,
+    size: u32,
+    count: u32,
+    position: u32,
+    handle: u32,
+    _flag: u32,
+    _error_mask: u32,
+    params: u32,
+) -> Result<i32, HleError> {
+    let status = write(ctx, src, size, count, Some(position), handle)?;
+    complete_async(ctx, client, block, params, status)
+}
+
+/// Every command completes at once, so none is left to cancel.
+#[hle_export(lib = "coreinit", name = "FSCancelAllCommands")]
+fn fs_cancel_all_commands(_ctx: &mut HleContext<'_>, _client: u32) {}
+
+#[hle_export(lib = "coreinit", name = "FSGetLastError")]
+fn fs_get_last_error(_ctx: &mut HleContext<'_>, _client: u32) -> i32 {
+    0
+}
+
+#[hle_export(lib = "coreinit", name = "FSGetErrorCodeForViewer")]
+fn fs_get_error_code_for_viewer(_ctx: &mut HleContext<'_>, _client: u32, _block: u32) -> u32 {
+    0
 }
 
 #[hle_export(lib = "coreinit", name = "FSCloseDirAsync")]

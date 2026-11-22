@@ -32,6 +32,8 @@ pub struct Presenter {
     egui_renderer: std::sync::Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>,
     /// Registered texture, the generation it shows and the image size.
     textures: HashMap<Screen, (egui::TextureId, u64, egui::Vec2)>,
+    /// Filtering of the screens when drawn larger / smaller than they are.
+    output_filter: wiiu_emu::OutputFilter,
 }
 
 impl Presenter {
@@ -68,12 +70,36 @@ impl Presenter {
             device: state.device.clone(),
             egui_renderer: std::sync::Arc::clone(&state.renderer),
             textures: HashMap::new(),
+            output_filter: wiiu_emu::OutputFilter::default(),
         })
     }
 
     /// Applies from the next flip on.
     pub fn set_upscale(&self, config: UpscaleConfig) {
         self.upscale.set(config);
+    }
+
+    /// Filtering of the screens from graphic packs' `[OutputShader]`; applies at once.
+    pub fn set_output_filter(&mut self, filter: wiiu_emu::OutputFilter) {
+        if self.output_filter != filter {
+            self.output_filter = filter;
+            // Registered again with the new sampler on the next sync.
+            for (_, generation, _) in self.textures.values_mut() {
+                *generation = u64::MAX;
+            }
+        }
+    }
+
+    fn sampler(&self) -> wgpu::SamplerDescriptor<'static> {
+        let filter = |nearest| {
+            if nearest { wgpu::FilterMode::Nearest } else { wgpu::FilterMode::Linear }
+        };
+        wgpu::SamplerDescriptor {
+            label: Some("screen"),
+            mag_filter: filter(self.output_filter.upscale_nearest),
+            min_filter: filter(self.output_filter.downscale_nearest),
+            ..Default::default()
+        }
     }
 
     /// Applies from the next flip on.
@@ -116,20 +142,25 @@ impl Presenter {
                 Some((_, generation, _)) if *generation == image.generation => {}
                 Some((id, _, _)) => {
                     let id = *id;
-                    self.egui_renderer.write().update_egui_texture_from_wgpu_texture(
-                        &self.device,
-                        &image.view,
-                        wgpu::FilterMode::Linear,
-                        id,
-                    );
+                    let sampler = self.sampler();
+                    self.egui_renderer
+                        .write()
+                        .update_egui_texture_from_wgpu_texture_with_sampler_options(
+                            &self.device,
+                            &image.view,
+                            sampler,
+                            id,
+                        );
                     self.textures.insert(screen, (id, image.generation, size));
                 }
                 None => {
-                    let id = self.egui_renderer.write().register_native_texture(
-                        &self.device,
-                        &image.view,
-                        wgpu::FilterMode::Linear,
-                    );
+                    let sampler = self.sampler();
+                    let id =
+                        self.egui_renderer.write().register_native_texture_with_sampler_options(
+                            &self.device,
+                            &image.view,
+                            sampler,
+                        );
                     self.textures.insert(screen, (id, image.generation, size));
                 }
             }

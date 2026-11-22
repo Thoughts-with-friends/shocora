@@ -209,6 +209,9 @@
   "packs.check_updates": "Check for updates",
   "packs.check_at_start": "Check at start",
   "packs.next_boot": "Saved at once. Mods (replaced files) apply now; graphics at the next boot",
+  "keyboard.title": "Keyboard",
+  "keyboard.ok": "OK",
+  "keyboard.hint": "Type with the keyboard (input method too). Enter confirms.",
   "packs.close": "Close",
   "packs.none": "No graphic packs. Download the community packs or put packs in the graphicPacks folder.",
   "packs.select": "Select a pack to see its description and presets.",
@@ -220,5 +223,7 @@
   "packs.translate": "Translate description",
   "packs.translate_hint": "Sends this description to Google Translate.",
   "packs.translating": "Translating...",
-  "packs.translate_failed": "Translation failed: {error}"
+  "packs.translate_failed": "Translation failed: {error}",
+  "netplay.stream_quality": "Picture sent to player 2",
+  "netplay.stream_quality_hint": "The host's picture is scaled to this size and sent as H.264 (HEVC above 4K).\nThe graphics card's video encoder does the work, which keeps it light and the delay short.\nWhen the other PC cannot play it, JPEG is sent instead.\nHigher resolutions take more bandwidth and readback time; 8K may not reach 60 fps."
 }

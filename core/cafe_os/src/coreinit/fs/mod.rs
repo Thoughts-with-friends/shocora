@@ -50,6 +50,10 @@ impl Default for Client {
 pub struct FsState {
     pub initialized: bool,
     pub clients: HashMap<u32, Client>,
+    /// Completion messages (queue, message) that found their queue full. Cafe OS's FS
+    /// thread blocks until there is room; here they go in as the title takes messages out.
+    #[serde(default)]
+    pub undelivered: Vec<(u32, u32)>,
 }
 
 impl FsState {

@@ -75,7 +75,7 @@ impl shocora_netplay::HostEvents for NetEvents {
         self.gamepad.set_enabled(wanted);
     }
 
-    fn take_frames(&self) -> Vec<shocora_netplay::Frame> {
+    fn take_frames(&self) -> Vec<shocora_netplay::Picture> {
         [
             (shocora_netplay::Display::Tv, &self.tv),
             (shocora_netplay::Display::GamePad, &self.gamepad),
@@ -83,11 +83,15 @@ impl shocora_netplay::HostEvents for NetEvents {
         .into_iter()
         .filter_map(|(display, tap)| {
             let frame = tap.take()?;
-            Some(shocora_netplay::Frame {
+            Some(shocora_netplay::Picture {
                 display,
                 width: frame.width,
                 height: frame.height,
-                rgba: frame.rgba,
+                pixels: if frame.nv12 {
+                    shocora_netplay::Pixels::Nv12(frame.data)
+                } else {
+                    shocora_netplay::Pixels::Rgba(frame.data)
+                },
             })
         })
         .collect()
@@ -222,6 +226,7 @@ fn capture_frame(
         })
         .collect();
     let mut probed = HashMap::new();
+    let mut probed_depth = HashMap::new();
 
     let poison: Vec<u32> = std::env::var("SHOCORA_CAPTURE_POISON")
         .unwrap_or_default()
@@ -322,6 +327,41 @@ fn capture_frame(
 
                 if probed.insert((x, y, key.address), pixel) != Some(pixel) {
                     writeln!(log, "probe {index} ({x},{y}) {:x}: {pixel:?}", key.address)?;
+                    // Float targets: the values the clamped picture hides.
+                    if key.format == wiiu_gpu::render::HostFormat::Rg11b10Float
+                        && let Some((width, _, raw)) = renderer.read_surface_bytes(*key)
+                        && let Some(bytes) = raw.get(((y * width + x) * 4) as usize..)
+                        && let Some(word) = bytes.first_chunk::<4>()
+                    {
+                        let word = u32::from_le_bytes(*word);
+                        let small = |bits: u32, mantissa: u32| {
+                            let exponent = bits >> mantissa;
+                            let fraction =
+                                (bits & ((1 << mantissa) - 1)) as f32 / (1 << mantissa) as f32;
+                            if exponent == 0 {
+                                fraction * 2_f32.powi(-14)
+                            } else {
+                                (1.0 + fraction) * 2_f32.powi(exponent as i32 - 15)
+                            }
+                        };
+                        let rgb = [
+                            small(word & 0x7FF, 6),
+                            small((word >> 11) & 0x7FF, 6),
+                            small(word >> 22, 5),
+                        ];
+                        writeln!(log, "probe {index} ({x},{y}) {:x} float: {rgb:?}", key.address)?;
+                    }
+                }
+            }
+        }
+
+        // The depth at the probed pixels, where the host keeps it as 32-bit floats.
+        if let Some((key, _)) = draw.depth_target {
+            for &(x, y) in &probes {
+                let Some((width, _, depth)) = renderer.read_depth(key) else { break };
+                let Some(&value) = depth.get((y * width + x) as usize) else { continue };
+                if probed_depth.insert((x, y), value.to_bits()) != Some(value.to_bits()) {
+                    writeln!(log, "depth {index} ({x},{y}) {:x}: {value}", key.address)?;
                 }
             }
         }
@@ -354,13 +394,17 @@ fn capture_frame(
         writeln!(
             log,
             "{index}: draw vs{} ps{} n{} i{} {:?} changed {changed:?} target {target:?} all {:x?} depth {:?} \
-             masks {:?} blend {:?} test {} write {} cmp {} cull {}/{} cw {} vp {:?} sc {:?}\n  tex {:?}",
+             masks {:?} blend {:?} test {} write {} cmp {} cull {}/{} cw {} vp {:?} sc {:?} stencil {} {:?} ref {} rm {:x} wm {:x}\n  tex {:?}",
             draw.vertex.id,
             draw.pixel.id,
             draw.count,
             draw.instances,
             draw.state.topology,
-            draw.color_targets.iter().flatten().map(|(key, _)| key.address).collect::<Vec<_>>(),
+            draw.color_targets
+                .iter()
+                .flatten()
+                .map(|(key, _)| (key.address, key.format))
+                .collect::<Vec<_>>(),
             draw.depth_target,
             &draw.state.color_masks[..4],
             draw.state.blend[0],
@@ -372,6 +416,11 @@ fn capture_frame(
             draw.state.front_face_cw,
             draw.viewport,
             draw.scissor,
+            draw.state.stencil_test,
+            draw.state.stencil_front,
+            draw.stencil_reference,
+            draw.state.stencil_read_mask,
+            draw.state.stencil_write_mask,
             draw.textures
                 .iter()
                 .map(|t| (t.binding, t.key, t.base_level, t.level_count, t.sampler))

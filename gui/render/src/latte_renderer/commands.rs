@@ -20,6 +20,9 @@ impl LatteRenderer {
         self.pipeline_epoch += 1;
         self.bind_groups.clear();
         self.feedback_copies.clear();
+        self.feedback_sync.clear();
+        self.aliases.clear();
+        self.reinterpret.clear();
         self.readbacks_recorded.clear();
         self.readbacks_in_flight.clear();
         self.pending_scan.clear();
@@ -88,13 +91,51 @@ impl RenderBackend for LatteRenderer {
                     let _ = reply.0.send(surfaces);
                 }
                 RenderCommand::SetResolution(resolution) => self.set_resolution(*resolution),
-                RenderCommand::Upload(upload) => self.upload(upload),
+                RenderCommand::Upload(upload) => {
+                    self.upload(upload);
+                    self.reinterpret.written(upload.key);
+                }
                 RenderCommand::ForgetTexture(key) => self.forget_texture(*key),
-                RenderCommand::Clear { color, depth } => self.clear(*color, *depth),
+                RenderCommand::Clear { color, depth } => {
+                    self.clear(*color, *depth);
+                    if let Some((key, _, _)) = color {
+                        self.reinterpret.written(*key);
+                    }
+                    let alias = depth.and_then(|d| Some((d, *self.aliases.get(&d.surface)?)));
+                    if let Some((depth, alias)) = alias {
+                        self.clear(
+                            None,
+                            Some(wiiu_gpu::render::DepthClear { surface: alias, ..depth }),
+                        );
+                    }
+                }
                 RenderCommand::Draw(draw) => {
                     self.frame_draws += 1;
                     if self.max_draws.is_none_or(|limit| self.frame_draws <= limit) {
-                        self.draw(draw);
+                        // What the draw reads, and what it draws over, as last written in
+                        // whatever format.
+                        for bound in &draw.textures {
+                            self.sync_format(bound.key);
+                        }
+                        for (key, _) in draw.color_targets.iter().flatten() {
+                            self.sync_format(*key);
+                        }
+                        let aliased =
+                            draw.textures.iter().any(|t| self.aliases.contains_key(&t.key));
+                        if aliased {
+                            let mut draw = draw.clone();
+                            for bound in &mut draw.textures {
+                                if let Some(alias) = self.aliases.get(&bound.key) {
+                                    bound.key = *alias;
+                                }
+                            }
+                            self.draw(&draw);
+                        } else {
+                            self.draw(draw);
+                        }
+                        for (key, _) in draw.color_targets.iter().flatten() {
+                            self.reinterpret.written(*key);
+                        }
                     }
                 }
                 RenderCommand::CopySurface {
@@ -106,6 +147,9 @@ impl RenderBackend for LatteRenderer {
                     // The surface's first level already is the one Latte picked.
                     source_level: _,
                 } => {
+                    let source = *self.aliases.get(source).unwrap_or(source);
+                    self.sync_format(source);
+                    let source = &source;
                     self.copy_surface(
                         *source,
                         *source_slice,
@@ -113,12 +157,16 @@ impl RenderBackend for LatteRenderer {
                         *target_level,
                         *target_slice,
                     );
+                    self.reinterpret.written(*target);
                 }
                 RenderCommand::CopyToScanBuffer { surface, slice, screen, srgb } => {
                     self.pending_scan.insert(*screen, (*surface, *slice, *srgb));
                 }
                 RenderCommand::Flip => self.flip(),
-                RenderCommand::Readback { target, reply } => self.readback(*target, reply),
+                RenderCommand::Readback { target, reply } => {
+                    self.sync_format(target.surface);
+                    self.readback(*target, reply);
+                }
             }
         }
         self.start_readbacks();

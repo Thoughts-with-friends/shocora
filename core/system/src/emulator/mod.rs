@@ -102,6 +102,19 @@ pub struct Emulator {
     slice_ends: std::collections::HashMap<u32, u64>,
     /// Graphic pack code patches in the running title.
     patches: patches::PatchState,
+    /// A graphic pack's `vsyncFrequency`: the vertical blank period it sets for the title.
+    pack_frame_time: Option<std::time::Duration>,
+    /// A graphic pack's `[OutputShader]`: nearest-neighbour filtering of the picture when
+    /// it is scaled up / down to the window.
+    output_nearest: OutputFilter,
+}
+
+/// How the picture is filtered when shown larger or smaller than drawn (graphic packs'
+/// `[OutputShader] upscaleMagFilter` / `downscaleMinFilter`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutputFilter {
+    pub upscale_nearest: bool,
+    pub downscale_nearest: bool,
 }
 
 impl std::fmt::Debug for Emulator {
@@ -158,6 +171,8 @@ impl Emulator {
             multi_core_running: false,
             slice_ends: std::collections::HashMap::new(),
             patches: patches::PatchState::default(),
+            pack_frame_time: None,
+            output_nearest: OutputFilter::default(),
         })
     }
 
@@ -230,8 +245,28 @@ impl Emulator {
     }
 
     /// Where the cheat codes of the running title are kept.
+    /// The picture's filtering asked for by the running title's graphic packs.
+    pub fn output_filter(&self) -> OutputFilter {
+        self.output_nearest
+    }
+
     pub fn title_id(&self) -> Option<u64> {
         self.title.as_ref()?.meta.title_id
+    }
+
+    /// The software keyboard's text while the title waits for some.
+    pub fn keyboard_text(&self) -> Option<String> {
+        self.os.swkbd.is_active().then(|| self.os.swkbd.text())
+    }
+
+    /// Types `text` into the software keyboard; `decide` confirms it (OK).
+    pub fn set_keyboard_text(&mut self, text: &str, decide: bool) {
+        if let Err(error) = self.os.swkbd_set_text(&mut self.memory, text) {
+            log::warn!("software keyboard: {error}");
+        }
+        if decide {
+            self.os.swkbd_decide();
+        }
     }
 
     pub fn cheats_path(&self) -> Option<std::path::PathBuf> {

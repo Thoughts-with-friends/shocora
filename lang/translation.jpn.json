@@ -209,6 +209,9 @@
   "packs.check_updates": "更新を確認",
   "packs.check_at_start": "起動時に確認",
   "packs.next_boot": "変更は即時保存。Mod（ファイル置換）は即時、グラフィックは次回起動から有効",
+  "keyboard.title": "キーボード入力",
+  "keyboard.ok": "決定",
+  "keyboard.hint": "キーボードで入力（IME可）。Enterで決定。",
   "packs.close": "閉じる",
   "packs.none": "グラフィックパックがありません。コミュニティ版をダウンロードするか、graphicPacks フォルダにパックを置いてください。",
   "packs.select": "パックを選ぶと説明とプリセットを表示します。",
@@ -220,5 +223,7 @@
   "packs.translate": "説明を翻訳",
   "packs.translate_hint": "この説明を Google 翻訳に送って翻訳します。",
   "packs.translating": "翻訳中...",
-  "packs.translate_failed": "翻訳に失敗しました: {error}"
+  "packs.translate_failed": "翻訳に失敗しました: {error}",
+  "netplay.stream_quality": "2P に送る画面",
+  "netplay.stream_quality_hint": "ホストの画面をこの解像度に縮小して、H.264（4K を超えると HEVC）で送ります。\nグラフィックボードの動画エンコーダーを使うので軽く、遅延も小さくなります。\n相手の PC が再生できないときは JPEG で送ります。\n高い解像度ほど通信量と読み出しの負荷が増えます。8K は 60 fps に届かないことがあります。"
 }

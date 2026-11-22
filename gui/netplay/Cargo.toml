@@ -19,5 +19,13 @@ log = { workspace = true }
 sha2 = "0.10"
 wiiu_peripherals = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
+
 [lints]
 workspace = true

@@ -18,7 +18,7 @@ pub use latte_renderer::{
     LatteRenderer, MemoryWatch, PipelineSetting, RenderThread, ScreenImage, ScreenImages,
     request_device, wanted_features, wgpu_format,
 };
-pub use stream::{StreamFrame, StreamTap};
+pub use stream::{StreamFormat, StreamFrame, StreamTap};
 pub use upscale::{UpscaleConfig, UpscaleMethod, UpscaleSetting};
 pub use wiiu_gpu::{RenderBackend, RenderCommand, Screen, render::ResolutionScale};
 

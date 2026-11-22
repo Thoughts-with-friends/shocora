@@ -118,6 +118,12 @@ fn receive(
         ring.used -= 1;
         ring.write(ctx, queue)?;
         ctx.os.coreinit.threads.request(Reschedule::Priority);
+        // Room for a file-system completion that was waiting for it.
+        let undelivered = &mut ctx.os.coreinit.fs.undelivered;
+        if let Some(index) = undelivered.iter().position(|(q, _)| *q == queue) {
+            let (_, waiting) = undelivered.remove(index);
+            send(ctx, queue, waiting, 0, false)?;
+        }
     }
     Ok(true)
 }

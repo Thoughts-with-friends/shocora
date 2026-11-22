@@ -194,6 +194,9 @@ impl LatteRenderer {
         });
         self.bind_groups.clear();
         self.feedback_copies.clear();
+        self.feedback_sync.clear();
+        self.aliases.clear();
+        self.reinterpret.clear();
         self.resolution = resolution;
     }
 
@@ -203,6 +206,7 @@ impl LatteRenderer {
         if self.uploaded.remove(&key) && !self.drawn_to.contains(&key) {
             self.surfaces.remove(&key);
             self.feedback_copies.remove(&key);
+            self.feedback_sync.remove(&key);
             // They would keep the texture alive.
             self.bind_groups.clear();
         }
@@ -210,6 +214,7 @@ impl LatteRenderer {
 
     pub(super) fn upload(&mut self, upload: &TextureUpload) {
         self.counters.uploads += 1;
+        self.feedback_sync.remove(&upload.key);
         if self.upload_in_frame(upload) {
             return;
         }
@@ -363,6 +368,12 @@ impl LatteRenderer {
     ) {
         self.end_pass();
         self.counters.passes += 1;
+        if let Some((key, ..)) = &color {
+            self.feedback_sync.remove(key);
+        }
+        if let Some(d) = &depth {
+            self.feedback_sync.remove(&d.surface);
+        }
         let color_view = color.map(|(key, slice, _)| {
             self.target_surface(key, 1).target_view(0, slice.min(key.layers.saturating_sub(1)))
         });
@@ -468,31 +479,34 @@ impl LatteRenderer {
                     TextureKind::Sint => wgpu::TextureFormat::Rgba8Sint,
                 };
                 let layers = if dim == TextureDim::Cube { 6 } else { 1 };
-                let texture = device.create_texture_with_data(
-                    &queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("shocora dummy"),
-                        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: if dim == TextureDim::D3 {
-                            wgpu::TextureDimension::D3
-                        } else {
-                            wgpu::TextureDimension::D2
-                        },
-                        format,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST
-                            | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        view_formats: &[],
+                let descriptor = wgpu::TextureDescriptor {
+                    label: Some("shocora dummy"),
+                    size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: if dim == TextureDim::D3 {
+                        wgpu::TextureDimension::D3
+                    } else {
+                        wgpu::TextureDimension::D2
                     },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    &vec![
-                        0;
-                        (format.block_copy_size(Some(wgpu::TextureAspect::All)).unwrap_or(4)
-                            * layers) as usize
-                    ],
-                );
+                    format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                };
+                // Depth cannot be written from the CPU; a new texture reads as zero anyway.
+                let texture = if format.has_depth_aspect() {
+                    device.create_texture(&descriptor)
+                } else {
+                    let zeros = format.block_copy_size(None).unwrap_or(4) * layers;
+                    device.create_texture_with_data(
+                        &queue,
+                        &descriptor,
+                        wgpu::util::TextureDataOrder::LayerMajor,
+                        &vec![0; zeros as usize],
+                    )
+                };
                 texture.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(view_dimension(dim)),
                     array_layer_count: if dim == TextureDim::Cube {

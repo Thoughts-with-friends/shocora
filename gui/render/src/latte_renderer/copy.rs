@@ -28,6 +28,7 @@ impl LatteRenderer {
     ) {
         self.end_pass();
         self.counters.copies += 1;
+        self.feedback_sync.remove(&target);
         if !self.surfaces.contains_key(&source) {
             return;
         }

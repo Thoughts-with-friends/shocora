@@ -43,7 +43,8 @@ impl Emulator {
         crate::cheat::apply(&self.cheats, &mut self.memory);
 
         // Vertical blanks come as often as the guest's time says.
-        let frame_time = self.config.frame_time * 2 / self.speed.halves();
+        let frame_time =
+            self.pack_frame_time.unwrap_or(self.config.frame_time) * 2 / self.speed.halves();
         let now = Instant::now();
 
         // 3. Calculate the next VSync deadline.

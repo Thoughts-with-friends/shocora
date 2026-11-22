@@ -6,6 +6,8 @@ use std::{
 
 use image::{ExtendedColorType, ImageFormat, ImageReader, Limits, codecs::jpeg::JpegEncoder};
 use sha2::{Digest, Sha256};
+
+pub use crate::video::Codec;
 use wiiu_peripherals::{
     GamePadState,
     controller::{Stick, VpadButtons},
@@ -22,11 +24,11 @@ pub const AUDIO_RATE: u32 = 16_000;
 /// Rate of the sound the emulator produces.
 const INPUT_AUDIO_RATE: u32 = 48_000;
 /// Bumped when the messages change: both sides must speak the same version.
-const VERSION: u16 = 4;
-/// Anything longer did not come from a peer speaking this protocol.
-const MAX_PAYLOAD: usize = 4 << 20;
+const VERSION: u16 = 5;
+/// Anything longer did not come from a peer speaking this protocol: an 8K keyframe fits.
+const MAX_PAYLOAD: usize = 32 << 20;
 /// Largest picture a guest decodes.
-const MAX_FRAME_SIDE: u32 = 4096;
+const MAX_FRAME_SIDE: u32 = 8192;
 const JPEG_QUALITY: u8 = 70;
 /// Size of the GamePad's screen: a touch is never outside of it.
 const TOUCH_SIZE: (u16, u16) = (854, 480);
@@ -47,6 +49,8 @@ mod tag {
     pub const STATUS: u8 = 11;
     pub const FRAME_SHOWN: u8 = 12;
     pub const RETURN_PLAYER1: u8 = 13;
+    pub const CODECS: u8 = 14;
+    pub const KEYFRAME: u8 = 15;
 }
 
 /// Bytes of the random value a host greets a guest with.
@@ -104,6 +108,23 @@ pub struct Frame {
     pub rgba: Vec<u8>,
 }
 
+/// What a picture on the host holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pixels {
+    Rgba(Vec<u8>),
+    /// As video encoders take it: what the graphics card converts to at high resolutions.
+    Nv12(Vec<u8>),
+}
+
+/// A picture of a screen on its way out of the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picture {
+    pub display: Display,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Pixels,
+}
+
 /// What a guest does with its controller.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct GuestInput {
@@ -157,8 +178,8 @@ pub enum Message {
     Ping(u64),
     Pong(u64),
     Input(GuestInput),
-    /// A JPEG picture of a screen.
-    Video(Display, Vec<u8>),
+    /// A picture of a screen.
+    Video(VideoPacket),
     /// Interleaved stereo at [`AUDIO_RATE`].
     Audio(Vec<i16>),
     Challenge([u8; CHALLENGE_SIZE]),
@@ -170,6 +191,29 @@ pub enum Message {
     FrameShown(Display),
     /// The guest gives the first player's rights back to the host.
     ReturnPlayer1,
+    /// What the guest can decode, as [`Codec::bit`]s; until it says, pictures are JPEG.
+    Codecs(u8),
+    /// The guest lost track of this screen's stream: the next picture must stand alone.
+    Keyframe(Display),
+}
+
+/// A compressed picture of a screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoPacket {
+    pub display: Display,
+    pub codec: Codec,
+    /// Decodable without the pictures before it.
+    pub keyframe: bool,
+    pub width: u16,
+    pub height: u16,
+    /// When the host took the picture, on its clock: for measuring the delay.
+    pub taken: u64,
+    pub data: Vec<u8>,
+}
+
+impl VideoPacket {
+    /// Bytes before the data.
+    pub(crate) const HEADER: usize = 15;
 }
 
 /// What a ping carries: its time of sending on the clock of the side that sends it.
@@ -213,8 +257,26 @@ mod tests {
             Message::Pong(u64::MAX),
             Message::Input(GuestInput { pad, to_gamepad: true }),
             Message::Input(GuestInput::default()),
-            Message::Video(Display::Tv, vec![1, 2, 3]),
-            Message::Video(Display::GamePad, vec![4]),
+            Message::Video(VideoPacket {
+                display: Display::Tv,
+                codec: Codec::H264,
+                keyframe: true,
+                width: 7680,
+                height: 4320,
+                taken: u64::MAX - 5,
+                data: vec![1, 2, 3],
+            }),
+            Message::Video(VideoPacket {
+                display: Display::GamePad,
+                codec: Codec::Jpeg,
+                keyframe: false,
+                width: 1,
+                height: 2,
+                taken: 0,
+                data: vec![4],
+            }),
+            Message::Codecs(0b111),
+            Message::Keyframe(Display::GamePad),
             Message::Status(status),
             Message::Status(HostStatus::default()),
             Message::Audio(vec![-1, 2, i16::MIN, i16::MAX]),
@@ -251,7 +313,7 @@ mod tests {
         assert!(read_message(&mut other_version.as_slice()).is_err());
         let short_input = [tag::INPUT, 0, 0, 0, 1, 0];
         assert!(read_message(&mut short_input.as_slice()).is_err());
-        let no_screen = [tag::VIDEO, 0, 0, 0, 0];
+        let no_screen = [tag::VIDEO, 0, 0, 0, 1, 0];
         assert!(read_message(&mut no_screen.as_slice()).is_err());
         let short_status = [tag::STATUS, 0, 0, 0, 1, 0];
         assert!(read_message(&mut short_status.as_slice()).is_err());

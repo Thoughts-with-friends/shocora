@@ -390,6 +390,36 @@ const fn readback_bytes(format: u32) -> Option<u32> {
     }
 }
 
+/// Small tiled render targets whose values the CPU reads (Cemu's
+/// `LatteTexture_ShouldEnableReadback`): Xenoblade Chronicles X's 1x1 `R16_FLOAT` scene
+/// luminance (allocated 16x8), which sets its exposure, and Cars 3's `R32_FLOAT` exposure.
+/// Never read back, the CPU saw no light at all and lit the picture white.
+fn small_tiled_readback(words: &SurfaceWords) -> Option<crate::tiling::Layout> {
+    /// `R16_FLOAT` / `R32_FLOAT`.
+    const R16_FLOAT: u32 = 0x806;
+    const R32_FLOAT: u32 = 0x80E;
+    let in_mem1 = words.address < 0x0200_0000;
+    let wanted = match words.format {
+        R32_FLOAT => words.width == 1 && words.height <= 8,
+        R16_FLOAT => words.width <= 16 && words.height <= 8 && !in_mem1,
+        _ => false,
+    };
+    if words.tile_mode != tile_mode::TM_1D_TILED_THIN1 || words.depth > 1 || !wanted {
+        return None;
+    }
+    let (pipe_swizzle, bank_swizzle) = crate::tiling::swizzle_from_address(words.address);
+    Some(crate::tiling::Layout {
+        tile_mode: words.tile_mode,
+        bpp: if words.format == R16_FLOAT { 16 } else { 32 },
+        pitch: words.pitch.max(8),
+        height: words.height.next_multiple_of(8),
+        samples: 1,
+        is_depth: false,
+        pipe_swizzle,
+        bank_swizzle,
+    })
+}
+
 /// Render targets in linear memory, and what the renderer read back of them.
 ///
 /// Titles draw small targets in linear memory for the CPU to read: Breath of the Wild has
@@ -656,7 +686,8 @@ impl Latte {
 
     /// A draw to `words`: read back at the flip if it is in linear memory.
     fn note_readback(&mut self, words: &SurfaceWords, surface: SurfaceKey) {
-        if words.tile_mode != tile_mode::TM_LINEAR_ALIGNED
+        let tiled = small_tiled_readback(words);
+        if (words.tile_mode != tile_mode::TM_LINEAR_ALIGNED && tiled.is_none())
             || words.level != 0
             || words.slice != 0
             || words.aa != 0
@@ -676,6 +707,7 @@ impl Latte {
             surface,
             address,
             row_pitch: words.pitch * bytes,
+            tiled,
         });
     }
 
@@ -693,6 +725,18 @@ impl Latte {
             let target = data.target;
             let row_bytes = data.rows.len() / target.surface.height.max(1) as usize;
             if row_bytes == 0 {
+                continue;
+            }
+            if let Some(layout) = target.tiled {
+                let texel = (layout.bpp / 8) as usize;
+                for (y, row) in (0..).zip(data.rows.chunks_exact(row_bytes)) {
+                    for (x, bytes) in (0..).zip(row.chunks_exact(texel)) {
+                        let address = target.address + layout.address(x, y, 0);
+                        if memory.write_bytes(address, bytes).is_ok() {
+                            self.note_cpu_write(address, bytes.len() as u32);
+                        }
+                    }
+                }
                 continue;
             }
             for (row, bytes) in data.rows.chunks_exact(row_bytes).enumerate() {
@@ -1319,6 +1363,11 @@ impl Latte {
         if physical == 0 || size == 0 || size > 0x10_0000 {
             return 0;
         }
+        // Stream-out results only exist on the host: Xenoblade X streams out its matrices and
+        // binds them as a uniform block.
+        if let Some(offset) = self.streamed_attribute(memory, physical) {
+            return offset;
+        }
         let Some(effective) = wiiu_mem_addr::physical_to_effective(physical) else { return 0 };
         let Ok(bytes) = memory.slice(effective, size) else { return 0 };
         // Titles endian-swap uniform blocks themselves (GX2EndianSwap): the GPU reads them as they are.
@@ -1349,7 +1398,7 @@ impl Latte {
         Some(self.stream_buffers.len() - 1)
     }
 
-    /// Arena offset of attribute data the GPU produced itself, unless the CPU replaced it.
+    /// Arena offset of attribute or uniform data the GPU produced itself, unless the CPU replaced it.
     fn streamed_attribute(&mut self, memory: &Memory, physical: u32) -> Option<u32> {
         let index = self
             .stream_buffers
