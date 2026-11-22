@@ -45,6 +45,19 @@ fn bump(version: &str, level: Level) -> Result<String, String> {
     })
 }
 
+/// The highest `MAJOR.MINOR.PATCH` among `tags` (a leading `v` allowed); other tags are not
+/// releases.
+fn latest_release<'a>(tags: impl Iterator<Item = &'a str>) -> Option<String> {
+    tags.filter_map(|tag| {
+        let version = tag.trim().trim_start_matches('v');
+        let parts: Vec<u64> = version.split('.').map(str::parse).collect::<Result<_, _>>().ok()?;
+        let [major, minor, patch] = parts[..] else { return None };
+        Some(((major, minor, patch), version.to_owned()))
+    })
+    .max_by_key(|(key, _)| *key)
+    .map(|(_, version)| version)
+}
+
 /// The `-m` messages joined as git joins them: one paragraph each.
 fn parse_messages(args: impl Iterator<Item = String>) -> Result<Option<String>, String> {
     let mut messages = Vec::new();
@@ -134,7 +147,11 @@ pub fn run_release(level: Level, args: impl Iterator<Item = String>) -> Result<(
     let manifest_path = workspace_root().join("Cargo.toml");
     let manifest = std::fs::read_to_string(&manifest_path)
         .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
-    let (current, range) = find_version(&manifest)?;
+    let (in_manifest, range) = find_version(&manifest)?;
+    // The releases are the tags: the manifest was not always bumped with them (it said 0.1.0
+    // after 0.0.3 was tagged, and 0.1.1 came out instead of 0.0.4).
+    let tags = git_output(&["tag", "--list"])?;
+    let current = latest_release(tags.lines()).unwrap_or(in_manifest);
     let next = bump(&current, level)?;
     if !git_output(&["tag", "--list", &next])?.is_empty() {
         return Err(format!("tag {next} already exists"));
@@ -168,6 +185,13 @@ mod tests {
         assert_eq!(bump("0.1.9", Level::Minor).unwrap(), "0.2.0");
         assert_eq!(bump("1.4.2", Level::Major).unwrap(), "2.0.0");
         assert!(bump("1.2", Level::Patch).is_err());
+    }
+
+    #[test]
+    fn releases_follow_the_tags() {
+        let tags = ["0.0.2", "v0.0.10", "0.0.3", "nightly", "1.2"];
+        assert_eq!(latest_release(tags.into_iter()).as_deref(), Some("0.0.10"));
+        assert_eq!(latest_release(["latest"].into_iter()), None);
     }
 
     #[test]
