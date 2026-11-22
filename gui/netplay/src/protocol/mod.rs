@@ -6,12 +6,12 @@ use std::{
 
 use image::{ExtendedColorType, ImageFormat, ImageReader, Limits, codecs::jpeg::JpegEncoder};
 use sha2::{Digest, Sha256};
-
-pub use crate::video::Codec;
 use wiiu_peripherals::{
     GamePadState,
     controller::{Stick, VpadButtons},
 };
+
+pub use crate::video::Codec;
 
 mod media;
 mod wire;

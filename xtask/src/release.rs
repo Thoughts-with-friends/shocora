@@ -5,8 +5,10 @@
 //! `-m` works as in `git commit`: `-m TEXT`, `-mTEXT`, `--message TEXT` or `--message=TEXT`,
 //! and several of them become separate paragraphs. The message is the tag's annotation and the
 //! release notes' opening text.
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const MANIFEST_SECTION: &str = "[workspace.package]";
 

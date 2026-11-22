@@ -45,6 +45,8 @@ runs:
           libwebkit2gtk-4.1-dev \
           libxdo-dev \
           libudev-dev \
+          libwayland-dev \
+          libxkbcommon-dev \
           pkg-config \
           wget
 
