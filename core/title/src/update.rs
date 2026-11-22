@@ -15,6 +15,23 @@
 //! names the update (or content) of this very title: dumps of the wrong title, or ones still
 //! encrypted, are passed over with the reason. In a folder of many titles' updates, the
 //! other titles' are passed over silently.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ update & DLC       │   │ update.rs                │   │ files to mount     │
+//! │ folders            │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ updates and DLC          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Finds a game's update and DLC and checks the version the game needs. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use std::{
     fs,
     path::{Path, PathBuf},

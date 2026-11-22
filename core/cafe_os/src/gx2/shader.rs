@@ -1,5 +1,22 @@
 //! Fetch shaders (R600 microcode generated on the CPU) and samplers.
 //! Ported from Cemu's GX2_Shader / GX2_Texture.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ vertex layouts,    │   │ gx2/shader.rs            │   │ GPU programs       │
+//! │ samplers           │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ fetch shaders, samplers  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Builds the small GPU programs that read vertex data, and describes how textures are sampled.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_hle_macros::hle_export;

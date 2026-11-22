@@ -1,4 +1,21 @@
 //! The [`Emulator`] aggregate and its public API.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲                ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ front-end requests │   │ emulator/mod.rs          │   │ frames, sound,     │
+//! │                    │──►│ ──────────────────────── │──►│ state              │
+//! │                    │   │ the Emulator object      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The emulator as the window sees it: load, run, pause, change settings. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 mod bus;
 pub mod emu_config;
 mod load;

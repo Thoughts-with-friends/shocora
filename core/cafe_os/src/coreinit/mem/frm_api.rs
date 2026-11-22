@@ -1,4 +1,21 @@
 //! Frame-heap exports.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ MEMFrmHeap calls   │   │ coreinit/mem/frm_api.rs  │   │ allocations        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ frame heap API           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Functions for frame heaps, which allocate quickly and are freed all at once. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

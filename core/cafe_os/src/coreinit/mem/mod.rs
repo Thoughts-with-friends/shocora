@@ -4,6 +4,24 @@
 //! to `MEMCreate*HeapEx` and maps to host-side bookkeeping in [`HeapTable`].
 //! The first bytes of the area are still reserved (as the real header would
 //! be) so no allocation ever equals its heap's handle.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game allocates     │   │ coreinit/mem/mod.rs      │   │ blocks of memory   │
+//! │ memory             │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ memory heaps (MEM)       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Games carve their memory into heaps and allocate from them. This folder implements the
+//! console's heap types. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 pub mod block_api;
 pub mod bounds;
 pub mod exp_api;

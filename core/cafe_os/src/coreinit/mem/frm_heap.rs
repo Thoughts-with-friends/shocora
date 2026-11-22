@@ -1,4 +1,21 @@
 //! Frame heap (`MEMFrmHeap`): bump allocation from both ends, freed in bulk.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ alloc/reset        │   │ coreinit/mem/frm_heap.rs │   │ bump pointers      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ frame heap logic         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The frame heap: allocates from either end and frees everything in one go. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// Which end(s) `MEMFreeToFrmHeap` releases.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

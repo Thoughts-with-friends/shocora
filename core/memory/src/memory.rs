@@ -1,3 +1,21 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ addresses          │   │ memory.rs                │   │ values             │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ big-endian memory access │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads and writes numbers in game memory, flipping byte order (the Wii U is big-endian, your
+//! PC little-endian). Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 use wiiu_mem_addr::Region;
 
 use crate::{MemoryError, host::AddressSpace};

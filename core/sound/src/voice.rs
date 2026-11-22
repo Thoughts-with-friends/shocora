@@ -1,4 +1,21 @@
 //! One playing voice.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ sample memory      │   │ voice.rs                 │   │ samples at         │
+//! │                    │──►│ ──────────────────────── │──►│ pitch/volume       │
+//! │                    │   │ one voice                │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! One playing sound: where its samples are, its pitch and volume. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use crate::adpcm::{self, AdpcmState, NIBBLES_PER_FRAME};
 
 /// Read access to guest sample data.

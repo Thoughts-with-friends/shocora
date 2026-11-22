@@ -4,6 +4,24 @@
 //! the area it hands out. The blocks are kept host-side like an expanded heap's; the
 //! tracking memory the title passes is not needed for that and is left alone, so the
 //! heap never runs out of tracking entries.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ MEMBlockHeap calls │   │ coreinit/mem/block_api.r │   │ allocated ranges   │
+//! │                    │──►│ s                        │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ block heap               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A heap that hands out ranges of memory tracked in a list of blocks. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

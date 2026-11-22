@@ -1,4 +1,21 @@
 //! `meta/meta.xml`, `code/app.xml` and `code/cos.xml`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ meta.xml, app.xml  │   │ meta.rs                  │   │ name, ID, version  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ title metadata           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads the game's name, ID and version from its metadata files. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use std::path::Path;
 
 use crate::TitleError;

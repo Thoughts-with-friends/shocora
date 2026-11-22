@@ -1,5 +1,22 @@
 //! Which packs are enabled with which presets (Cemu's `graphic_pack_entries`), and the
 //! packs that apply to a title at its boot.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ your choices       │   │ settings.rs              │   │ packs for this     │
+//! │                    │──►│ ──────────────────────── │──►│ game               │
+//! │                    │   │ enabled packs            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Which packs you enabled with which presets. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

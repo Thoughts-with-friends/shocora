@@ -1,5 +1,22 @@
 //! GPU interrupts a title asked for with `GX2SubmitUserTimeStamp`: raised once the GPU has
 //! executed the commands before them, not when they are submitted.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ GPU reached a      │   │ gx2/interrupt.rs         │   │ game callback runs │
+//! │ marker             │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GPU interrupts           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Lets the game be told when the GPU has finished a given point of its work. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 impl crate::CafeOs {
     /// Raises the timestamp interrupts whose commands the GPU has executed.
     pub fn fire_gpu_interrupts(&mut self) {

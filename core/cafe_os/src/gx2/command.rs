@@ -4,6 +4,24 @@
 //! A flush hands the commands to the GPU, which may run on a thread of its own: a timestamp
 //! is retired once the GPU has executed its command buffer, and the CPU waits for that only
 //! where a title asks to (`GX2DrawDone`, `GX2WaitTimeStamp`).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ finished command   │   │ gx2/command.rs           │   │ commands sent to   │
+//! │ lists              │──►│ ──────────────────────── │──►│ GPU                │
+//! │                    │   │ command submission       │   │ frame flips        │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Hands the commands GX2 wrote to the GPU, and handles display lists, timestamps and showing
+//! finished frames. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_gpu::command::{opcode, pm4::type3_header};
@@ -405,80 +423,10 @@ const PATCH_FETCH_SHADER: u32 = 1;
 const PATCH_VERTEX_SHADER: u32 = 2;
 const PATCH_PIXEL_SHADER: u32 = 5;
 
-/// Redirects a recorded `SQ_PGM_START_*` to the shader's current program.
-#[hle_export(lib = "gx2", name = "GX2PatchDisplayList")]
-fn gx2_patch_display_list(
-    ctx: &mut HleContext<'_>,
-    list: u32,
-    kind: u32,
-    offset: u32,
-    object: u32,
-) -> Result<(), HleError> {
-    let program = match kind {
-        PATCH_FETCH_SHADER => ctx.memory.read_u32(object + 0x0C)?,
-        PATCH_VERTEX_SHADER => match ctx.memory.read_u32(object + 0xD4)? {
-            0 => ctx.memory.read_u32(object + 0x124 + 0x0C)?,
-            address => address,
-        },
-        PATCH_PIXEL_SHADER => match ctx.memory.read_u32(object + 0xA8)? {
-            0 => ctx.memory.read_u32(object + 0xD8 + 0x0C)?,
-            address => address,
-        },
-        other => {
-            log::warn!("GX2PatchDisplayList: unsupported patch type {other}");
-            return Ok(());
-        }
-    };
-    Ok(ctx.memory.write_u32(list + (offset & !3) + 8, physical(program) >> 8)?)
-}
-
-// ---- Context states --------------------------------------------------------
-
-#[hle_export(lib = "gx2", name = "GX2SetDefaultState")]
-fn gx2_set_default_state(ctx: &mut HleContext<'_>) {
-    super::state::set_default_state(&mut ctx.os.gx2);
-}
-
 /// `GX2ContextState::loadDL_size`.
 const CONTEXT_LOAD_LIST_SIZE: u32 = 0x9804;
 /// `GX2ContextState::loadDL_buffer`.
 const CONTEXT_LOAD_LIST: u32 = 0x9E00;
-
-/// A context starts from the default state; the GPU keeps its copy of the registers
-/// host-side, so the guest structure only holds the display list that restores it.
-#[hle_export(lib = "gx2", name = "GX2SetupContextStateEx")]
-fn gx2_setup_context_state_ex(
-    ctx: &mut HleContext<'_>,
-    state: u32,
-    _profiling: u32,
-) -> Result<(), HleError> {
-    super::state::set_default_state(&mut ctx.os.gx2);
-    ctx.os.gx2.emit(opcode::HLE_CONTEXT_STATE, &[0, state]);
-    let list = [type3_header(opcode::HLE_CONTEXT_STATE, 2), 1, state];
-    for (i, word) in list.iter().enumerate() {
-        ctx.memory.write_u32(state + CONTEXT_LOAD_LIST + 4 * i as u32, *word)?;
-    }
-    ctx.memory.write_u32(state + CONTEXT_LOAD_LIST_SIZE, 4 * list.len() as u32)?;
-    Ok(())
-}
-
-/// The list titles call themselves instead of `GX2SetContextState`.
-#[hle_export(lib = "gx2", name = "GX2GetContextStateDisplayList")]
-fn gx2_get_context_state_display_list(
-    ctx: &mut HleContext<'_>,
-    state: u32,
-    list: u32,
-    size: u32,
-) -> Result<(), HleError> {
-    ctx.memory.write_u32(list, state + CONTEXT_LOAD_LIST)?;
-    let bytes = ctx.memory.read_u32(state + CONTEXT_LOAD_LIST_SIZE)?;
-    Ok(ctx.memory.write_u32(size, bytes)?)
-}
-
-#[hle_export(lib = "gx2", name = "GX2SetContextState")]
-fn gx2_set_context_state(ctx: &mut HleContext<'_>, state: u32) {
-    ctx.os.gx2.emit(opcode::HLE_CONTEXT_STATE, &[1, state]);
-}
 
 pub const EXPORTS: &[HleExport] = &[
     GX2_FLUSH,
@@ -515,88 +463,9 @@ pub const EXPORTS: &[HleExport] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use crate::hle::test_env::{SCRATCH, TestEnv};
+#[path = "command_tests.rs"]
+mod tests;
 
-    #[test]
-    fn display_lists_record_into_guest_memory() {
-        let mut env = TestEnv::new();
-        let list = SCRATCH + 0x100;
-        env.call("gx2", "GX2BeginDisplayListEx", &[list, 0x100, 0]);
-        env.call("gx2", "GX2SetPrimitiveRestartIndex", &[7]);
-        let size = env.call("gx2", "GX2EndDisplayList", &[list]);
-        assert_eq!(size, 12);
-        assert_eq!(env.memory.read_u32(list + 8).unwrap(), 7);
-        env.call("gx2", "GX2CallDisplayList", &[list, size]);
-        env.call("gx2", "GX2DrawDone", &[]);
-        assert_eq!(
-            env.gpu.registers().get(wiiu_gpu::regs::context::VGT_MULTI_PRIM_IB_RESET_INDX),
-            7
-        );
-    }
-
-    #[test]
-    fn context_state_list_restores_the_state_it_belongs_to() {
-        let mut env = TestEnv::new();
-        let state = SCRATCH + 0x1000;
-        let (list_out, size_out) = (SCRATCH, SCRATCH + 4);
-        env.call("gx2", "GX2SetupContextStateEx", &[state, 0]);
-        env.call("gx2", "GX2GetContextStateDisplayList", &[state, list_out, size_out]);
-        let list = env.memory.read_u32(list_out).unwrap();
-        assert_eq!(list, state + super::CONTEXT_LOAD_LIST);
-        assert_eq!(env.memory.read_u32(size_out).unwrap(), 12);
-        assert_eq!(env.memory.read_u32(list + 8).unwrap(), state);
-    }
-
-    #[test]
-    fn current_display_list_is_known_only_while_recording() {
-        let mut env = TestEnv::new();
-        let (address, size) = (SCRATCH, SCRATCH + 4);
-        assert_eq!(env.call("gx2", "GX2GetCurrentDisplayList", &[address, size]), 0);
-        env.call("gx2", "GX2BeginDisplayListEx", &[SCRATCH + 0x100, 0x80, 0]);
-        assert_eq!(env.call("gx2", "GX2GetCurrentDisplayList", &[address, size]), 1);
-        assert_eq!(env.memory.read_u32(address).unwrap(), SCRATCH + 0x100);
-        assert_eq!(env.memory.read_u32(size).unwrap(), 0x80);
-    }
-
-    #[test]
-    fn swap_status_counts_requests_and_vsync_retires_them() {
-        let mut env = TestEnv::new();
-        env.call("gx2", "GX2SwapScanBuffers", &[]);
-        let (requests, executed) = (SCRATCH, SCRATCH + 4);
-        env.call("gx2", "GX2GetSwapStatus", &[requests, executed, SCRATCH + 8, SCRATCH + 16]);
-        assert_eq!(env.memory.read_u32(requests).unwrap(), 1);
-        assert_eq!(env.memory.read_u32(executed).unwrap(), 0);
-        env.os.vsync();
-        env.call("gx2", "GX2GetSwapStatus", &[requests, executed, SCRATCH + 8, SCRATCH + 16]);
-        assert_eq!(env.memory.read_u32(executed).unwrap(), 1);
-    }
-
-    #[test]
-    fn the_least_interval_slows_fast_titles_only() {
-        let mut env = TestEnv::new();
-        env.os.gx2.min_swap_interval = 2;
-        env.call("gx2", "GX2SetSwapInterval", &[1]);
-        assert_eq!(env.call("gx2", "GX2GetSwapInterval", &[]), 2, "60 fps becomes 30");
-        env.call("gx2", "GX2SetSwapInterval", &[3]);
-        assert_eq!(env.call("gx2", "GX2GetSwapInterval", &[]), 3, "20 fps stays");
-        env.os.gx2.forced_swap_interval = Some(1);
-        assert_eq!(env.call("gx2", "GX2GetSwapInterval", &[]), 1, "forcing wins");
-    }
-
-    #[test]
-    fn one_flip_per_swap_interval() {
-        let mut env = TestEnv::new();
-        env.call("gx2", "GX2SetSwapInterval", &[2]);
-        for _ in 0..3 {
-            env.call("gx2", "GX2SwapScanBuffers", &[]);
-        }
-        let executed: Vec<u32> = (0..6)
-            .map(|_| {
-                env.os.vsync();
-                env.os.gx2.flips_executed
-            })
-            .collect();
-        assert_eq!(executed, [0, 1, 1, 2, 2, 3]);
-    }
-}
+mod display_list;
+#[allow(unused_imports)]
+pub(crate) use display_list::*;

@@ -6,6 +6,24 @@
 //!  MEM1: [ frame heap (base heap 0) ]   FOREGROUND: [ frame heap (base heap 2) | OS ]
 //!  HLE:  [ call stubs | OSThread of main thread, data imports ...        ]
 //! ```
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game executable    │   │ process.rs               │   │ memory layout      │
+//! │ (RPX)              │──►│ ──────────────────────── │──►│ main thread        │
+//! │                    │   │ start of a game process  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Does what the console does before a game's first line runs: lays out its memory, loads its
+//! code and system libraries, and starts the main thread. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_mem_addr::{CODE, FOREGROUND, FOREGROUND_FREE_SIZE, LOADER, MEM1, MEM2};
 use wiiu_memory::{Memory, MemoryError};

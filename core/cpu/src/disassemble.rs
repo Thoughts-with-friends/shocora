@@ -1,4 +1,21 @@
 //! Human-readable disassembly for logs and the debugger.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ instruction words  │   │ disassemble.rs           │   │ readable text      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ disassembler             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Turns instructions into readable text for logs and the debugger. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_sign_loss)]
 
 use crate::{Instr, Opcode, decode};

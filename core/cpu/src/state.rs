@@ -1,4 +1,21 @@
 //! Architectural register file of one Espresso core.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ each instruction   │   │ state.rs                 │   │ saved state        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ CPU registers            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! All the registers of one CPU core: the small, fast slots a program works with. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// SPR numbers the interpreter and the OS layer care about.
 pub mod spr {

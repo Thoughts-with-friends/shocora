@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ file requests      │   │ device.rs                │   │ file handles       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ file devices             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! One mounted source of files, such as a game folder. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
+
 use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},

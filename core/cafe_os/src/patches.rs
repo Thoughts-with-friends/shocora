@@ -11,6 +11,24 @@
 //!          ...                      (the instruction before it is replaced by an HLE call
 //!          bne   loop               that naps while the queue has nothing to hand out)
 //! ```
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game code in       │   │ patches.rs               │   │ patched            │
+//! │ memory             │──►│ ──────────────────────── │──►│ instructions       │
+//! │                    │   │ built-in game fixes      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Small fixes to specific games' own code, found by their bytes after loading, so that they
+//! run better under emulation. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_cpu::encode_hle_call;
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::{Memory, MemoryError};

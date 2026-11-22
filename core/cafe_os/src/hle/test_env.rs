@@ -1,4 +1,21 @@
 //! A minimal machine for HLE unit tests.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ unit tests         │   │ hle/test_env.rs          │   │ test results       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tiny test machine        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A minimal machine for testing OS functions without a real game. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_cpu::CpuState;
 use wiiu_gpu::Gpu;
 use wiiu_iosu::Iosu;

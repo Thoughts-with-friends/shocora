@@ -1,4 +1,21 @@
 //! Scalar floating point and FPSCR access.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ float instructions │   │ interpreter/float.rs     │   │ results, flags     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ floating-point math      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Decimal-number math (positions, physics) with the console's exact rounding. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use super::{ExecResult, unimplemented};

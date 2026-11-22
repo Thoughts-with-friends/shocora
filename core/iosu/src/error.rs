@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ failures           │   │ error.rs                 │   │ error codes        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ IOSU errors              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Error codes IOSU returns. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IosError {
     #[error("{0}: no such IOSU device")]

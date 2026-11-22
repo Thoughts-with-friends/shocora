@@ -1,5 +1,22 @@
 //! Small coreinit services: barriers, MMIO registers, the C runtime's locks,
 //! fibers, `va_list` printing and thread queues.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ small system calls │   │ coreinit/system.rs       │   │ results            │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ misc. coreinit services  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A grab bag of small services: barriers, hardware registers, C runtime locks and similar.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

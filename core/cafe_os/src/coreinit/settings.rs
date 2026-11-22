@@ -1,4 +1,21 @@
 //! System settings: `MCP_GetSysProdSettings` and `UCReadSysConfig`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "what              │   │ coreinit/settings.rs     │   │ console settings   │
+//! │ region/language?"  │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ system settings          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Answers what the console's settings would say: region, language, parental controls and so
+//! on. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

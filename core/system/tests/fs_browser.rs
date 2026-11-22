@@ -10,6 +10,24 @@
 //! (text with line numbers, anything else as hex). The tree is the console's, as IOSU
 //! names it: `/vol` (with `storage_mlc01`), `/dev` and `/proc` (see `console.rs`). Stop it with Ctrl+C. The server listens
 //! on the loopback address only, answers `GET` only, and the save is a temporary copy.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test,        │   │ system/tests/fs_browser. │   │ web page           │
+//! │ browser            │──►│ rs                       │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ file-system browser      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A developer tool: shows the files the game sees in a web browser. Tests only. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::unwrap_used, reason = "test")]
 #[path = "fs_browser/console.rs"]
 mod console;

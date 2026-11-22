@@ -1,4 +1,22 @@
 //! Tests of `draw.rs`, which is over 500 lines.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ gx2/draw_tests.rs        │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tests of draw.rs         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unit tests for draw.rs (drawing). They run with `cargo test` only and are not part of the
+//! emulator you play with. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_gpu::command::{opcode, pm4::type3_header};
 
 use crate::hle::test_env::{SCRATCH, TestEnv};

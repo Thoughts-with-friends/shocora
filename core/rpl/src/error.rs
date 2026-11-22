@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ bad files          │   │ error.rs                 │   │ error messages     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ loader errors            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! What can be wrong with an executable file. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 use wiiu_memory::MemoryError;
 
 /// Why a module could not be parsed or loaded.

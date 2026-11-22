@@ -1,4 +1,21 @@
 //! The command processor (CP): PM4 parsing and execution.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ command words      │   │ command/mod.rs           │   │ state changes,     │
+//! │                    │──►│ ──────────────────────── │──►│ draws              │
+//! │                    │   │ command processor        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The part of the GPU that reads the command stream (PM4 packets) the game wrote. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 pub mod executor;
 pub mod opcode;
 pub mod pm4;

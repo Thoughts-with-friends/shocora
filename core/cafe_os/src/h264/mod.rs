@@ -5,6 +5,24 @@
 //! `H264DECExecute` hands one frame to the title's output callback straight away, with the
 //! size and cropping of the stream's SPS, and a black picture. Titles that wait for their
 //! movie frames (intro movies, attract loops) therefore keep going.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ compressed video   │   │ h264/mod.rs              │   │ video frames       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ H.264 video decoder      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Games play their movies through the console's hardware video decoder; this decodes them on
+//! your CPU instead. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 mod nal;
 
 use std::collections::BTreeMap;

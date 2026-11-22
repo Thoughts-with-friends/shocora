@@ -8,6 +8,24 @@
 //! - `/proc/…`: the inside of the emulator's VFS and IOSU, as text, like Linux's `/proc`.
 //!
 //! Everything is read-only, and generated again for each request.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ browser requests   │   │ system/tests/fs_browser/ │   │ folder listings    │
+//! │                    │──►│ console.rs               │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ whole-console tree       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Presents the whole console as one tree of folders for the browser tool. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::{collections::BTreeMap, fmt::Write as _};
 
 use wiiu_emu::Emulator;

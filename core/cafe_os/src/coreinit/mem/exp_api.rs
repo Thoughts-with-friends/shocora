@@ -1,4 +1,21 @@
 //! Expanded-heap and base-heap exports.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ MEMExpHeap calls   │   │ coreinit/mem/exp_api.rs  │   │ allocations        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ expanded heap API        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The general-purpose heap functions most games allocate from. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

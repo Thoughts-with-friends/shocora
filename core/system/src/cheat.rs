@@ -16,6 +16,23 @@
 //!
 //! The digits of the value give the width of the write, in guest (big-endian) order:
 //! up to 2 are a byte, up to 4 a halfword, up to 8 a word. Addresses are effective ones.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cheat file         │   │ cheat.rs                 │   │ memory writes each │
+//! │                    │──►│ ──────────────────────── │──►│ frame              │
+//! │                    │   │ cheat codes              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Cheats are memory values rewritten every frame (infinite health and so on). Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::fmt::{self, Write as _};
 
 use wiiu_memory::Memory;

@@ -1,4 +1,22 @@
 //! `OSMessageQueue`: a ring buffer of 16-byte messages in guest memory.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ send/receive       │   │ coreinit/thread/message. │   │ messages between   │
+//! │ message            │──►│ rs                       │──►│ threads            │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ message queues           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A mailbox threads use to pass small messages to each other. Terms such as HLE, JIT or shader
+//! are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use super::{Reschedule, Wait, block};

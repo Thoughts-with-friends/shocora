@@ -74,7 +74,13 @@ fn feedback_texture(
     })
 }
 
-/// What a feedback copy holds: the surface, level and layers it was copied from, and
+/// Layers a 2D array needs on OpenGL so that wgpu makes it a 2D array texture, not a 2D
+/// (1 layer) or cube (a multiple of 6) one: one more, left unused.
+pub(super) fn gl_array_layers(layers: u32) -> u32 {
+    if layers == 1 || layers.is_multiple_of(6) { layers + 1 } else { layers }
+}
+
+/// What a feedback copy holds:the surface, level and layers it was copied from, and
 /// the part of level 0 that draws changed since (host texels, `[x0, y0, x1, y1]`).
 ///
 /// Cemu samples a target while drawing to it (Vulkan's general layout or feedback loop);
@@ -164,8 +170,13 @@ impl LatteRenderer {
         let level = bound.base_level.min(source.mip_level_count() - 1);
         let layers = source.depth_or_array_layers();
         let first_layer = if dim == TextureDim::D2 { bound.base_layer.min(layers - 1) } else { 0 };
+        let copied = if dim == TextureDim::D2 { 1 } else { layers };
         let size = wgpu::Extent3d {
-            depth_or_array_layers: if dim == TextureDim::D2 { 1 } else { layers },
+            depth_or_array_layers: if dim == TextureDim::D2Array && self.gl {
+                gl_array_layers(copied)
+            } else {
+                copied
+            },
             ..source.size().mip_level_size(level, wgpu::TextureDimension::D2)
         };
         let surface_id = self.surfaces.get(&bound.key).map_or(0, |s| s.id);
@@ -177,7 +188,7 @@ impl LatteRenderer {
                 && sync.surface_id == surface_id
                 && sync.level == level
                 && sync.first_layer == first_layer
-                && sync.layers == size.depth_or_array_layers
+                && sync.layers == copied
         });
         // Depth and stencil can only be copied whole.
         let partial = !wgpu_format(bound.key.format).is_depth_stencil_format();
@@ -194,13 +205,7 @@ impl LatteRenderer {
         };
         self.feedback_sync.insert(
             bound.key,
-            FeedbackSync {
-                surface_id,
-                level,
-                first_layer,
-                layers: size.depth_or_array_layers,
-                dirty: None,
-            },
+            FeedbackSync { surface_id, level, first_layer, layers: copied, dirty: None },
         );
         let device = self.device.clone();
         let copy = self
@@ -227,7 +232,7 @@ impl LatteRenderer {
                     origin: wgpu::Origin3d { x, y, z: 0 },
                     ..target.as_image_copy()
                 },
-                wgpu::Extent3d { width, height, depth_or_array_layers: size.depth_or_array_layers },
+                wgpu::Extent3d { width, height, depth_or_array_layers: copied },
             );
         }
         let aspect = if bound.key.format.has_stencil() {
@@ -331,6 +336,24 @@ impl LatteRenderer {
         }
     }
 
+    /// Whether OpenGL cannot sample `bound` from its surface directly. A GL texture has one
+    /// target for life, which wgpu picks from the layer count (1 → 2D, 6 → cube, other →
+    /// 2D array); a view of another dimension samples garbage. Breath of the Wild draws its
+    /// menu text from a one-layer array, which came out as scraps of glyphs.
+    fn gl_target_mismatch(&self, bound: &BoundTexture) -> bool {
+        if !self.gl || !matches!(bound.dim, TextureDim::D2 | TextureDim::D2Array) {
+            return false;
+        }
+        self.surfaces.get(&bound.key).is_some_and(|s| {
+            let layers = s.texture.depth_or_array_layers();
+            s.texture.dimension() == wgpu::TextureDimension::D2
+                && match bound.dim {
+                    TextureDim::D2 => layers != 1,
+                    _ => gl_array_layers(layers) != layers,
+                }
+        })
+    }
+
     /// Whether `bound` is sampled as 3D but its surface was made as 2D.
     fn needs_volume_copy(&self, bound: &BoundTexture) -> bool {
         bound.dim == TextureDim::D3
@@ -353,12 +376,13 @@ impl LatteRenderer {
             self.surfaces.get(&bound.key).map(|s| s.id).hash(&mut hasher);
         }
         let key = hasher.finish();
-        // A draw sampling what it draws to, or a volume made as 2D, reads a fresh copy every
-        // time.
-        let feedback = draw
-            .textures
-            .iter()
-            .any(|t| self.needs_volume_copy(t) || self.conflict(draw, t) == Conflict::Copy);
+        // A draw sampling what it draws to, a volume made as 2D, or (OpenGL) a texture whose
+        // target differs from the view reads a fresh copy every time.
+        let feedback = draw.textures.iter().any(|t| {
+            self.needs_volume_copy(t)
+                || self.gl_target_mismatch(t)
+                || self.conflict(draw, t) == Conflict::Copy
+        });
         if !feedback {
             if let Some(group) = self.bind_groups.get(&key) {
                 return Some(group.clone());
@@ -377,7 +401,8 @@ impl LatteRenderer {
                     {
                         self.count_feedback(draw, bound);
                     }
-                    let in_use = conflict == Conflict::Copy;
+                    let in_use = conflict == Conflict::Copy
+                        || bound.is_some_and(|b| b.dim == *dim && self.gl_target_mismatch(&b));
                     let view = match bound {
                         Some(bound) if in_use => self.feedback_copy(&bound, *dim, *kind),
                         // A surface made as 2D cannot be seen as 3D, nor the other way round.

@@ -1,4 +1,21 @@
 //! Sums voices into host stereo.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ voices             │   │ mixer.rs                 │   │ stereo samples     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ mixer                    │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Adds all playing sounds together. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use crate::{SampleMemory, Voice};
 
 /// Mixes voices with a master volume.

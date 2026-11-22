@@ -1,4 +1,21 @@
 //! Latte tile modes (`GX2TileMode` values 0..=15 are hardware modes).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ tile mode number   │   │ addrlib/tile_mode.rs     │   │ layout properties  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tile modes               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The tiling layouts the GPU supports. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 
 pub const TM_LINEAR_GENERAL: u32 = 0;
 pub const TM_LINEAR_ALIGNED: u32 = 1;

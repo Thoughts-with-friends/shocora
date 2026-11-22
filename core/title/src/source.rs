@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ path you chose     │   │ source.rs                │   │ readable game      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ title sources            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Recognises what you pointed at and opens it. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
+
 use std::{
     fs,
     path::{Path, PathBuf},

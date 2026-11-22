@@ -1,6 +1,23 @@
 //! Fits the sound of faster or slower game time into real time.
 //!
 //! Like a tape played faster or slower, the pitch moves with the speed.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game speed         │   │ speed.rs                 │   │ real-time audio    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tempo fitting            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Keeps sound in step when the game runs faster or slower than real time. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// What is left of the last piece of sound, so that pieces join without a seam.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

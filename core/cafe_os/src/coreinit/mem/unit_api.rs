@@ -1,4 +1,21 @@
 //! Unit heaps (fixed-size blocks) and `MEMAllocator` helpers.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ MEMUnitHeap calls  │   │ coreinit/mem/unit_api.rs │   │ equal-size blocks  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ unit heap (fixed size)   │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A heap of equal-sized blocks, plus the allocator helpers games pass around. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_hle_macros::hle_export;

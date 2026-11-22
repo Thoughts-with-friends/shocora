@@ -2,6 +2,23 @@
 //! sequence parameter set fields the decoder library reports.
 //!
 //! Nothing here decodes pictures; it only reads the headers titles ask about.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ H.264 bytes        │   │ h264/nal.rs              │   │ frame boundaries,  │
+//! │                    │──►│ ──────────────────────── │──►│ sizes              │
+//! │                    │   │ H.264 stream parsing     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads the structure of an H.264 video stream: where frames start and how big the picture is.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// `nal_unit_type` values the library cares about.
 pub mod nal_type {

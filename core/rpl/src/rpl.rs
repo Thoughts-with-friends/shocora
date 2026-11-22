@@ -1,4 +1,21 @@
 //! RPL-specific structure on top of the ELF container.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ ELF sections       │   │ rpl.rs                   │   │ imports, exports   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ RPL structure            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U-specific parts of the file: compressed sections, imports and exports. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::io::Read;
 
 use crate::{

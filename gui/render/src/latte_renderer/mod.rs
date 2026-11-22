@@ -201,6 +201,8 @@ pub struct LatteRenderer {
     /// What frames cost the host, reported with `SHOCORA_PROFILE`.
     counters: Counters,
     profile: bool,
+    /// The host API is OpenGL: see [`LatteRenderer::gl_target_mismatch`].
+    gl: bool,
     pub draws_executed: u64,
     pub flips: u64,
 }
@@ -220,6 +222,7 @@ impl LatteRenderer {
             log::error!("wgpu device lost ({reason:?}): {message}");
         });
         device.on_uncaptured_error(Arc::new(|error| log::error!("wgpu: {error}")));
+        let gl = device.adapter_info().backend == wgpu::Backend::Gl;
 
         let limit = device.limits().max_storage_buffer_binding_size;
         let arena_size = u64::from(ARENA_SIZE).min(limit);
@@ -414,6 +417,7 @@ impl LatteRenderer {
             target_log: HashMap::default(),
             counters: Counters::default(),
             profile: std::env::var_os("SHOCORA_PROFILE").is_some(),
+            gl,
             draws_executed: 0,
             flips: 0,
         }

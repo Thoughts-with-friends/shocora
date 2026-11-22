@@ -1,4 +1,21 @@
 //! Fetch shaders: the guest's description of its vertex attributes.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ vertex layout      │   │ shader/fetch.rs          │   │ attribute formats  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ fetch shaders            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Understands how the game describes the layout of its vertex data. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 
 /// Attribute formats (`E_HWFMT`) the vertex pulling code decodes.
 pub mod format {

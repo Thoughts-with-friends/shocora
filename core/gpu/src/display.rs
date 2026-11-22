@@ -1,4 +1,21 @@
 //! The display controller: flips.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "show this image"  │   │ display.rs               │   │ frame on screen    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ display controller       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Shows a finished frame on the TV or GamePad (a "flip"). Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use crate::{RenderCommand, Screen, latte::Latte};
 
 /// Display controller state.

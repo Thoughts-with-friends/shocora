@@ -1,4 +1,21 @@
 //! The frame loop: run the main core, dispatch HLE calls, stop on events.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲                ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ time slice         │   │ emulator/runner.rs       │   │ instructions run   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ frame loop               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The loop that runs CPU code, answers OS calls and stops at frame boundaries. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::time::{Duration, Instant};
 
 use wiiu_cafe_os::{HleContext, coreinit::thread::TIME_SLICE, dispatch};

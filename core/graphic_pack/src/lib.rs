@@ -5,6 +5,23 @@
 //! * [`pack`] — one pack and its presets.
 //! * [`rules`] — what an enabled pack does to the running title.
 //! * [`settings`] — the user's choices and the packs that apply to a title.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ graphicPacks       │   │ lib.rs                   │   │ patches, settings  │
+//! │ folder             │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ Cemu graphic packs       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Supports Cemu's graphic packs: community mods for resolution, FPS and fixes. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 pub mod expr;
 pub mod ini;
 pub mod pack;

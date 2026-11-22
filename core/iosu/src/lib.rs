@@ -4,6 +4,24 @@
 //! `/dev/mcp`, ...). [`Iosu`] owns those devices and routes requests to them.
 //! Requests are typed for now; decoding the raw IPC buffers Cafe OS builds is
 //! done by the caller.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ requests from Cafe │   │ lib.rs                   │   │ file & device      │
+//! │ OS                 │──►│ ──────────────────────── │──►│ answers            │
+//! │                    │   │ IOSU (I/O processor OS)  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U has a second, ARM processor running its own OS (IOSU) for files and devices. Cafe
+//! OS sends it requests; this answers them. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 mod error;
 pub mod fsa;
 

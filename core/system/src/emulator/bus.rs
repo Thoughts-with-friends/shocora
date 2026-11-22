@@ -1,4 +1,22 @@
 //! The CPU's view of the machine.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ CPU accesses       │   │ emulator/bus.rs          │   │ memory, OS calls   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ CPU's view of the        │   │                    │
+//! │                    │   │ machine                  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Connects the CPU cores to memory and the OS. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 use wiiu_cpu::{Bus, BusError};
 use wiiu_memory::{Memory, MemoryError};
 use wiiu_peripherals::TimeBase;

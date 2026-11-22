@@ -2,6 +2,23 @@
 //!
 //! With the whole guest address space at one host base, the JIT turns a guest
 //! access into `base + address`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ memory map         │   │ host.rs                  │   │ committed pages    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ PC memory reservation    │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reserves a 4 GB window in your PC's address space and fills in pages as the game needs them.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::{ptr::NonNull, sync::Arc};
 
 /// Size of the guest's address space.

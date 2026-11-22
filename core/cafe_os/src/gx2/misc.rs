@@ -1,5 +1,22 @@
 //! Remaining GX2 exports of Cemu's GX2.cpp, GX2_Misc, GX2_Query, GX2_Event, GX2_State,
 //! GX2_Texture, GX2_Draw (compute) and GX2_Surface_Copy.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ remaining GX2      │   │ gx2/misc.rs              │   │ GPU state, queries │
+//! │ calls              │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ other GX2 functions      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The rest of GX2: queries, events, compute, a few state setters. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_gpu::{
     command::opcode,
     regs::{config, context},
@@ -415,64 +432,6 @@ fn gx2_dispatch_compute(ctx: &mut HleContext<'_>, params: u32) -> Result<(), Hle
     Ok(())
 }
 
-#[hle_export(lib = "gx2", name = "GX2SetComputeTexture")]
-fn gx2_set_compute_texture(ctx: &mut HleContext<'_>, tex: u32, unit: u32) -> Result<(), HleError> {
-    super::draw::gx2_set_vertex_texture(ctx, tex, unit)
-}
-
-#[hle_export(lib = "gx2", name = "GX2SetComputeSampler")]
-fn gx2_set_compute_sampler(
-    ctx: &mut HleContext<'_>,
-    sampler: u32,
-    unit: u32,
-) -> Result<(), HleError> {
-    super::draw::gx2_set_vertex_sampler(ctx, sampler, unit)
-}
-
-#[hle_export(lib = "gx2", name = "GX2SetGeometrySamplerBorderColor")]
-fn gx2_set_geometry_sampler_border_color(
-    ctx: &mut HleContext<'_>,
-    unit: u32,
-    red: f32,
-    green: f32,
-    blue: f32,
-    alpha: f32,
-) {
-    super::draw::set_border_color(
-        &mut ctx.os.gx2,
-        config::TD_GS_SAMPLER0_BORDER_RED,
-        unit,
-        [red, green, blue, alpha],
-    );
-}
-
-/// Only whole-surface copies are supported, as in Cemu: they act like `GX2CopySurface`.
-#[hle_export(lib = "gx2", name = "GX2CopySurfaceEx")]
-fn gx2_copy_surface_ex(ctx: &mut HleContext<'_>) -> Result<(), HleError> {
-    let mut args = crate::hle::ArgReader::new();
-    let mut a = [0_u32; 9];
-    for slot in &mut a {
-        *slot = args.next_u32(ctx)?;
-    }
-    let [src, src_mip, src_slice, dst, dst_mip, dst_slice, count, rects, _points] = a;
-    let source = Gx2Surface::read(ctx.memory, src)?;
-    for i in 0..count.cast_signed().max(0).cast_unsigned() {
-        let rect = rects + i * 16;
-        let left = ctx.memory.read_u32(rect)?;
-        let top = ctx.memory.read_u32(rect + 4)?;
-        let width = ctx.memory.read_u32(rect + 8)?.wrapping_sub(left);
-        let height = ctx.memory.read_u32(rect + 12)?.wrapping_sub(top);
-        if left == 0 && top == 0 && width == source.width && height == source.height {
-            super::display::gx2_copy_surface(
-                ctx, src, src_mip, src_slice, dst, dst_mip, dst_slice,
-            )?;
-        } else {
-            log::warn!("GX2CopySurfaceEx: partial rectangle copies are not supported");
-        }
-    }
-    Ok(())
-}
-
 pub const EXPORTS: &[HleExport] = &[
     GX2_GET_CURRENT_SCAN_BUFFER,
     GX2_MARK_SCAN_BUFFER_COPIED,
@@ -507,34 +466,9 @@ pub const EXPORTS: &[HleExport] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use crate::hle::test_env::{SCRATCH, TestEnv};
+#[path = "misc_tests.rs"]
+mod tests;
 
-    /// Intent: a CPU occlusion query is "not ready" until the GPU ends it, then reports
-    /// the samples written between begin and end.
-    /// Pass: before the end the result call returns 0; after the executor's end packet is
-    /// emulated by writing the counters, it returns 1 with end - start.
-    #[test]
-    fn cpu_occlusion_query_is_pending_until_ended() {
-        let mut env = TestEnv::new();
-        let query = SCRATCH;
-        let out = SCRATCH + 0x100;
-        env.call("gx2", "GX2QueryBegin", &[0, query]);
-        assert_eq!(env.call("gx2", "GX2QueryGetOcclusionResult", &[query, out]), 0);
-        env.memory.write_bytes(query + 8, &50_u64.to_le_bytes()).unwrap();
-        env.memory.write_u32(query + 0x20, 1).unwrap();
-        assert_eq!(env.call("gx2", "GX2QueryGetOcclusionResult", &[query, out]), 1);
-        assert_eq!(env.memory.read_u64(out).unwrap(), 50);
-    }
-
-    /// Intent: point registers hold sizes in 1/8 pixel units, clamped to 16 bits.
-    /// Pass: width 2 and height 1 give 0x0010_0008.
-    #[test]
-    fn point_size_is_in_eighths() {
-        let mut env = TestEnv::new();
-        env.cpu.fpr[1].ps0 = 2.0;
-        env.cpu.fpr[2].ps0 = 1.0;
-        env.call("gx2", "GX2InitPointSizeReg", &[SCRATCH]);
-        assert_eq!(env.memory.read_u32(SCRATCH).unwrap(), 0x0010_0008);
-    }
-}
+mod compute_exports;
+#[allow(unused_imports)]
+pub(crate) use compute_exports::*;

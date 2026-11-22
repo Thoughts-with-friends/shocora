@@ -2,6 +2,24 @@
 //!
 //! A port of Cemu's GX2_TilingAperture. The hardware translates every access; here
 //! the texels are copied in on allocation and written back on free.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ CPU writes pixels  │   │ gx2/aperture.rs          │   │ tiled texture      │
+//! │                    │──►│ ──────────────────────── │──►│ memory             │
+//! │                    │   │ tiling apertures         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! GPUs store images in a shuffled ("tiled") order. An aperture lets the CPU write plain rows
+//! that land in the right shuffled places. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_gpu::{addrlib, tiling::Layout};
 use wiiu_hle_macros::hle_export;
 use wiiu_mem_addr::TILING_APERTURE;

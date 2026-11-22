@@ -1,6 +1,23 @@
 //! Color/depth buffers, viewport and scissor (port of Cemu's GX2_RenderTarget
 //! and the matching parts of GX2_State). Everything ends up as
 //! `SET_CONTEXT_REG` packets.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "draw into this    │   │ gx2/render_target.rs     │   │ color/depth        │
+//! │ image"             │──►│ ──────────────────────── │──►│ targets set        │
+//! │                    │   │ render targets           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Chooses which images the GPU draws into (color and depth) and the visible area of the
+//! screen. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use wiiu_gpu::{

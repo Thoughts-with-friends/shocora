@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ commands, flips    │   │ gpu.rs                   │   │ renderer work      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GPU front                │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The GPU as one object: command processor, registers and display together. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
+
 use wiiu_interrupt::PendingInterrupts;
 use wiiu_memory::Memory;
 

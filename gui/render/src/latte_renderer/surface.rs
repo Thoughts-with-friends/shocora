@@ -116,6 +116,7 @@ impl LatteRenderer {
             self.surfaces.remove(&key);
         }
         let device = &self.device;
+        let gl = self.gl;
         let id = self.next_surface_id;
         let scale = if self.uploaded.contains(&key) { 1 } else { self.resolution.of(&key) };
         // Large surfaces may not fit: the one who chose them gets to know.
@@ -135,6 +136,13 @@ impl LatteRenderer {
                 TextureDim::Cube => (wgpu::TextureDimension::D2, 6),
                 // A surface drawn to first is seen as 2D, but titles draw to every
                 // slice of an array: all its layers exist from the start.
+                // OpenGL decides a texture's target by its layer count once for all: an array
+                // of one layer would be 2D and sample garbage as an array (Breath of the
+                // Wild's BC4 menu font). Copies of compressed textures come out empty there,
+                // so the array gets its spare layer from the start.
+                TextureDim::D2Array if gl => {
+                    (wgpu::TextureDimension::D2, draw::gl_array_layers(key.layers.max(1)))
+                }
                 TextureDim::D2Array | TextureDim::D2 => {
                     (wgpu::TextureDimension::D2, key.layers.max(1))
                 }
@@ -478,7 +486,12 @@ impl LatteRenderer {
                     TextureKind::Uint => wgpu::TextureFormat::Rgba8Uint,
                     TextureKind::Sint => wgpu::TextureFormat::Rgba8Sint,
                 };
-                let layers = if dim == TextureDim::Cube { 6 } else { 1 };
+                let layers = match dim {
+                    TextureDim::Cube => 6,
+                    // One layer would make OpenGL see it as 2D.
+                    TextureDim::D2Array => 2,
+                    TextureDim::D2 | TextureDim::D3 => 1,
+                };
                 let descriptor = wgpu::TextureDescriptor {
                     label: Some("shocora dummy"),
                     size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers },

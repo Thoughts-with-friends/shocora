@@ -1,4 +1,21 @@
 //! `printf`-style formatting for `OSReport`, `__os_snprintf`, ...
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ format string +    │   │ coreinit/printf.rs       │   │ text               │
+//! │ values             │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ printf formatting        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Turns a C-style format string and values into text, for the game's debug messages. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 
 use crate::hle::HleError;

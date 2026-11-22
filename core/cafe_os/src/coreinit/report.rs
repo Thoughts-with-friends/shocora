@@ -1,4 +1,21 @@
 //! Debug output: `OSReport`, `OSPanic`, `OSConsoleWrite`, `__os_snprintf`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game debug prints  │   │ coreinit/report.rs       │   │ shocora log        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ debug output             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Messages the game prints for its developers end up in shocora's log. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

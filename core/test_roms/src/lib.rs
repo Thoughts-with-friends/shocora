@@ -8,6 +8,23 @@
 //!
 //! Only `std`, `serde` and `toml`: every core crate can use this as a dev-dependency
 //! without a cycle.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ shocora.toml       │   │ lib.rs                   │   │ paths for tests    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ test game fixtures       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Finds the developer's own games and saves for tests. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use std::path::{Path, PathBuf};
 
 /// The keys of `shocora.toml` the tests use.

@@ -8,6 +8,23 @@
 //! ```
 //! Voice parameters are written by the `sndcore2` HLE library; this crate only
 //! does the signal processing.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ voices from AX     │   │ lib.rs                   │   │ stereo for         │
+//! │                    │──►│ ──────────────────────── │──►│ speakers           │
+//! │                    │   │ audio mixing             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Mixes the game's sounds into the stereo signal your PC plays. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 pub mod adpcm;
 pub mod filter;
 pub mod mixer;

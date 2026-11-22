@@ -2,6 +2,23 @@
 //!
 //! A coroutine holds the non-volatile registers: lr, cr, gqr1, r1, r2, r13, r14..r31,
 //! f14..f31 and their paired singles.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game switches      │   │ coreinit/coroutine.rs    │   │ saved/restored     │
+//! │ context            │──►│ ──────────────────────── │──►│ registers          │
+//! │                    │   │ coroutines               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Lets a game pause a piece of work and resume it later, by saving and restoring CPU
+//! registers. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::{

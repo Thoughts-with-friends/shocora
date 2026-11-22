@@ -7,6 +7,23 @@
 //!
 //! Axes are the GamePad's: X to the right, Y toward its top edge, Z out of the screen.
 //! Lying flat with the screen up, the axes match the world's, whose Z points up.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ gyro or mouse      │   │ motion.rs                │   │ tilt, rotation     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GamePad motion           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Turns your controller's gyro (or simulated motion) into GamePad tilt and rotation. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 // Rotation formulas stay in their textbook form, which `mul_add` would hide.
 #![allow(clippy::suboptimal_flops)]

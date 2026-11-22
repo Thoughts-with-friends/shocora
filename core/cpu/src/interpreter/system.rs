@@ -1,4 +1,21 @@
 //! CR logic, SPR/MSR/SR access, traps, syscalls, cache/sync hints and HLE calls.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ system             │   │ interpreter/system.rs    │   │ special registers, │
+//! │ instructions       │──►│ ──────────────────────── │──►│ OS calls           │
+//! │                    │   │ system instructions      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Special registers, traps and the instruction that hands a call to the OS. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 
 use super::{ExecResult, unimplemented};

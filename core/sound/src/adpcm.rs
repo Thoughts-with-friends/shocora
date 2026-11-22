@@ -2,6 +2,23 @@
 //!
 //! A frame is 8 bytes: one header byte (predictor index in the high nibble,
 //! scale exponent in the low nibble) followed by 14 signed 4-bit samples.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ compressed samples │   │ adpcm.rs                 │   │ plain samples      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ DSP-ADPCM decoding       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unpacks Nintendo's compressed sound format. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 
 /// Samples per 8-byte frame.
 pub const SAMPLES_PER_FRAME: usize = 14;

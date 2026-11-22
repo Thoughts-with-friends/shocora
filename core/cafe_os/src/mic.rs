@@ -6,6 +6,24 @@
 //! 16-bit big-endian at 32 kHz, and sizes and indices count samples.
 //!
 //! [`GamePadState::mic`]: wiiu_peripherals::GamePadState::mic
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ MIC button held    │   │ mic.rs                   │   │ sound samples for  │
+//! │                    │──►│ ──────────────────────── │──►│ the game           │
+//! │                    │   │ GamePad microphone       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Games that want you to blow or shout into the GamePad get a noise signal while you hold the
+//! MIC button. Nothing is recorded. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::Memory;
 use wiiu_peripherals::timebase::FREQUENCY;

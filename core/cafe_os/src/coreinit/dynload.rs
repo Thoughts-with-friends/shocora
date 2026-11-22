@@ -1,5 +1,22 @@
 //! `OSDynLoad`: run-time symbol lookup. Every system RPL is HLE, so lookups
 //! resolve to HLE stubs (or a logged placeholder for unimplemented exports).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "find function X"  │   │ coreinit/dynload.rs      │   │ function addresses │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ run-time library lookup  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Games can look up OS functions by name while running; this returns the matching emulated
+//! function. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

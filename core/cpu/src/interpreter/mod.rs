@@ -3,6 +3,24 @@
 //! [`step`] fetches, decodes and dispatches one instruction to the module of
 //! its [`Unit`]. Each module only implements semantics; fetching, PC
 //! bookkeeping and error reporting live here.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ one instruction    │   │ interpreter/mod.rs       │   │ effect of the      │
+//! │                    │──►│ ──────────────────────── │──►│ instruction        │
+//! │                    │   │ interpreter              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The slow but simple way to run game code: look at one instruction, do what it says, repeat.
+//! Used where the JIT cannot help. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 mod branch;
 mod float;
 pub(crate) mod integer;

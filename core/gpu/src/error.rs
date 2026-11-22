@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ failures           │   │ error.rs                 │   │ error messages     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GPU errors               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The ways GPU work can fail, with readable messages. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
+
 use wiiu_memory::MemoryError;
 
 #[derive(Debug, thiserror::Error)]

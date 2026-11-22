@@ -3,6 +3,23 @@
 //! Devices raise an [`Interrupt`] on a core's [`PendingInterrupts`]; the
 //! system loop takes them and hands them to the OS layer, which runs the
 //! matching handler (GX2 flip callbacks, alarms, IPC replies, ...).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ device events      │   │ lib.rs                   │   │ cores notified     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ interrupts               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A way for devices to tap a CPU core on the shoulder ("vsync happened", "GPU done"). Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// External interrupt sources the emulator models.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]

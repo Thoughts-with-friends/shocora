@@ -1,4 +1,22 @@
 //! Tests of the R600 → WGSL translator. `emit.rs` is over 500 lines, so they live here.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ shader/emit_tests.rs     │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tests of emit.rs         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unit tests for emit.rs (WGSL generation). They run with `cargo test` only and are not part
+//! of the emulator you play with. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use super::{PixelInputs, translate_pixel, translate_vertex};
 use crate::shader::{TEXTURE_UNITS, TextureKind, TextureSignature};
 

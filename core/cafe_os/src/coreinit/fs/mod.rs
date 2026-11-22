@@ -2,6 +2,24 @@
 //!
 //! Only the synchronous calls exist so far; the `*Async` variants need guest
 //! callbacks / message queues and arrive with the thread scheduler.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game opens files   │   │ coreinit/fs/mod.rs       │   │ file data          │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ file-system client       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! How the game reads and writes files (game data, save data). Requests are passed on to the
+//! emulated I/O processor (IOSU). Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 pub mod api;
 pub mod mutate;
 

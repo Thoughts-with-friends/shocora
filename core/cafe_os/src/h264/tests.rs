@@ -1,3 +1,21 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ h264/tests.rs            │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tests of mod.rs          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unit tests for mod.rs (H.264 video decoder). They run with `cargo test` only and are not
+//! part of the emulator you play with. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 use super::{EXECUTE_FRAME, ctx, frame, status};
 use crate::hle::test_env::{SCRATCH, TestEnv};
 

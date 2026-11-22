@@ -5,6 +5,23 @@
 //! first instruction runs. Changing the enabled packs while it runs undoes every patch,
 //! restoring the original bytes, and applies those of the packs now enabled: mods take
 //! effect at once, as in Cemu.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ enabled packs      │   │ emulator/patches.rs      │   │ changed code       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ pack patches at run time │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Applies (and removes) graphic pack code patches in the running game. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_cafe_os::{CafeOs, hle::callback::GuestCall};

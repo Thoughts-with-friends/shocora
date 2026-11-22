@@ -7,6 +7,23 @@
 //!   `update/` and `dlc/` by the exe, or in system storage (`mlc01`).
 //! * [`wux`] reads compressed disc images (`.wux`) as a flat WUD stream.
 //!   Decrypting the disc partitions needs console keys and is not done here.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ your game          │   │ lib.rs                   │   │ title info, files  │
+//! │ folder/file        │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ Wii U title formats      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Understands the forms a Wii U game can come in on your PC: installed folders, WUD/WUX disc
+//! images. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 mod error;
 pub mod meta;
 mod source;

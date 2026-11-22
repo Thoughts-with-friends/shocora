@@ -1,4 +1,21 @@
 //! Memory primitives exported by coreinit.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ copy/fill requests │   │ coreinit/memory.rs       │   │ memory changed     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ memory functions         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! memcpy/memset-style functions of the OS, with the GPU told about the changed memory. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_hle_macros::hle_export;

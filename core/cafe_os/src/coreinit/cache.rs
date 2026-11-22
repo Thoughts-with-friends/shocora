@@ -2,6 +2,24 @@
 //!
 //! The emulator has no caches. Flushes still tell the GPU which memory the CPU wrote,
 //! so it looks at those buffers again; `DCZeroRange` also zeroes whole cache lines.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "data is ready"    │   │ coreinit/cache.rs        │   │ GPU told what      │
+//! │ hints              │──►│ ──────────────────────── │──►│ changed            │
+//! │                    │   │ CPU cache control        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Real CPUs keep data in caches; games flush them before the GPU reads. The emulator has no
+//! caches, but uses the hints to know which memory the GPU must look at again. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError};

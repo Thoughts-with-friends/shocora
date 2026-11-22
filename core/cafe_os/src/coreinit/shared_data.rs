@@ -6,6 +6,24 @@
 //! `CafeKr.ttf`, `CafeStd.ttf`, `CafeTw.ttf`). Failing that a host font stands
 //! in: its script must match, or text turns into empty boxes. Button icons only
 //! exist in the real fonts.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game asks for      │   │ coreinit/shared_data.rs  │   │ font data in       │
+//! │ fonts              │──►│ ──────────────────────── │──►│ memory             │
+//! │                    │   │ shared system fonts      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Every game can use the console's built-in fonts. shocora looks for them on your PC and maps
+//! them into memory. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::path::{Path, PathBuf};
 
 use wiiu_hle_macros::hle_export;

@@ -1,4 +1,21 @@
 //! `GX2Surface` and the surface layout exports (port of Cemu's GX2_Surface).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ image              │   │ gx2/surface.rs           │   │ size, pitch,       │
+//! │ sizes/formats      │──►│ ──────────────────────── │──►│ alignment          │
+//! │                    │   │ surface layout           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Works out how much memory an image needs and how it is laid out, exactly as the console
+//! does. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_gpu::addrlib::{self, SurfaceInfo, dim, tile_mode};

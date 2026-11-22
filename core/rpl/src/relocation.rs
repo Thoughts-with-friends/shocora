@@ -1,4 +1,21 @@
 //! PowerPC ELF relocation semantics.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ relocation entries │   │ relocation.rs            │   │ patched            │
+//! │                    │──►│ ──────────────────────── │──►│ instructions       │
+//! │                    │   │ address fixups           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Fixes addresses in code once its final place in memory is known. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 
 use std::collections::HashMap;

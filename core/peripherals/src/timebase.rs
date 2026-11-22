@@ -1,4 +1,21 @@
 //! Espresso timebase.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ real time          │   │ timebase.rs              │   │ tick counter       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ CPU time base            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The console's clock counter that games measure time with. Terms such as HLE, JIT or shader
+//! are explained in `docs/guide/wiiu_term.md`.
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Timebase frequency: bus clock (248.625 MHz) / 4.

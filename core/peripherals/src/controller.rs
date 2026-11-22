@@ -1,4 +1,21 @@
 //! Controller state as the OS input libraries (VPAD, KPAD) report it.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ your controller    │   │ controller.rs            │   │ buttons, sticks    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ controller state         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Button and stick state in the form the OS input libraries report it. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use crate::motion::Motion;
 
 bitflags::bitflags! {

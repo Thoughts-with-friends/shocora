@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ paths              │   │ vfs.rs                   │   │ device + file      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ mount table              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Decides which mounted source answers a path. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
+
 use crate::{Device, DirEntry, FsError, GuestPath, Metadata};
 
 struct Mount {

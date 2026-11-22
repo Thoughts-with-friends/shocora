@@ -1,5 +1,22 @@
 //! `OS*Atomic*`: read-modify-write of guest words. Guest code runs between HLE calls only,
 //! so each call is atomic as it is.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ shared counters    │   │ coreinit/atomic.rs       │   │ safely updated     │
+//! │                    │──►│ ──────────────────────── │──►│ values             │
+//! │                    │   │ atomic operations        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Read-modify-write of a value that several threads share, without one undoing another's
+//! change. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::GuestPtr;
 

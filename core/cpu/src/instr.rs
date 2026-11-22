@@ -2,6 +2,23 @@
 //!
 //! PowerPC numbers bits from the MSB (bit 0) to the LSB (bit 31); the
 //! accessors below hide that and return plain values.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ instruction word   │   │ instr.rs                 │   │ registers,         │
+//! │                    │──►│ ──────────────────────── │──►│ constants          │
+//! │                    │   │ instruction fields       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Picks the parts out of an instruction: which registers it uses and which constants. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// One 32-bit Espresso instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

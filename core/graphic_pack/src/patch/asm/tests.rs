@@ -1,4 +1,22 @@
 //! Cemu's assembler tests (`ppcAsmTestDisassembler`), converted mechanically.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ patch/asm/tests.rs       │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tests of mod.rs          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unit tests for mod.rs (PowerPC assembler). They run with `cargo test` only and are not part
+//! of the emulator you play with. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use super::assemble;
 
 enum Case {

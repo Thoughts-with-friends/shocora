@@ -2,6 +2,23 @@
 //!
 //! Run with `cargo test -p wiiu_emu --test rom_boot -- --nocapture` to see what the title
 //! did. The save is a copy in a temporary folder: the real one is never written.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲                ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ your own game      │   │ system/tests/rom_boot.rs │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ boot your game test      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Boots the developer's own game for a few seconds. Tests only. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::unwrap_used, reason = "test")]
 use wiiu_emu::{Config, Emulator, Status};
 use wiiu_test_roms::{report, require};

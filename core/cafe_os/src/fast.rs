@@ -4,6 +4,24 @@
 //! a time. These run on the calling core alone, without it, like the guest code they replace:
 //! copies and fills, cache maintenance, the time, the core's number. Each does exactly what
 //! its locked version does.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ very frequent OS   │   │ fast.rs                  │   │ results, without   │
+//! │ calls              │──►│ ──────────────────────── │──►│ waiting            │
+//! │                    │   │ calls needing no OS lock │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Some OS functions are called millions of times a second (memory flushes, simple locks). They
+//! run here without stopping the other CPU cores, which keeps the game fast. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use wiiu_cpu::CpuState;

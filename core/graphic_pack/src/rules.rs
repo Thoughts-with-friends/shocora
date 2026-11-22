@@ -1,5 +1,22 @@
 //! What an enabled pack does to a running title: the sections of `rules.txt` read with
 //! the selected presets (Cemu's `GraphicPack2::Activate`), and the files it brings.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ enabled pack       │   │ rules.rs                 │   │ rules for the game │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ what a pack changes      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! What an enabled pack does to a running game. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 use std::path::{Path, PathBuf};
 
 use crate::{

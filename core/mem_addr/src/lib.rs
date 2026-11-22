@@ -25,6 +25,23 @@
 //!
 //! Latte and the other devices work on physical addresses; see
 //! [`effective_to_physical`].
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ addresses          │   │ lib.rs                   │   │ regions,           │
+//! │                    │──►│ ──────────────────────── │──►│ conversions        │
+//! │                    │   │ Wii U memory map         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Where everything lives in the game's address space: code, heaps, GPU memory. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// A contiguous address range `[start, start + size)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

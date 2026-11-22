@@ -1,5 +1,23 @@
 //! Locked cache: 16 KiB of scratch memory per core, allocated in 512-byte
 //! blocks. The DMA engine that fills it is a plain copy here.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game asks for fast │   │ coreinit/lc.rs           │   │ 16 KiB scratch per │
+//! │ RAM                │──►│ ──────────────────────── │──►│ core               │
+//! │                    │   │ locked cache             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Each core has a small, very fast scratch memory games can borrow for hot data. Here it is
+//! ordinary memory. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_mem_addr::LOCKED_CACHE;
 

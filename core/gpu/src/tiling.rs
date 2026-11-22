@@ -1,5 +1,22 @@
 //! Latte tiling: pixel coordinates → byte offsets (port of Cemu's
 //! `LatteAddrLib_Coord`), and detiling whole mip levels.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ tiled image memory │   │ tiling.rs                │   │ plain pixel rows   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ tiling / untiling        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! GPU images are stored in a shuffled order for speed; this converts them to plain rows and
+//! back. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 
 use crate::addrlib::{bank_swapped_width, rotation_from_tile_mode, tile_mode::*};

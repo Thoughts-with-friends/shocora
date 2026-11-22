@@ -3,6 +3,23 @@
 //! Integers and pointers use r3..=r10, 64-bit integers an aligned register
 //! pair (r3:r4, r5:r6, ...), floating point f1..=f8. Overflow arguments live
 //! at `8(r1)` and up.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ CPU registers      │   │ hle/args.rs              │   │ typed Rust         │
+//! │                    │──►│ ──────────────────────── │──►│ arguments          │
+//! │                    │   │ argument passing         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads a call's arguments from the PowerPC registers and stack the way the console's compiler
+//! placed them. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 
 use wiiu_memory::GuestPtr;

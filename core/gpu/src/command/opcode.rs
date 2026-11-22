@@ -1,4 +1,21 @@
 //! PM4 type-3 opcodes.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ packet header      │   │ command/opcode.rs        │   │ command names      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ command codes            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The list of GPU command codes. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 
 pub const NOP: u8 = 0x10;
 /// `[query physical address, flags]`: conditional rendering (not applied; draws run).

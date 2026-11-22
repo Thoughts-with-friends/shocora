@@ -1,5 +1,23 @@
 //! `dmae`: the DMA engine. Copies and fills run at once, so every submission has
 //! retired by the time it returns, and the time stamps are the system clock's.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game queues a copy │   │ dmae.rs                  │   │ memory             │
+//! │                    │──►│ ──────────────────────── │──►│ copied/filled      │
+//! │                    │   │ DMA engine               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A helper chip that copies or fills memory so the CPU does not have to. Here the copy simply
+//! happens at once. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError, HleExport};

@@ -6,6 +6,23 @@
 //! made again from guest memory.
 //! Save data on the host's disk is not part of a state, and a `zlib` stream the title has open
 //! does not come back. A state only loads into the title that saved it, built the same way.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ save-state request │   │ emulator/state.rs        │   │ state file         │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ save states              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Saves and restores the whole machine to a file at any moment. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},

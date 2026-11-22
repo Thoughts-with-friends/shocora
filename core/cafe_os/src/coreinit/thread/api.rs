@@ -1,4 +1,21 @@
 //! Thread lifecycle exports.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ create/start/join  │   │ coreinit/thread/api.rs   │   │ running threads    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ thread lifecycle         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Creating, starting, suspending and ending game threads. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::too_many_arguments)]
 
 use wiiu_hle_macros::hle_export;

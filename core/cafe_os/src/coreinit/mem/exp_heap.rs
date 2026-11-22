@@ -1,4 +1,21 @@
 //! A first-fit heap over a guest address range (the `MEMExpHeap` model).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ alloc/free         │   │ coreinit/mem/exp_heap.rs │   │ free-space         │
+//! │                    │──►│ ──────────────────────── │──►│ bookkeeping        │
+//! │                    │   │ expanded heap logic      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The bookkeeping behind the general heap: first fit, merging free space. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::BTreeMap;
 
 /// Free blocks plus live allocations of one heap.

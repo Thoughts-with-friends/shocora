@@ -10,6 +10,24 @@
 //! This crate knows nothing about memory layout, the OS or HLE: memory goes
 //! through the [`Bus`] trait, and the special HLE-call opcode only surfaces as
 //! [`StepEvent::HleCall`] for the system layer to dispatch.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game machine code  │   │ lib.rs                   │   │ register & memory  │
+//! │                    │──►│ ──────────────────────── │──►│ changes            │
+//! │                    │   │ Espresso CPU             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U's CPU (IBM "Espresso", three PowerPC cores). It speaks a different instruction set
+//! than your PC, so every instruction must be interpreted or translated. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 pub mod bus;
 pub mod decode;
 pub mod disassemble;

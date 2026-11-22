@@ -1,4 +1,21 @@
 //! Places an [`RplFile`] into guest memory and links it.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ parsed RPX         │   │ loader.rs                │   │ runnable code      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ placing & linking        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Copies the program into memory and connects its calls to library functions. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_memory::Memory;

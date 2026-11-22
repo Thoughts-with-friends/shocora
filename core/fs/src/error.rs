@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ failures           │   │ error.rs                 │   │ error codes        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ file errors              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! File errors such as "not found". Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 #[derive(Debug, thiserror::Error)]
 pub enum FsError {
     #[error("{0}: no such file or directory")]

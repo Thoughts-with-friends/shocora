@@ -2,6 +2,23 @@
 //!
 //! The record (`.`) and overflow (`o`) variants share one [`Opcode`]; the
 //! executor reads those bits from the [`Instr`](crate::Instr) itself.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ 32-bit instruction │   │ decode.rs                │   │ which instruction  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ instruction decoder      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Recognises which PowerPC instruction a 32-bit word is, like reading one word of a foreign
+//! language. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// Which interpreter module executes an opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,36 +411,6 @@ const fn decode_paired(raw: u32) -> Opcode {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decodes_common_instructions() {
-        let cases = [
-            (0x3860_0005, Opcode::Addi),   // li r3, 5
-            (0x7C63_2214, Opcode::Add),    // add r3, r3, r4
-            (0x7C63_2615, Opcode::Add),    // addo. r3, r3, r4
-            (0x7C08_02A6, Opcode::Mfspr),  // mflr r0
-            (0x4E80_0020, Opcode::Bclr),   // blr
-            (0x4E80_0420, Opcode::Bcctr),  // bctr
-            (0x9421_FFF0, Opcode::Stwu),   // stwu r1, -16(r1)
-            (0x5463_103A, Opcode::Rlwinm), // slwi r3, r3, 2
-            (0x7C00_04AC, Opcode::Sync),
-            (0xFC20_0890, Opcode::Fmr),   // fmr f1, f1
-            (0xEC21_102A, Opcode::Fadds), // fadds f1, f1, f2
-            (0x1021_102A, Opcode::PsAdd), // ps_add f1, f1, f2
-            (0x1021_14A0, Opcode::PsMerge10),
-            (0xE021_0000, Opcode::PsqL),
-            (0x0400_0007, Opcode::HleCall),
-            (0x0000_0000, Opcode::Invalid),
-        ];
-        for (raw, expected) in cases {
-            assert_eq!(decode(raw), expected, "{raw:#010x}");
-        }
-    }
-}
-
 /// Tests against the developer's own title (`shocora.toml`); they pass without one.
 #[cfg(test)]
 mod rom_tests {
@@ -464,3 +451,7 @@ mod rom_tests {
         assert!(invalid * 1000 < words, "{invalid} of {words} words are invalid");
     }
 }
+
+#[cfg(test)]
+#[path = "decode_tests.rs"]
+mod tests;

@@ -1,4 +1,21 @@
 //! Memory areas owned by the process: `OSGetMemBound`, foreground bucket.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "how much memory?" │   │ coreinit/mem/bounds.rs   │   │ area start and     │
+//! │                    │──►│ ──────────────────────── │──►│ size               │
+//! │                    │   │ memory areas             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Tells the game where its memory areas start and how big they are. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_mem_addr::{FOREGROUND, FOREGROUND_FREE_SIZE, MEM1};
 use wiiu_memory::GuestPtr;

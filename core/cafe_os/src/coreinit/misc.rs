@@ -1,4 +1,21 @@
 //! Small process-level exports with no further machinery behind them.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ small OS queries   │   │ coreinit/misc.rs         │   │ simple answers     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ misc. process calls      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Small process-level functions with nothing behind them but a value to return. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::HleContext;

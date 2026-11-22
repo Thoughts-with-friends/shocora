@@ -1,4 +1,21 @@
 //! End-to-end: RPX → loader → interpreter → HLE → process exit.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲                ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ system/tests/boot.rs     │   │ pass / fail        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ boot test                │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Checks end to end that a small program loads, runs and exits. Tests only. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::unwrap_used, reason = "test helpers")]
 use wiiu_emu::{Config, Emulator, RenderCommand, Status};
 use wiiu_rpl::builder::RplBuilder;

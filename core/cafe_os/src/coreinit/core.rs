@@ -1,4 +1,21 @@
 //! Core identification.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "which core am I?" │   │ coreinit/core.rs         │   │ core number 0-2    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ core identification      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Answers which of the three CPU cores the calling thread runs on. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError};

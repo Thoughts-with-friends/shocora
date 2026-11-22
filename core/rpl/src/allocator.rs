@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ segment sizes      │   │ allocator.rs             │   │ addresses          │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ load-address allocator   │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Chooses where in memory each loaded part goes. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
+
 use wiiu_mem_addr::Region;
 
 use crate::{LoadError, SegmentAllocator, SegmentKind};

@@ -4,6 +4,23 @@
 //! block), `MPRunTask*` jump into the task with `lr` on an internal stub; the
 //! stub records the result and either starts the next task or returns to the
 //! original caller.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ jobs for worker    │   │ coreinit/mp.rs           │   │ jobs run           │
+//! │ threads            │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ task queues (MP)         │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Queues of jobs that a game's worker threads pull from, to spread work over the cores. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_hle_macros::hle_export;

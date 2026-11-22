@@ -226,6 +226,29 @@ impl ShocoraApp {
         self.save_config();
     }
 
+    /// Keeps the window's size in the settings once a resize is over (no button held), as
+    /// long as it is a normal window: full screen and maximized sizes are not its own.
+    fn remember_window_size(&mut self, ctx: &egui::Context) {
+        let (rect, maximized, fullscreen, held) = ctx.input(|i| {
+            let viewport = i.viewport();
+            (
+                viewport.inner_rect,
+                viewport.maximized.unwrap_or(false),
+                viewport.fullscreen.unwrap_or(false),
+                i.pointer.any_down(),
+            )
+        });
+        let Some(rect) = rect else { return };
+        let size = [rect.width().round() as u32, rect.height().round() as u32];
+        if maximized || fullscreen || held || size[0] == 0 || size[1] == 0 {
+            return;
+        }
+        if size != self.config.window_size {
+            self.config.window_size = size;
+            self.save_config();
+        }
+    }
+
     fn save_config(&self) {
         if let Err(error) = self.config.save(&self.config_path) {
             log::warn!("{}: {error}", self.config_path.display());
@@ -322,6 +345,7 @@ impl eframe::App for ShocoraApp {
         self.gamepad_window(&ctx, in_menu);
         self.poll_input(&ctx);
         fullscreen_hotkeys(&ctx);
+        self.remember_window_size(&ctx);
         // Full screen while a title runs: nothing but its pictures.
         if is_fullscreen(&ctx) && !in_menu {
             let screen = egui::Frame::NONE.fill(egui::Color32::BLACK);

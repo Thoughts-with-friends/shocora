@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ failures           │   │ error.rs                 │   │ error messages     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ title errors             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Problems found while opening a game. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]

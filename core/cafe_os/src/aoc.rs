@@ -2,6 +2,23 @@
 //!
 //! The front end finds the title's content and mounts it at [`AocTitle::path`]; this
 //! library lists it to the title, which then opens files under that path.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game asks for DLC  │   │ aoc.rs                   │   │ DLC files mounted  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ add-on content (DLC)     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Lets the game find and open downloadable content you installed, as the console's DLC library
+//! would. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError, HleExport};

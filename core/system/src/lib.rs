@@ -8,6 +8,23 @@
 //!   ├─ iosu: wiiu_iosu::Iosu        (FSA over the title's mounts)
 //!   └─ gpu:  wiiu_gpu::Gpu          (PM4 → RenderCommand)
 //! ```
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲     ▲▲▲▲▲▲     ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ a game             │   │ lib.rs                   │   │ frames, sound      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ the whole Wii U          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Wires every part into one runnable emulator. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 mod emulator;
 mod error;
 

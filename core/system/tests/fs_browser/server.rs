@@ -3,6 +3,24 @@
 //! Only `std`: one request per connection, `GET` only, bound to the loopback address by
 //! the caller. Paths are console paths (`/vol/content/…`, `/dev/fsa`, `/proc/…`) resolved
 //! through a [`View`] of the emulator, so nothing outside its volumes can be reached.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ HTTP requests      │   │ system/tests/fs_browser/ │   │ pages, files       │
+//! │                    │──►│ server.rs                │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ tiny web server          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The web server of the browser tool. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},

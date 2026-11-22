@@ -1,4 +1,22 @@
 //! Paired singles and quantized loads/stores (`psq_l`/`psq_st`).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ paired-single      │   │ interpreter/paired_singl │   │ results            │
+//! │ instr.             │──►│ e.rs                     │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ two-at-once float math   │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U's small SIMD: two float operations at once, heavily used for 3D math. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 
 use super::{

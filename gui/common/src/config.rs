@@ -89,6 +89,8 @@ pub struct AppConfig {
     pub check_graphic_pack_updates: bool,
     /// Enabled graphic packs and their presets, by `rules.txt` path inside the folder.
     pub graphic_packs: wiiu_graphic_pack::PackSettings,
+    /// Size of the main window (points) when it was last resized, used at the next start.
+    pub window_size: [u32; 2],
 }
 
 impl Default for AppConfig {
@@ -131,6 +133,7 @@ impl Default for AppConfig {
             graphic_pack_dir: PathBuf::from("graphicPacks"),
             check_graphic_pack_updates: true,
             graphic_packs: wiiu_graphic_pack::PackSettings::new(),
+            window_size: [1400, 640],
         }
     }
 }

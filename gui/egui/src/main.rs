@@ -90,12 +90,13 @@ fn choose_adapter<'a>(
 fn native_options(
     api: GraphicsApi,
     transparent: bool,
+    size: [u32; 2],
     gpu: Option<String>,
     gpus: Arc<Mutex<Vec<String>>>,
 ) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title("shocora")
-        .with_inner_size([1400.0, 640.0])
+        .with_inner_size([size[0].max(320) as f32, size[1].max(240) as f32])
         // Only a see-through backdrop color needs the desktop behind the window: a
         // transparent window is composed by the desktop on every frame, which costs GPU time.
         .with_transparent(transparent);
@@ -151,7 +152,8 @@ fn main() -> eframe::Result {
 
     // Filled in while the window finds its GPU, which comes before the app is made.
     let gpus = Arc::new(Mutex::new(Vec::new()));
-    let options = native_options(api, transparent, config.gpu.clone(), Arc::clone(&gpus));
+    let options =
+        native_options(api, transparent, config.window_size, config.gpu.clone(), Arc::clone(&gpus));
     eframe::run_native(
         "shocora",
         options,

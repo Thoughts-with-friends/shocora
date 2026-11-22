@@ -3,6 +3,23 @@
 //! Real RPX files need the devkitPPC/wut toolchain; this builder lets tests
 //! (here and in `wiiu_emu`) exercise the whole loader → CPU → HLE path with
 //! hand-written PowerPC code.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ test code          │   │ builder.rs               │   │ small RPX files    │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ RPX builder (tests)      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Builds tiny valid executables in memory so tests do not need real games. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 use std::{collections::BTreeMap, io::Write};

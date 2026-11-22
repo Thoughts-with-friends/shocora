@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲                ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ your settings      │   │ emulator/emu_config.rs   │   │ options            │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ emulator settings        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Options such as JIT on/off, multi-core, GPU thread. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
+
 use std::{path::PathBuf, time::Duration};
 
 use wiiu_title::update::AddOnKind;

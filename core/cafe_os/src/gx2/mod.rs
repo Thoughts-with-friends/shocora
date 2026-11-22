@@ -4,6 +4,24 @@
 //! buffer and submits them to the GPU on flush, exactly like the real library
 //! writes to the ring buffer. While a display list is being recorded the same
 //! packets land in that list instead.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game draw calls    │   │ gx2/mod.rs               │   │ GPU command buffer │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GX2 graphics library     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! GX2 is the Wii U's graphics library, like DirectX or OpenGL on a PC. It never draws itself:
+//! it writes commands for the GPU into memory. Terms such as HLE, JIT or shader are explained
+//! in `docs/guide/wiiu_term.md`.
 pub mod aperture;
 pub mod command;
 pub(crate) mod display;

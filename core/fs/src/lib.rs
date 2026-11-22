@@ -4,6 +4,23 @@
 //! table: the longest matching mount prefix picks a [`Device`], which serves
 //! the rest of the path: a host directory, or an [`Overlay`] of several (an
 //! update over its base title).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ paths like         │   │ lib.rs                   │   │ real files on PC   │
+//! │ /vol/content       │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ virtual file system      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The game asks for paths like /vol/content/…; this maps them to folders and files on your PC.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 mod device;
 mod error;
 mod overlay;

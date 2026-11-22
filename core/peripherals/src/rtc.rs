@@ -1,4 +1,21 @@
 //! Calendar conversion for `OSTicksToCalendarTime`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ clock ticks        │   │ rtc.rs                   │   │ date and time      │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ calendar                 │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Converts clock ticks into a calendar date. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 
 use crate::timebase::FREQUENCY;

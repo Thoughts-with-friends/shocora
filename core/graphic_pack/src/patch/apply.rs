@@ -5,6 +5,23 @@
 //! relocations. Entries that refer to something not yet known wait for the next pass, so
 //! references may point forward, backward and across groups. When nothing more resolves,
 //! what is left is reported and nothing is applied.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ patch groups       │   │ patch/apply.rs           │   │ code written to    │
+//! │                    │──►│ ──────────────────────── │──►│ memory             │
+//! │                    │   │ placing patches          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Works out where each patch goes and writes it into the game's code. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 use std::{
     cell::RefCell,
     collections::{BTreeSet, HashMap},

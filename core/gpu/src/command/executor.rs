@@ -1,4 +1,21 @@
 //! Executes PM4 packets against the register file, guest memory and display.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ parsed packets     │   │ command/executor.rs      │   │ registers, draws,  │
+//! │                    │──►│ ──────────────────────── │──►│ events             │
+//! │                    │   │ command execution        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Carries out each command: set registers, draw, copy, signal. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_interrupt::{Interrupt, PendingInterrupts};

@@ -10,6 +10,23 @@
 //! arguments from registers (PowerPC SysV ABI) via `FromArg`, calls the
 //! function and writes the result back via `IntoReturn`. The expansion refers
 //! to `crate::hle`, so the macro is meant for `wiiu_cafe_os` only.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ #[hle_export] fn   │   │ lib.rs                   │   │ registered OS      │
+//! │                    │──►│ ──────────────────────── │──►│ function           │
+//! │                    │   │ export macro             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A compile-time helper: marks a Rust function as an OS function the game can call. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, ItemFn, LitStr, Pat, parse_macro_input, spanned::Spanned};

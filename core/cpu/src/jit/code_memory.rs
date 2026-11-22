@@ -5,6 +5,23 @@
 //! every batch is made executable. With hundreds of thousands of blocks that came to
 //! gigabytes. Here functions are packed one after the other, and a batch wastes at most
 //! the rest of its last page, as Cemu's recompiler packs code into one large buffer.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ translated code    │   │ jit/code_memory.rs       │   │ executable memory  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ storage for native code  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Where translated code is kept, in large executable chunks. Terms such as HLE, JIT or shader
+//! are explained in `docs/guide/wiiu_term.md`.
 use std::{io, mem::ManuallyDrop};
 
 use cranelift_jit::{BranchProtection, JITMemoryKind, JITMemoryProvider};

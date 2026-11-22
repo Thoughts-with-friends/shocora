@@ -1,4 +1,21 @@
 //! Glue between guest calls and Rust functions.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game calls a stub  │   │ hle/mod.rs               │   │ Rust function runs │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ call bridge              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The glue between a game's function call and the Rust function that answers it. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 mod args;
 pub mod callback;
 #[cfg(test)]

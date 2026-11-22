@@ -1,4 +1,21 @@
 //! `/dev/fsa`: file system access on top of the [`Vfs`].
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ /dev/fsa requests  │   │ fsa.rs                   │   │ files from the VFS │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ file-system service      │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! IOSU's file service, reading from shocora's virtual file system. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::HashMap;
 
 use wiiu_fs::{FsError, Vfs};

@@ -1,3 +1,21 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ loads and stores   │   │ bus.rs                   │   │ memory, HLE calls  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ CPU's view of the        │   │                    │
+//! │                    │   │ machine                  │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! What the CPU sees around it: memory to read and write and the hook into the OS. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
+
 /// A failed bus access.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("bus error at {address:#010x}")]

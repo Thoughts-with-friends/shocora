@@ -1,4 +1,21 @@
 //! Read-only stack of devices, as an installed update lies over its base title.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ update + base game │   │ overlay.rs               │   │ newest file wins   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ layered folders          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Lays an installed update over the base game, so updated files replace the old ones. Terms
+//! such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{Device, DirEntry, FsError, GuestPath, Metadata};

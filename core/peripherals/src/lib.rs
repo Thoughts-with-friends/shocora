@@ -1,4 +1,21 @@
 //! Small Wii U devices, each independent of the rest of the system.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//! ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ host input, time   │   │ lib.rs                   │   │ controller, clock  │
+//! │                    │──►│ ──────────────────────── │──►│ data               │
+//! │                    │   │ small devices            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Small parts of the console: controllers, motion sensors, clocks. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 pub mod controller;
 pub mod motion;
 pub mod rtc;

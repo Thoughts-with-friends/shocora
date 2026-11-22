@@ -8,6 +8,24 @@
 //! Registers keep raw bits (`vec4<u32>`), which matches the hardware: an
 //! instruction decides how to read them. Control flow uses the same execution
 //! mask stack the hardware has, evaluated per invocation.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game GPU programs  │   │ shader/mod.rs            │   │ WGSL shaders       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ shader translation       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Game shaders are written for the Wii U's GPU. They are translated into WGSL so your graphics
+//! card can run them. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 mod cf;
 mod emit;
 pub mod fetch;

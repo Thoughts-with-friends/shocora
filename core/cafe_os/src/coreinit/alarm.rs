@@ -3,6 +3,23 @@
 //! Deadlines use `OSGetTime` ticks (since 2000-01-01). Due alarms are turned
 //! into [`GuestCall`]s by [`Alarms::fire_due`]; the handler receives the alarm
 //! and an `OSContext` pointer.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game sets a timer  │   │ coreinit/alarm.rs        │   │ handler called on  │
+//! │                    │──►│ ──────────────────────── │──►│ time               │
+//! │                    │   │ alarms (timers)          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Lets the game run a function after a delay or periodically, like an alarm clock. Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use std::collections::BTreeMap;
 
 use wiiu_hle_macros::hle_export;

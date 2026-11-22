@@ -1,4 +1,21 @@
 //! Branches. `s.pc` already points past the branch when these run.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ branch             │   │ interpreter/branch.rs    │   │ next instruction   │
+//! │ instructions       │──►│ ──────────────────────── │──►│ address            │
+//! │                    │   │ jumps and calls          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Instructions that jump elsewhere: calls, returns, loops, ifs. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_sign_loss)]
 
 use super::{ExecResult, unimplemented};

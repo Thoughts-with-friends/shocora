@@ -4,6 +4,23 @@
 //! keyboard, the front end takes text from the host keyboard (IME included) and hands it
 //! over with [`Swkbd::set_text`] and [`Swkbd::decide`]; the title reads it back from the
 //! form string and from the buffer of its receiver, which is told of every change.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game opens a       │   │ swkbd.rs                 │   │ text you typed     │
+//! │ keyboard           │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ software keyboard        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! When a game asks you to type (a name, a search), shocora shows its own text box and hands
+//! your text back. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 use wiiu_memory::Memory;
 

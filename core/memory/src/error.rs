@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ bad access         │   │ error.rs                 │   │ error messages     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ memory errors            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! What goes wrong when something touches memory that does not exist. Terms such as HLE, JIT or
+//! shader are explained in `docs/guide/wiiu_term.md`.
+
 /// A guest memory access that could not be served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MemoryError {

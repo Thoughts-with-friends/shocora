@@ -4,6 +4,24 @@
 //! interface itself. No GameCube controller is ever attached here: every polled
 //! channel answers "no response". A register reading as zero would say the opposite,
 //! and a controller in port 3 is what such titles take for a developer's.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ hardware register  │   │ coreinit/hw_interface.rs │   │ emulated register  │
+//! │ access             │──►│ ──────────────────────── │──►│ values             │
+//! │                    │   │ direct hardware access   │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A few games touch hardware registers directly (for example GameCube-era code). This gives
+//! them believable answers. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 
 use wiiu_hle_macros::hle_export;
 

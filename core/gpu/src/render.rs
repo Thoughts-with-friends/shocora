@@ -3,6 +3,24 @@
 //! Latte keeps guest state; the renderer keeps host objects. A surface is
 //! identified by [`SurfaceKey`], so a render target can later be sampled as a
 //! texture without ever going through guest memory.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲    ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ GPU decisions      │   │ render.rs                │   │ commands for wgpu  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ work for the renderer    │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The list of jobs handed to shocora's renderer (uploads, draws, copies), independent of
+//! DirectX/Vulkan/OpenGL. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::sync::Arc;
 
 use crate::shader::{TextureDim, TextureKind};
@@ -142,46 +160,6 @@ pub struct ResolutionScale {
 impl Default for ResolutionScale {
     fn default() -> Self {
         Self { factor: 1, limit_width: 0 }
-    }
-}
-
-impl ResolutionScale {
-    /// The factors on offer, smallest first.
-    pub const FACTORS: [u32; 7] = [1, 2, 3, 4, 5, 6, 8];
-    /// Widest picture the host draws: "10K".
-    pub const MAX_WIDTH: u32 = 10_240;
-    /// Smaller targets hold data rather than pictures: light levels, lookup tables.
-    const MIN_SIDE: u32 = 32;
-
-    /// The scale for a title showing a TV picture `tv_width` wide, for a `requested` factor.
-    #[inline]
-    pub const fn for_tv(requested: u32, tv_width: u32) -> Self {
-        let most = Self::MAX_WIDTH / if tv_width == 0 { 1 } else { tv_width };
-        let factor = if requested < most { requested } else { most };
-        Self { factor: if factor == 0 { 1 } else { factor }, limit_width: tv_width }
-    }
-
-    /// The factor on offer below `factor`, for when video memory runs out.
-    #[inline]
-    pub fn lower_factor(factor: u32) -> u32 {
-        Self::FACTORS.into_iter().rev().find(|f| *f < factor).unwrap_or(1)
-    }
-
-    /// Whether the target `key` is drawn larger. Square targets and arrays are mostly shadow
-    /// maps, which would eat the memory of everything else at these factors.
-    pub const fn applies(&self, key: &SurfaceKey) -> bool {
-        self.factor > 1
-            && key.layers == 1
-            && key.width != key.height
-            && key.width <= self.limit_width
-            && key.width >= Self::MIN_SIDE
-            && key.height >= Self::MIN_SIDE
-    }
-
-    /// The factor of the target `key`.
-    #[inline]
-    pub const fn of(&self, key: &SurfaceKey) -> u32 {
-        if self.applies(key) { self.factor } else { 1 }
     }
 }
 
@@ -390,12 +368,6 @@ pub enum BindingKind {
 #[derive(Debug, Clone)]
 pub struct SurfaceReply(pub std::sync::mpsc::Sender<Vec<TextureUpload>>);
 
-impl PartialEq for SurfaceReply {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
-
 /// A render target in linear memory: the CPU reads what the GPU drew there (Cemu mirrors
 /// every such target back to guest memory).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,12 +394,6 @@ pub struct ReadbackData {
 /// Where the renderer sends what [`RenderCommand::Readback`] read.
 #[derive(Debug, Clone)]
 pub struct ReadbackReply(pub std::sync::mpsc::Sender<ReadbackData>);
-
-impl PartialEq for ReadbackReply {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
 
 /// Work for the host renderer, independent of the graphics API.
 #[derive(Debug, Clone, PartialEq)]
@@ -493,3 +459,7 @@ pub trait RenderBackend {
     /// Executes commands in order.
     fn execute(&mut self, commands: &[RenderCommand]);
 }
+
+mod render_impls;
+#[allow(unused_imports)]
+pub(crate) use render_impls::*;

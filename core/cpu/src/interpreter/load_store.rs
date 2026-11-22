@@ -1,4 +1,22 @@
 //! Integer and floating-point loads/stores, reservations and `dcbz`.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲     ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ load/store         │   │ interpreter/load_store.r │   │ memory             │
+//! │ instructions       │──►│ s                        │──►│ read/written       │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ memory access            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Instructions that move data between registers and memory. Terms such as HLE, JIT or shader
+//! are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 
 use super::{ExecResult, Fault, unimplemented};

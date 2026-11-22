@@ -10,6 +10,24 @@
 //! goes on. Both see one guest memory, as Espresso and Latte do on the console, and the CPU
 //! waits only where the console's waits for its GPU: `GX2DrawDone`, timestamps, or a GPU
 //! that is frames behind.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ commands from GX2  │   │ worker.rs                │   │ commands executed  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ GPU thread               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Runs GPU commands on a thread of its own, so the CPU cores can carry on, like a real GPU
+//! working in parallel. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::{
     collections::VecDeque,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -448,41 +466,5 @@ impl Gpu {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::command::{opcode, pm4::type3_header};
-
-    fn memory() -> Memory {
-        let mut memory = Memory::new();
-        memory
-            .map(wiiu_mem_addr::Region::new("MEM2", wiiu_mem_addr::MEM2.start, 0x10_0000))
-            .unwrap();
-        memory
-    }
-
-    #[test]
-    fn the_thread_executes_in_order_and_retires_timestamps() {
-        let mut memory = memory();
-        let mut gpu = Gpu::threaded();
-        let words = [type3_header(opcode::SET_CONFIG_REG, 2), 0x10, 0xABCD];
-        gpu.submit(&mut memory, &words).unwrap();
-        gpu.submit(&mut memory, &words).unwrap();
-        assert_eq!(gpu.submitted_timestamp(), 2);
-        gpu.wait_timestamp(2);
-        assert_eq!(gpu.retired_timestamp(), 2);
-        assert_eq!(gpu.registers().get(crate::regs::base::CONFIG + 0x10), 0xABCD);
-    }
-
-    #[test]
-    fn the_thread_writes_guest_memory_the_cpu_sees() {
-        let mut memory = memory();
-        let mut gpu = Gpu::threaded();
-        let address = wiiu_mem_addr::MEM2.start + 0x100;
-        let physical = wiiu_mem_addr::effective_to_physical(address).unwrap();
-        // MEM_WRITE: address, then 32-bit data.
-        let words = [type3_header(opcode::MEM_WRITE, 4), physical, 0, 0x1234_5678, 0];
-        gpu.submit(&mut memory, &words).unwrap();
-        gpu.wait_idle();
-        assert_eq!(memory.read_u32(address).unwrap(), 0x1234_5678);
-    }
-}
+#[path = "worker_tests.rs"]
+mod tests;

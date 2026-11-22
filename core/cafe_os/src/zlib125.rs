@@ -2,6 +2,24 @@
 //!
 //! The guest `z_stream` keeps its pointers and counters in guest memory;
 //! the codec state lives host-side, keyed by the stream's address.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ compressed game    │   │ zlib125.rs               │   │ plain data         │
+//! │ data               │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ zlib (de)compression     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The console ships the common zlib library for games; this provides the same functions using
+//! a Rust implementation. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 
 use std::collections::HashMap;
@@ -419,20 +437,6 @@ fn crc32(ctx: &mut HleContext<'_>, crc: u32, buffer: u32, len: u32) -> Result<u3
 /// CRC-32 continued from an arbitrary previous value (zlib semantics).
 struct PrefixCrc(u32);
 
-impl PrefixCrc {
-    fn extend(&mut self, data: &[u8]) -> u32 {
-        let mut crc = !self.0;
-        for &byte in data {
-            crc ^= u32::from(byte);
-            for _ in 0..8 {
-                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
-            }
-        }
-        self.0 = !crc;
-        self.0
-    }
-}
-
 pub const EXPORTS: &[HleExport] = &[
     INFLATE_INIT2,
     INFLATE_INIT,
@@ -452,73 +456,9 @@ pub const EXPORTS: &[HleExport] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use std::io::Write;
+#[path = "zlib125_tests.rs"]
+mod tests;
 
-    use super::*;
-    use crate::hle::test_env::{SCRATCH, TestEnv};
-
-    #[test]
-    fn missing_buffers_are_an_error_not_a_crash() {
-        let mut env = TestEnv::new();
-        let stream = SCRATCH;
-        env.call("zlib125", "inflateInit_", &[stream, 0, 0x38]);
-        // No input although some is promised, as when a title's allocation failed.
-        for (field, value) in
-            [(0x00, 0), (0x04, 0x480_2000), (0x0C, SCRATCH + 0x400), (0x10, 0x100)]
-        {
-            env.memory.write_u32(stream + field, value).unwrap();
-        }
-        assert_eq!(
-            env.call("zlib125", "inflate", &[stream, Z_FINISH]),
-            Z_STREAM_ERROR.cast_unsigned()
-        );
-    }
-
-    #[test]
-    fn inflate_streams_into_guest_memory() {
-        let mut env = TestEnv::new();
-        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(b"hello hello hello shocora").unwrap();
-        let packed = encoder.finish().unwrap();
-        let (stream, input, output) = (SCRATCH, SCRATCH + 0x100, SCRATCH + 0x400);
-        env.memory.write_bytes(input, &packed).unwrap();
-        env.call("zlib125", "inflateInit_", &[stream, 0, 0x38]);
-        for (field, value) in
-            [(0x00, input), (0x04, packed.len() as u32), (0x0C, output), (0x10, 0x100)]
-        {
-            env.memory.write_u32(stream + field, value).unwrap();
-        }
-        assert_eq!(
-            env.call("zlib125", "inflate", &[stream, Z_FINISH]),
-            Z_STREAM_END.cast_unsigned()
-        );
-        assert_eq!(env.memory.read_u32(stream + 0x14).unwrap(), 25);
-        assert_eq!(env.memory.read_c_string(output, 25).unwrap(), "hello hello hello shocora");
-        env.memory.write_bytes(SCRATCH + 0x800, b"123456789").unwrap();
-        assert_eq!(env.call("zlib125", "crc32", &[0, SCRATCH + 0x800, 9]), 0xCBF4_3926);
-        assert_eq!(env.call("zlib125", "crc32", &[0xCBF4_3926, SCRATCH + 0x800, 0]), 0xCBF4_3926);
-    }
-
-    #[test]
-    fn gzip_trailer_is_consumed_even_across_calls() {
-        let mut env = TestEnv::new();
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(b"gzip data for shocora").unwrap();
-        let packed = encoder.finish().unwrap();
-        let (stream, input, output) = (SCRATCH, SCRATCH + 0x100, SCRATCH + 0x400);
-        env.memory.write_bytes(input, &packed).unwrap();
-        env.call("zlib125", "inflateInit2_", &[stream, 31, 0, 0x38]);
-        // Withhold the last three bytes: the end is only reported once they arrive.
-        let first = packed.len() as u32 - 3;
-        for (field, value) in [(0x00, input), (0x04, first), (0x0C, output), (0x10, 0x100)] {
-            env.memory.write_u32(stream + field, value).unwrap();
-        }
-        assert_eq!(env.call("zlib125", "inflate", &[stream, 0]), Z_OK.cast_unsigned());
-        assert_eq!(env.memory.read_u32(stream + 0x04).unwrap(), 0);
-        env.memory.write_u32(stream + 0x04, 3).unwrap();
-        assert_eq!(env.call("zlib125", "inflate", &[stream, 0]), Z_STREAM_END.cast_unsigned());
-        assert_eq!(env.memory.read_u32(stream + 0x04).unwrap(), 0);
-        assert_eq!(env.memory.read_c_string(output, 21).unwrap(), "gzip data for shocora");
-    }
-}
+mod stream;
+#[allow(unused_imports)]
+pub(crate) use stream::*;

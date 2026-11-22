@@ -1,4 +1,21 @@
 //! Control-flow, ALU and TEX instruction parsing.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ shader binary      │   │ shader/cf.rs             │   │ instruction lists  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ shader parsing           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads the structure of a Wii U shader: its control flow, math and texture instructions.
+//! Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation)]
 
 /// A control-flow instruction.

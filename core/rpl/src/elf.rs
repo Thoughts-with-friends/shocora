@@ -1,4 +1,21 @@
 //! Big-endian ELF32 headers, as used by RPX/RPL files.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ file bytes         │   │ elf.rs                   │   │ sections           │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ ELF headers              │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads the ELF container format RPX files are built on. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use crate::LoadError;
 
 pub const ET_RPL: u16 = 0xFE01;

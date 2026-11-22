@@ -1,5 +1,22 @@
 //! Instruction table of Cemu's `ppcAssembler.cpp` (`ppcInstructionTable`), converted
 //! mechanically: name, opcode groups, form, operand flags, fixed bits and operands.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ instruction name   │   │ patch/asm/table.rs       │   │ opcode bits        │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ instruction table        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The list of PowerPC instructions the assembler knows. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use super::{Constraint::*, Form, InstrDef, Operand::*};
 
 #[rustfmt::skip]

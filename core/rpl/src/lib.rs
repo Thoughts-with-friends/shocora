@@ -11,6 +11,23 @@
 //! Parsing is pure; only [`loader::load`] touches guest memory, and it asks
 //! its caller where segments go ([`SegmentAllocator`]) and what imports
 //! resolve to ([`ImportResolver`]).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ RPX/RPL file       │   │ lib.rs                   │   │ code in memory     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ executable loader        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Wii U programs come as RPX (the game) and RPL (libraries) files. This loads them into memory
+//! and links them. Terms such as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 mod allocator;
 #[cfg(any(test, feature = "builder"))]
 pub mod builder;

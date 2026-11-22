@@ -1,3 +1,20 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ addresses          │   │ guest_ptr.rs             │   │ safe reads/writes  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ typed guest pointers     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! A game memory address that remembers what kind of data lives there. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
+
 use std::{fmt, marker::PhantomData};
 
 use crate::{Memory, MemoryError};

@@ -1,4 +1,21 @@
 //! PM4 packet framing. Pure: `&[u32] → Packet` stream.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ raw words          │   │ command/pm4.rs           │   │ packets            │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ packet framing           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Cuts the stream of 32-bit words into separate commands. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 use crate::GpuError;
 
 /// One packet, borrowing its payload from the command buffer.

@@ -12,6 +12,24 @@
 //!
 //! This crate never talks to a graphics API. It produces API-neutral
 //! [`RenderCommand`]s that a host [`RenderBackend`] executes.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ GPU commands       │   │ lib.rs                   │   │ work for your GPU  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ Latte GPU                │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U's GPU ("Latte", an AMD Radeon). shocora reads the commands the game sent it and
+//! turns them into work for your PC's graphics card. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 pub mod addrlib;
 pub mod command;
 pub mod display;

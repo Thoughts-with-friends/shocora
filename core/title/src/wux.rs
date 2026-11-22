@@ -6,6 +6,23 @@
 //!  then stored sectors, aligned to the sector size
 //! ```
 //! All header fields are little-endian.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! ▲▲▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ WUX image          │   │ wux.rs                   │   │ disc sectors       │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ WUX disc images          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads compressed WUX disc images. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::io::{Read, Seek, SeekFrom};
 
 use crate::TitleError;

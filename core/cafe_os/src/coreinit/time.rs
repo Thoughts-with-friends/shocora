@@ -1,4 +1,21 @@
 //! Time: `OSGetTime`, `OSGetTick`, `OSTicksToCalendarTime`, ...
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ "what time is it?" │   │ coreinit/time.rs         │   │ ticks, calendar    │
+//! │                    │──►│ ──────────────────────── │──►│ date               │
+//! │                    │   │ time and clock           │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Gives the game the current time, in console clock ticks or as a calendar date. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 
 use wiiu_hle_macros::hle_export;

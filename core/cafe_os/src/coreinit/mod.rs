@@ -1,4 +1,22 @@
 //! `coreinit.rpl`: the core of Cafe OS.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game calls         │   │ coreinit/mod.rs          │   │ threads, memory,   │
+//! │ coreinit           │──►│ ──────────────────────── │──►│ files…             │
+//! │                    │   │ coreinit: the OS core    │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! coreinit is the heart of Cafe OS: threads, memory heaps, files, timers and time. Its parts
+//! live in the files of this folder. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 pub mod alarm;
 pub mod atomic;
 pub mod cache;

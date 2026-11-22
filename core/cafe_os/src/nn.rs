@@ -3,6 +3,24 @@
 //! shocora is offline: accounts report a
 //! single local user and everything else stays at its "not connected" default
 //! (unimplemented imports return 0, which `nn::Result` reads as success).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ online/account     │   │ nn.rs                    │   │ "offline" answers  │
+//! │ calls              │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ network & accounts       │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! shocora plays offline: account and online-service libraries answer as a single local user
+//! with no network. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::{

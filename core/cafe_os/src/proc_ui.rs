@@ -2,6 +2,24 @@
 //!
 //! The title never leaves the foreground, so callbacks are recorded but
 //! never invoked and message processing always reports "foreground".
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ HOME menu, exit    │   │ proc_ui.rs               │   │ foreground/exit    │
+//! │                    │──►│ ──────────────────────── │──►│ messages           │
+//! │                    │   │ process lifecycle        │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Tells the game whether it is in the foreground or must quit, as the console does when you
+//! press HOME or close it. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleExport};

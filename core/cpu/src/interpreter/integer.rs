@@ -1,4 +1,21 @@
 //! Integer arithmetic, logic, rotates, shifts and compares.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                         ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ integer            │   │ interpreter/integer.rs   │   │ results, flags     │
+//! │ instructions       │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ integer math             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Whole-number math, logic and comparisons. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 
 use super::{ExecResult, unimplemented};

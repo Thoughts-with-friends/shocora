@@ -4,6 +4,23 @@
 //! sound effects play unfiltered, too bright. The arithmetic follows Cemu's `ax_mix.cpp`.
 //!
 //! Samples are in `-1.0..=1.0` (a 16-bit sample over 32768).
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!                                   ▲▲▲▲▲  here
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ samples            │   │ filter.rs                │   │ filtered samples   │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ voice filters            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Low-pass and other filters games apply to sounds (muffled underwater, far away). Terms such
+//! as HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// Largest value the DSP keeps as filter history (a 16-bit sample).
 const HISTORY_MAX: f32 = 32767.0 / 32768.0;

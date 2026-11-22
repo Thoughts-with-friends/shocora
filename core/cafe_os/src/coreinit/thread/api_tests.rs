@@ -1,3 +1,22 @@
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ cargo test         │   │ coreinit/thread/api_test │   │ pass / fail        │
+//! │                    │──►│ s.rs                     │──►│                    │
+//! │                    │   │ ──────────────────────── │   │                    │
+//! │                    │   │ tests of api.rs          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Unit tests for api.rs (thread lifecycle). They run with `cargo test` only and are not part
+//! of the emulator you play with. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
+
 use super::super::{ThreadRecord, ThreadState};
 use crate::hle::test_env::{MAIN_THREAD, SCRATCH, TestEnv};
 

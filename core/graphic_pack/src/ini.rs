@@ -3,6 +3,23 @@
 //! `[Section]` headers, `name = value` options (names compared case-insensitively),
 //! comments from `#` or `;` outside quotes, and values in quotes unwrapped. Sections may
 //! repeat (`[Preset]`, `[TextureRedefine]`) and keep their order.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!               ▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ rules.txt          │   │ ini.rs                   │   │ sections, options  │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ INI reader               │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Reads the rules.txt files that describe a pack. Terms such as HLE, JIT or shader are
+//! explained in `docs/guide/wiiu_term.md`.
 
 /// One `[name]` section and its options in file order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

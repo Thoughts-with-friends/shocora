@@ -1,4 +1,21 @@
 //! GX2 initialisation helpers with little or no GPU-visible effect.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲    ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ GX2Init…           │   │ gx2/setup.rs             │   │ ready graphics     │
+//! │                    │──►│ ──────────────────────── │──►│ library            │
+//! │                    │   │ GX2 start-up             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Start-up functions of the graphics library that have little visible effect. Terms such as
+//! HLE, JIT or shader are explained in `docs/guide/wiiu_term.md`.
 use wiiu_hle_macros::hle_export;
 
 use crate::hle::{HleContext, HleError};

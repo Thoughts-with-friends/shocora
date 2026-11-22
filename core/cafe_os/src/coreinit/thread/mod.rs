@@ -4,6 +4,25 @@
 //! * [`api`] — `OSCreateThread`, `OSJoinThread`, ...
 //! * [`sync`] — mutexes, spinlocks, events, semaphores, condition variables, rendezvous.
 //! * [`message`] — message queues.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game threads       │   │ coreinit/thread/mod.rs   │   │ who runs where     │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ threads &                │   │                    │
+//! │                    │   │ synchronization          │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Threads let a game do several things at once. This folder decides which thread runs on which
+//! core and provides locks between them. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 pub mod api;
 pub mod message;
 pub mod scheduler;

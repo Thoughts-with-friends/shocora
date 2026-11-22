@@ -14,6 +14,26 @@
 //!
 //! Only the main thread runs for now; thread-related exports behave as if no
 //! other thread exists.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ game calls an OS   │   │ lib.rs                   │   │ answers to the     │
+//! │ function           │──►│ ──────────────────────── │──►│ game               │
+//! │                    │   │ Cafe OS, rewritten in    │   │ GPU commands       │
+//! │                    │   │ Rust                     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The Wii U runs its own operating system, Cafe OS. shocora does not run Nintendo's copy: when
+//! the game calls an OS function, the call lands here and Rust code does the same job (HLE,
+//! high-level emulation). Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 pub mod aoc;
 pub mod coreinit;
 pub mod dmae;

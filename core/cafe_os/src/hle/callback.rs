@@ -4,6 +4,25 @@
 //! call or between instructions): the interrupted registers are saved, the
 //! callback runs on a dedicated stack and returns into an internal stub that
 //! restores them. Calls run one at a time, in order.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                            ▲▲▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ OS wants game code │   │ hle/callback.rs          │   │ game function runs │
+//! │ run                │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ calling back into the    │   │                    │
+//! │                    │   │ game                     │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! Sometimes the OS must run a function of the game (a timer handler, a "file loaded"
+//! callback). This arranges that. Terms such as HLE, JIT or shader are explained in
+//! `docs/guide/wiiu_term.md`.
 use std::collections::VecDeque;
 
 use wiiu_cpu::CpuState;

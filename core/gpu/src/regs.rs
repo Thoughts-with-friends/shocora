@@ -1,4 +1,21 @@
 //! Latte register file, addressed in dwords.
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                                        ▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ register writes    │   │ regs.rs                  │   │ current GPU        │
+//! │                    │──►│ ──────────────────────── │──►│ settings           │
+//! │                    │   │ GPU registers            │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The GPU's settings, stored as numbered registers like on the real chip. Terms such as HLE,
+//! JIT or shader are explained in `docs/guide/wiiu_term.md`.
 
 /// First dword of each register space targeted by the `SET_*` packets.
 pub mod base {

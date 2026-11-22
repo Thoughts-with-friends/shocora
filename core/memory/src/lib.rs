@@ -3,6 +3,23 @@
 //! [`Memory`] owns the backing storage of every mapped [`Region`] and offers
 //! big-endian accessors. [`GuestPtr`] is a typed effective address that reads
 //! and writes through a [`Memory`].
+//!
+//! ## Where this file sits
+//!
+//! ```text
+//! Game files ─► Loader ─► CPU ◄─► Memory ◄─► OS (HLE) ─► GPU ─► Screen
+//!                                 ▲▲▲▲▲▲  here
+//! Controllers, clock ─► OS (HLE) ─► Sound ─► Speakers
+//!
+//! ┌────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐
+//! │ reads & writes     │   │ lib.rs                   │   │ bytes              │
+//! │                    │──►│ ──────────────────────── │──►│                    │
+//! │                    │   │ guest memory             │   │                    │
+//! └────────────────────┘   └──────────────────────────┘   └────────────────────┘
+//! ```
+//!
+//! The 4 GB of memory the game believes it has, backed by your PC's RAM. Terms such as HLE, JIT
+//! or shader are explained in `docs/guide/wiiu_term.md`.
 mod error;
 mod guest_ptr;
 mod host;
