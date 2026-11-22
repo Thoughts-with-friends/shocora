@@ -118,7 +118,9 @@ impl ShocoraApp {
 
             ui.menu_button(tr("menu.view"), |ui| {
                 ui.checkbox(&mut self.show_library, tr("menu.game_library"));
-                ui.checkbox(&mut self.show_log, tr("menu.guest_log"));
+                if ui.checkbox(&mut self.config.show_log, tr("menu.guest_log")).changed() {
+                    self.save_config();
+                }
                 ui.separator();
 
                 if ui.checkbox(&mut self.config.gamepad_window, tr("menu.gamepad_window")).changed()

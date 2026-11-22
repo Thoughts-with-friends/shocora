@@ -1,3 +1,9 @@
 [alias]
 # `cargo xtask <build|run> [--graphics wgpu|vulkan|opengl] [--release]` — see xtask/src/main.rs.
 xtask = "run -p xtask --quiet --"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-feature=+crt-static"]

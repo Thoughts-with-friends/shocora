@@ -95,6 +95,8 @@ struct Translator<'a> {
     uses_stack: bool,
     /// Writes stream-out buffers (`MEM_STREAM*_WRITE`).
     stream_out: bool,
+    /// See [`TranslatedShader::ubo_vec4s`].
+    ubo_vec4s: [u32; 16],
 }
 
 impl<'a> Translator<'a> {
@@ -116,7 +118,14 @@ impl<'a> Translator<'a> {
             loops_emitted: 0,
             uses_stack: false,
             stream_out: false,
+            ubo_vec4s: [0; 16],
         }
+    }
+
+    /// Notes that uniform block `block` is read at vec4 `index`, or anywhere (`None`).
+    fn note_ubo(&mut self, block: usize, index: Option<u32>) {
+        let reach = &mut self.ubo_vec4s[block.min(15)];
+        *reach = index.map_or(u32::MAX, |index| (*reach).max(index.saturating_add(1)));
     }
 
     fn temp(&mut self) -> String {
@@ -165,6 +174,7 @@ impl<'a> Translator<'a> {
                 } else {
                     String::new()
                 };
+                self.note_ubo(block as usize, (!src.rel).then_some(index));
                 format!(
                     "arena[(P.{}_ubo[{block}] >> 2u) + ({index}u{relative}) * 4u + {}u]",
                     self.stage.prefix(),
@@ -487,6 +497,7 @@ impl<'a> Translator<'a> {
                 // First uniform block is buffer 0x80.
                 self.note_gpr(op.src);
                 let block = op.texture.saturating_sub(0x80).min(15);
+                self.note_ubo(block as usize, None);
                 let index = format!("R[{}].{}", op.src, CHANNEL[op.src_sel[0] as usize]);
                 let name = self.temp();
                 let base = format!("(P.{}_ubo[{block}] >> 2u) + {index} * 4u", self.stage.prefix());
@@ -1057,6 +1068,7 @@ impl<'a> Translator<'a> {
             color_exports: self.color_exports,
             writes_depth: self.writes_depth,
             stream_out: self.stream_out,
+            ubo_vec4s: self.ubo_vec4s,
         }
     }
 }

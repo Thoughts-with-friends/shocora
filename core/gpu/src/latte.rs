@@ -45,6 +45,11 @@ const PS_SAMPLERS: usize = 18;
 const PARAM_PS_LOD_BIAS: usize = 85;
 /// Texture contents are re-checked once per this many frames at most.
 const TEXTURE_RECHECK_FRAMES: u64 = 2;
+/// Frames a texture whose memory saw no noted write ([`WriteTracker`]) goes without being
+/// hashed again. Hashing every byte of every sampled texture every other frame took a fifth
+/// of the GPU thread in Breath of the Wild; this is the safety net for writes the title
+/// never flushed.
+const TEXTURE_TRUST_FRAMES: u64 = 10;
 /// Frames a vertex or uniform buffer is trusted without looking at it again, unless the
 /// title flushes its memory out of the CPU's cache. A safety net: titles do flush.
 const BUFFER_RECHECK_FRAMES: u64 = 30;
@@ -323,8 +328,14 @@ struct ArenaSlice {
 struct WriteTracker {
     /// Per page, the [`now`](Self::now) of the last write; empty before the first one.
     stamps: Vec<u32>,
+    /// Per 1 MiB, the latest of its pages' stamps: most checks of large vertex buffers end
+    /// here instead of looking at hundreds of pages each draw.
+    coarse: Vec<u32>,
     now: u32,
 }
+
+/// Granularity of [`WriteTracker::coarse`].
+const TRACK_COARSE_BITS: u32 = 20;
 
 impl WriteTracker {
     fn note(&mut self, address: u32, size: u32) {
@@ -333,11 +344,16 @@ impl WriteTracker {
         }
         if self.stamps.is_empty() {
             self.stamps = vec![0; 1 << (32 - TRACK_PAGE_BITS)];
+            self.coarse = vec![0; 1 << (32 - TRACK_COARSE_BITS)];
         }
         self.now = self.now.saturating_add(1);
+        let end = address.saturating_add(size - 1);
         let first = (address >> TRACK_PAGE_BITS) as usize;
-        let last = (address.saturating_add(size - 1) >> TRACK_PAGE_BITS) as usize;
+        let last = (end >> TRACK_PAGE_BITS) as usize;
         self.stamps[first..=last].fill(self.now);
+        let first = (address >> TRACK_COARSE_BITS) as usize;
+        let last = (end >> TRACK_COARSE_BITS) as usize;
+        self.coarse[first..=last].fill(self.now);
     }
 
     /// Whether nothing in `[address, address + size)` was written after `stamp`.
@@ -345,8 +361,13 @@ impl WriteTracker {
         if self.stamps.is_empty() || size == 0 {
             return true;
         }
+        let end = address.saturating_add(size - 1);
+        let coarse = (address >> TRACK_COARSE_BITS) as usize..=(end >> TRACK_COARSE_BITS) as usize;
+        if self.coarse[coarse].iter().all(|&written| written <= stamp) {
+            return true;
+        }
         let first = (address >> TRACK_PAGE_BITS) as usize;
-        let last = (address.saturating_add(size - 1) >> TRACK_PAGE_BITS) as usize;
+        let last = (end >> TRACK_PAGE_BITS) as usize;
         self.stamps[first..=last].iter().all(|&written| written <= stamp)
     }
 }
@@ -363,6 +384,9 @@ struct GuestBuffer {
 struct KnownTexture {
     content_hash: u64,
     last_check: u64,
+    /// [`WriteTracker::now`] and frame of the last hash.
+    stamp: u32,
+    hashed: u64,
 }
 
 /// A guest buffer written by stream-out, whose contents only the host has.
@@ -389,6 +413,9 @@ struct ProgramPair {
     /// Uniform blocks each stage reads, as bit masks: the others are not worth storing.
     vs_blocks: u16,
     ps_blocks: u16,
+    /// Vec4s each stage reads of each block: see [`shader::TranslatedShader::ubo_vec4s`].
+    vs_ubo_vec4s: [u32; 16],
+    ps_ubo_vec4s: [u32; 16],
 }
 
 /// Bytes of a texel of `format` when the host keeps its texels exactly as the guest does
@@ -900,10 +927,11 @@ impl Latte {
         mip_base: u32,
     ) {
         let frame = self.frame;
-        if let Some(known) = self.textures.get(&key) {
-            if frame.wrapping_sub(known.last_check) < TEXTURE_RECHECK_FRAMES {
-                return;
-            }
+        let known = self.textures.get(&key).map(|k| (k.last_check, k.stamp, k.hashed));
+        if let Some((last_check, _, _)) = known
+            && frame.wrapping_sub(last_check) < TEXTURE_RECHECK_FRAMES
+        {
+            return;
         }
         let info = addrlib::gx2_surface_info(
             words.format,
@@ -926,6 +954,31 @@ impl Latte {
             log::debug!("texture at {:#010x} outside mapped memory", words.address);
             return;
         };
+        let chain = (mip_count > 1 && mip_base != 0).then(|| {
+            let effective = wiiu_mem_addr::physical_to_effective(mip_base).unwrap_or(0);
+            (
+                masked_address(effective, words.tile_mode) & !0xFF,
+                mip_chain_size(words, dim, mip_count),
+            )
+        });
+        let base_start = masked_address(effective, words.tile_mode) & !0xFF;
+        let untouched = |stamp: u32| {
+            self.writes.unchanged_since(base_start, base.len() as u32, stamp)
+                && chain.is_none_or(|(start, size)| {
+                    start == 0 || self.writes.unchanged_since(start, size.min(0x0400_0000), stamp)
+                })
+        };
+        if self.buffer_cache
+            && let Some((_, stamp, hashed)) = known
+            && frame.wrapping_sub(hashed) < TEXTURE_TRUST_FRAMES
+            && untouched(stamp)
+        {
+            if let Some(known) = self.textures.get_mut(&key) {
+                known.last_check = frame;
+            }
+            return;
+        }
+        let stamp = self.writes.now;
         // Every byte is hashed. A sampled hash missed partial updates: BotW streams the
         // near terrain's height and material data into textures in place, and stale ones drew
         // the ground dark and too high (Link's feet sank into it); Mario Tennis draws glyphs
@@ -952,12 +1005,17 @@ impl Latte {
         }
         if let Some(known) = self.textures.get_mut(&key) {
             known.last_check = frame;
+            known.stamp = stamp;
+            known.hashed = frame;
             if known.content_hash == hash {
                 return;
             }
         }
         let mips = decode_mips(memory, words, dim, mip_count, mip_base);
-        self.textures.insert(key, KnownTexture { content_hash: hash, last_check: frame });
+        self.textures.insert(
+            key,
+            KnownTexture { content_hash: hash, last_check: frame, stamp, hashed: frame },
+        );
         self.commands.push(RenderCommand::Upload(Box::new(TextureUpload { key, dim, mips })));
     }
 
@@ -1231,6 +1289,7 @@ impl Latte {
         };
         let (vs_blocks, ps_blocks) =
             (used_uniform_blocks(&vertex.wgsl, "vs"), used_uniform_blocks(&pixel.wgsl, "ps"));
+        let (vs_ubo_vec4s, ps_ubo_vec4s) = (vertex.ubo_vec4s, pixel.ubo_vec4s);
         let vs_module = Arc::new(ShaderModule {
             id: self.next_module_id,
             bindings: make_bindings(&vertex, &vs_signatures, 0),
@@ -1254,6 +1313,8 @@ impl Latte {
             color_exports: pixel.color_exports,
             vs_blocks,
             ps_blocks,
+            vs_ubo_vec4s,
+            ps_ubo_vec4s,
         });
         self.programs.insert(hash, Arc::clone(&pair));
         pair
@@ -1376,17 +1437,24 @@ impl Latte {
         }
     }
 
-    /// Stores the uniform block of unit `index` and returns its arena offset.
+    /// Stores the uniform block of unit `index` and returns its arena offset. Only the
+    /// `vec4s` the shaders read from its start are stored: titles bind blocks of kilobytes
+    /// and read a few rows of them (Breath of the Wild hashed and copied 21 MB a frame).
     fn store_uniform_block(
         &mut self,
         memory: &Memory,
         regs: &RegisterFile,
         stage_base: u32,
         index: u32,
+        vec4s: u32,
     ) -> u32 {
         let start = base::RESOURCE + stage_base + index * 7;
         let (physical, size) = (regs.get(start), regs.get(start + 1).wrapping_add(1));
         if physical == 0 || size == 0 || size > 0x10_0000 {
+            return 0;
+        }
+        let size = size.min(vec4s.saturating_mul(16));
+        if size == 0 {
             return 0;
         }
         // Stream-out results only exist on the host: Xenoblade X streams out its matrices and
@@ -1641,12 +1709,22 @@ impl Latte {
             // draw; blocks the shaders never read stay at offset 0.
             for block in 0..16 {
                 if pair.vs_blocks & (1 << block) != 0 {
-                    params[8 + block as usize] =
-                        self.store_uniform_block(memory, regs, resource::VS_UNIFORM_BLOCK, block);
+                    params[8 + block as usize] = self.store_uniform_block(
+                        memory,
+                        regs,
+                        resource::VS_UNIFORM_BLOCK,
+                        block,
+                        pair.vs_ubo_vec4s[block as usize],
+                    );
                 }
                 if pair.ps_blocks & (1 << block) != 0 {
-                    params[24 + block as usize] =
-                        self.store_uniform_block(memory, regs, resource::PS_UNIFORM_BLOCK, block);
+                    params[24 + block as usize] = self.store_uniform_block(
+                        memory,
+                        regs,
+                        resource::PS_UNIFORM_BLOCK,
+                        block,
+                        pair.ps_ubo_vec4s[block as usize],
+                    );
                 }
             }
         } else {

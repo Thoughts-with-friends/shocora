@@ -228,7 +228,10 @@ impl Streamer {
             self.in_flight = false;
         }
         let format = self.tap.format();
-        let due = self.last.is_none_or(|last| last.elapsed() >= format.interval());
+        // A flip a little early still counts: at 60 per second each flip comes about one
+        // interval after the last, and holding to the interval exactly dropped every other one.
+        let interval = format.interval();
+        let due = self.last.is_none_or(|last| last.elapsed() + interval / 4 >= interval);
         if !due || !self.tap.enabled.load(Ordering::Relaxed) {
             return;
         }

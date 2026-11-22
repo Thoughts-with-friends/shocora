@@ -36,8 +36,10 @@ const AUDIO_CHUNK: usize = protocol::AUDIO_RATE as usize / 50 * 2;
 const AUDIO_QUEUE: usize = 60;
 /// Pictures of one screen on their way to the guest at most. More would wait in the network's
 /// buffers: the guest would see the game later and later, and its input would seem to lag.
-/// The newest picture waits for its turn instead, and older ones are dropped.
-const PICTURES_IN_FLIGHT: u8 = 1;
+/// The newest picture waits for its turn instead, and older ones are dropped. One was too few:
+/// every picture then waited for the last one's round trip and decoding, and most were dropped
+/// (30 of 60 per second, fewer on a slower link). Three bound the delay at 50 ms at 60.
+pub(crate) const PICTURES_IN_FLIGHT: u8 = 3;
 /// Frame rate video encoders are told to expect.
 const STREAM_FPS: u32 = 60;
 /// How often the guest hears about the host's state.

@@ -2,25 +2,41 @@
 //!
 //! English is built into the program: the default, and what a missing text falls back to.
 //! Every other language is a file `translation.<code>.json` in a `lang` folder, read when the
-//! program runs. Each file is a flat `key: text` table, and its `language.name` is how the
-//! language calls itself in the settings. Adding a language is adding a file with the keys of
-//! `translation.eng.json` (a translation program or an LLM can write one); the settings find
-//! it within seconds. A `translation.eng.json` in the folder overrides the built-in English.
+//! program runs. Each file is a flat `key: text` table; its `language.name` is how the language
+//! calls itself and its `language.code` the Google Translate code it stands for. Adding a
+//! language is adding a file with the keys of `translation.eng.json` (a translation program or
+//! an LLM can write one). A `translation.eng.json` in the folder overrides the built-in English.
+//!
+//! Any other language Google Translate knows can be chosen too: the English texts are then
+//! machine-translated with the service in the settings, in the background, and kept in
+//! `lang-cache/translation.<code>.json` so that it happens once. Until it is done, and for
+//! each text that did not survive translation, the window stays English.
 //!
 //! The `lang` folder next to the program is used, or else the one in the working directory.
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Display,
     path::{Path, PathBuf},
-    sync::{LazyLock, PoisonError, RwLock},
+    sync::{
+        LazyLock, PoisonError, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
+use shocora_gui_common::translate::{self, Service};
 
 /// Where translations are, next to the program or in the working directory.
 const FOLDER: &str = "lang";
+/// Where machine translations are kept, in the working directory (with the settings).
+const CACHE: &str = "lang-cache";
 /// The key holding a language's own name.
 const NAME_KEY: &str = "language.name";
+/// The key holding a language's Google Translate code.
+const CODE_KEY: &str = "language.code";
 /// The language texts fall back to, and the only one built in.
 const FALLBACK: &str = "eng";
+/// [`FALLBACK`]'s Google Translate code.
+const FALLBACK_CODE: &str = "en";
 const BUILT_IN_ENGLISH: &str = include_str!("../../../lang/translation.eng.json");
 
 type Table = HashMap<String, &'static str>;
@@ -105,36 +121,138 @@ fn languages_in(folder: &Path) -> Vec<(String, String)> {
     found
 }
 
-/// How long the list of languages is believed: the settings ask every frame, and a file put
-/// in the folder meanwhile shows up after this.
-const LIST_LIFETIME: std::time::Duration = std::time::Duration::from_secs(2);
-
-type LanguageList = (std::time::Instant, Vec<(String, String)>);
-
-static LIST: LazyLock<RwLock<Option<LanguageList>>> = LazyLock::new(|| RwLock::new(None));
-
-/// `(code, name)` of the languages on offer, each named in its own language.
-pub fn languages() -> Vec<(String, String)> {
-    if let Some((read, list)) = &*LIST.read().unwrap_or_else(PoisonError::into_inner) {
-        if read.elapsed() < LIST_LIFETIME {
-            return list.clone();
-        }
+/// The hand-written translation in `folder` for the Google Translate code `code`: the file
+/// whose `language.code` it is.
+fn hand_written(code: &str, folder: &Path) -> Option<Table> {
+    if code == FALLBACK_CODE {
+        return Some(load(FALLBACK, folder));
     }
-    let list = languages_in(&folder());
-    *LIST.write().unwrap_or_else(PoisonError::into_inner) =
-        Some((std::time::Instant::now(), list.clone()));
-    list
+    languages_in(folder)
+        .into_iter()
+        .filter(|(file_code, _)| file_code != FALLBACK)
+        .map(|(file_code, _)| load(&file_code, folder))
+        .find(|table| table.get(CODE_KEY).is_some_and(|c| *c == code))
+}
+
+/// `code` as Google Translate names it: settings from before every language could be chosen
+/// name a file (`eng`, `jpn`), whose `language.code` says which language it is.
+pub fn normalize(code: &str) -> String {
+    if translate::language_name(code).is_some() {
+        return code.to_owned();
+    }
+    let table = load(code, &folder());
+    table.get(CODE_KEY).map_or_else(|| FALLBACK_CODE.to_owned(), |c| (*c).to_owned())
+}
+
+/// `(code, English name)` of every language on offer: those Google Translate translates into.
+pub fn languages() -> &'static [(&'static str, &'static str)] {
+    &translate::LANGUAGES
+}
+
+/// Where the window's language stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    Ready,
+    /// Being machine-translated.
+    Translating,
+    /// Machine translation failed; the window is (partly) English.
+    Failed(String),
 }
 
 static FALLBACK_TABLE: LazyLock<RwLock<Table>> =
     LazyLock::new(|| RwLock::new(load(FALLBACK, &folder())));
 static CURRENT: LazyLock<RwLock<Table>> = LazyLock::new(|| RwLock::new(Table::new()));
+static STATUS: RwLock<Status> = RwLock::new(Status::Ready);
+/// Counts language changes: a machine translation finishing after another change is dropped.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Shows the window in the language `code` from now on, read again from its file.
-pub fn set_language(code: &str) {
+fn set_status(status: Status) {
+    *STATUS.write().unwrap_or_else(PoisonError::into_inner) = status;
+}
+
+/// Where the window's language stands.
+pub fn status() -> Status {
+    STATUS.read().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+fn cache_file(code: &str) -> PathBuf {
+    file_of(Path::new(CACHE), code)
+}
+
+/// Shows the window in the language `code` (a Google Translate code; older settings' file
+/// codes are understood) from now on, returning the code it was taken as. A language without
+/// a file is machine-translated with `service` in the background; `repaint` is called when
+/// that is done.
+pub fn set_language(code: &str, service: &Service, repaint: impl Fn() + Send + 'static) -> String {
+    let code = normalize(code);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let folder = folder();
-    *FALLBACK_TABLE.write().unwrap_or_else(PoisonError::into_inner) = load(FALLBACK, &folder);
-    *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = load(code, &folder);
+    let english = load(FALLBACK, &folder);
+    *FALLBACK_TABLE.write().unwrap_or_else(PoisonError::into_inner) = english.clone();
+    if let Some(table) = hand_written(&code, &folder) {
+        *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = table;
+        set_status(Status::Ready);
+        return code;
+    }
+    // What was translated before, and what is left: texts added since, or nothing yet.
+    let mut table = std::fs::read_to_string(cache_file(&code))
+        .ok()
+        .and_then(|json| parse(&json).ok())
+        .unwrap_or_default();
+    table.insert(CODE_KEY.to_owned(), code.clone().leak());
+    table.insert(NAME_KEY.to_owned(), translate::language_name(&code).unwrap_or(FALLBACK_CODE));
+    let missing: Vec<(String, &'static str)> = english
+        .iter()
+        .filter(|(key, _)| !table.contains_key(*key))
+        .map(|(key, text)| (key.clone(), *text))
+        .collect();
+    *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = table.clone();
+    if missing.is_empty() {
+        set_status(Status::Ready);
+        return code;
+    }
+    set_status(Status::Translating);
+    let service = service.clone();
+    let target = code.clone();
+    std::thread::spawn(move || {
+        let texts: Vec<&str> = missing.iter().map(|(_, text)| *text).collect();
+        let result = translate::translate_all(&service, &texts, &target);
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        match result {
+            Ok(translated) => {
+                for ((key, english), text) in missing.into_iter().zip(translated) {
+                    // A text that did not survive stays English rather than being asked for
+                    // at every start; translating again starts over.
+                    table.insert(key, text.map_or(english, |text| &*text.leak()));
+                }
+                let sorted: BTreeMap<&str, &str> =
+                    table.iter().map(|(key, text)| (key.as_str(), *text)).collect();
+                let written = std::fs::create_dir_all(CACHE).and_then(|()| {
+                    let json = serde_json::to_string_pretty(&sorted).unwrap_or_default();
+                    std::fs::write(cache_file(&target), json)
+                });
+                if let Err(error) = written {
+                    log::warn!("{}: {error}", cache_file(&target).display());
+                }
+                *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = table;
+                set_status(Status::Ready);
+            }
+            Err(error) => {
+                log::warn!("translating the window into {target}: {error}");
+                set_status(Status::Failed(error));
+            }
+        }
+        repaint();
+    });
+    code
+}
+
+/// [`set_language`] with the machine translation of `code` made anew.
+pub fn retranslate(code: &str, service: &Service, repaint: impl Fn() + Send + 'static) -> String {
+    let _ = std::fs::remove_file(cache_file(&normalize(code)));
+    set_language(code, service, repaint)
 }
 
 /// The text `key` stands for.

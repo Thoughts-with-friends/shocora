@@ -148,7 +148,9 @@ impl ShocoraApp {
             PackAction::Translate(text) => {
                 if let Some(target) = target_language() {
                     let ctx = ctx.clone();
-                    self.translator.request(&text, target, move || ctx.request_repaint());
+                    self.translator.request(&self.config.translation, &text, target, move || {
+                        ctx.request_repaint();
+                    });
                 }
             }
             PackAction::Check => self.pack_updater.check(self.config.graphic_pack_dir.clone()),
@@ -390,7 +392,18 @@ fn pack_details(
         }
         if view.target.is_some() {
             match translated {
+                // Shown means translated: asked for at once, in the window's language.
                 None => {
+                    if action.is_none() {
+                        *action = Some(PackAction::Translate(pack.description.clone()));
+                    }
+                    ui.label(tr("packs.translating"));
+                }
+                Some(Translation::Pending) => {
+                    ui.label(tr("packs.translating"));
+                }
+                Some(Translation::Failed(error)) => {
+                    ui.label(trf("packs.translate_failed", &[("error", &error)]));
                     if ui
                         .button(tr("packs.translate"))
                         .on_hover_text(tr("packs.translate_hint"))
@@ -398,12 +411,6 @@ fn pack_details(
                     {
                         *action = Some(PackAction::Translate(pack.description.clone()));
                     }
-                }
-                Some(Translation::Pending) => {
-                    ui.label(tr("packs.translating"));
-                }
-                Some(Translation::Failed(error)) => {
-                    ui.label(trf("packs.translate_failed", &[("error", &error)]));
                 }
                 Some(Translation::Done(_)) => {}
             }

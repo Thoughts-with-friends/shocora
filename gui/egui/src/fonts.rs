@@ -55,17 +55,56 @@ pub(crate) fn setup_custom_fonts<A>(ctx: &Context, font_path: Option<A>) -> Opti
 where
     A: AsRef<Path>,
 {
-    let (path, bytes) = load(font_path.as_ref().map(AsRef::as_ref))?;
+    let found = load(font_path.as_ref().map(AsRef::as_ref));
 
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert("cjk".to_owned(), FontData::from_owned(bytes).into());
+    let mut fallbacks = Vec::new();
+    if let Some((path, bytes)) = &found {
+        fonts.font_data.insert("cjk".to_owned(), FontData::from_owned(bytes.clone()).into());
+        fallbacks.push("cjk".to_owned());
+        log::info!("fonts: CJK fallback from {}", path.display());
+    }
+    // The window can be in any language: the system's faces for the other scripts follow.
+    for (i, path) in SCRIPTS.iter().enumerate() {
+        if let Ok(bytes) = std::fs::read(path) {
+            let name = format!("script{i}");
+            fonts.font_data.insert(name.clone(), FontData::from_owned(bytes).into());
+            fallbacks.push(name);
+        }
+    }
     for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        fonts.families.entry(family).or_default().push("cjk".to_owned());
+        fonts.families.entry(family).or_default().extend(fallbacks.iter().cloned());
     }
     ctx.set_fonts(fonts);
-    log::info!("fonts: CJK fallback from {}", path.display());
-    Some(path)
+    found.map(|(path, _)| path)
 }
+
+/// Faces for the scripts of the languages the window can be machine-translated into, beyond
+/// Latin and CJK: Cyrillic, Greek, Arabic, Hebrew, Armenian, Georgian, Indic, Thai, Lao,
+/// Khmer, Myanmar, Tibetan, Ethiopic, Cherokee and more. egui does not shape text, so
+/// joining scripts (Arabic, Indic) show their letters unjoined.
+const SCRIPTS: &[&str] = &[
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\Nirmala.ttc",
+    r"C:\Windows\Fonts\LeelawUI.ttf",
+    r"C:\Windows\Fonts\sylfaen.ttf",
+    r"C:\Windows\Fonts\ebrima.ttf",
+    r"C:\Windows\Fonts\mmrtext.ttf",
+    r"C:\Windows\Fonts\himalaya.ttf",
+    r"C:\Windows\Fonts\gadugi.ttf",
+    r"C:\Windows\Fonts\javatext.ttf",
+    r"C:\Windows\Fonts\mvboli.ttf",
+    r"C:\Windows\Fonts\monbaiti.ttf",
+    r"C:\Windows\Fonts\msyi.ttf",
+    r"C:\Windows\Fonts\ntailu.ttf",
+    r"C:\Windows\Fonts\taile.ttf",
+    r"C:\Windows\Fonts\seguisym.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+];
 
 /// The caller's font, the [`OVERRIDE`], or the first candidate that reads.
 fn load(preferred: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {

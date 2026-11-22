@@ -898,6 +898,29 @@ fn ax_set_voice_lpf(ctx: &mut HleContext<'_>, voice: u32, lpf: u32) -> Result<()
     Ok(())
 }
 
+/// The one-pole low-pass coefficients for a cutoff of `freq` Hz at 32 kHz, as Cemu computes
+/// them. Missing, the coefficients a title asked for stayed zero and its filtered voices came
+/// out silent or faint (Mario Tennis: Ultra Smash sounded far too quiet).
+fn lpf_coefficients(freq: u32) -> (u16, u16) {
+    let t1 = (freq as f32 / 32000.0 * std::f32::consts::TAU).cos();
+    let t2 = 2.0 - t1;
+    let b = (t2 - t2.mul_add(t2, -1.0).sqrt()).mul_add(32768.0, 0.5);
+    if b < 32768.0 { (0x7FFF - b as u16, b as u16) } else { (0, 0x7FFF) }
+}
+
+#[hle_export(lib = "sndcore2", name = "AXComputeLpfCoefs")]
+fn ax_compute_lpf_coefs(
+    ctx: &mut HleContext<'_>,
+    freq: u32,
+    a0: u32,
+    b0: u32,
+) -> Result<(), HleError> {
+    let (a, b) = lpf_coefficients(freq);
+    ctx.memory.write_u16(a0, a)?;
+    ctx.memory.write_u16(b0, b)?;
+    Ok(())
+}
+
 #[hle_export(lib = "sndcore2", name = "AXSetVoiceLpfCoefs")]
 fn ax_set_voice_lpf_coefs(ctx: &mut HleContext<'_>, voice: u32, a0: u32, b0: u32) {
     let lpf = ctx.os.ax.voices.get_mut(&voice).and_then(|entry| entry.lpf.as_mut());
@@ -1083,6 +1106,7 @@ pub const EXPORTS: &[HleExport] = &[
     AX_SET_VOICE_SRC,
     AX_SET_VOICE_SRC_RATIO,
     AX_SET_VOICE_LPF,
+    AX_COMPUTE_LPF_COEFS,
     AX_SET_VOICE_LPF_COEFS,
     AX_SET_VOICE_BIQUAD,
     AX_SET_VOICE_BIQUAD_COEFS,
@@ -1103,6 +1127,17 @@ pub const EXPORTS: &[HleExport] = &[
 
 #[cfg(test)]
 mod tests {
+
+    /// Intent: the low-pass coefficients pass sound through (Cemu's formula): the higher
+    /// the cutoff, the more passes; none of them is zero.
+    #[test]
+    fn lpf_coefficients_pass_sound() {
+        let (low_a, low_b) = super::lpf_coefficients(500);
+        let (high_a, high_b) = super::lpf_coefficients(15000);
+        assert!(low_a > 0 && high_a > low_a, "{low_a} {high_a}");
+        assert!(usize::from(low_a) + usize::from(low_b) <= 0x8000);
+        assert!(high_b < low_b);
+    }
     use crate::hle::test_env::{SCRATCH, TestEnv};
 
     #[test]

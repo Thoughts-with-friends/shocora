@@ -7,7 +7,7 @@ pub(crate) fn invalid(what: &str) -> io::Error {
 
 fn encode_input(input: &GuestInput) -> Vec<u8> {
     let pad = &input.pad;
-    let mut out = Vec::with_capacity(26);
+    let mut out = Vec::with_capacity(27);
     out.extend(pad.held.bits().to_be_bytes());
     for value in [pad.left_stick.x, pad.left_stick.y, pad.right_stick.x, pad.right_stick.y] {
         out.extend(value.to_be_bytes());
@@ -17,6 +17,8 @@ fn encode_input(input: &GuestInput) -> Vec<u8> {
     out.extend(x.to_be_bytes());
     out.extend(y.to_be_bytes());
     out.push(u8::from(input.to_gamepad));
+    // Last, so that a host from before it reads the rest as it did.
+    out.push((pad.mic.clamp(0.0, 1.0) * 255.0).round() as u8);
     out
 }
 
@@ -32,10 +34,13 @@ pub(super) fn decode_input(payload: &[u8]) -> io::Result<GuestInput> {
         let value = f32::from_be_bytes(word(at)?);
         Ok(if value.is_finite() { value.clamp(-1.0, 1.0) } else { 0.0 })
     };
-    let &[touching, x0, x1, y0, y1, to_gamepad] =
-        payload.get(20..).ok_or_else(|| invalid("short input message"))?
-    else {
-        return Err(invalid("short input message"));
+    // A guest from before the microphone sends one byte less.
+    let (touching, x0, x1, y0, y1, to_gamepad, mic) = match payload.get(20..) {
+        Some(&[touching, x0, x1, y0, y1, to_gamepad]) => (touching, x0, x1, y0, y1, to_gamepad, 0),
+        Some(&[touching, x0, x1, y0, y1, to_gamepad, mic]) => {
+            (touching, x0, x1, y0, y1, to_gamepad, mic)
+        }
+        _ => return Err(invalid("short input message")),
     };
     let touch = (touching != 0).then(|| {
         (
@@ -49,6 +54,7 @@ pub(super) fn decode_input(payload: &[u8]) -> io::Result<GuestInput> {
             left_stick: Stick { x: axis(4)?, y: axis(8)? },
             right_stick: Stick { x: axis(12)?, y: axis(16)? },
             touch,
+            mic: f32::from(mic) / 255.0,
             ..GamePadState::default()
         },
         to_gamepad: to_gamepad != 0,

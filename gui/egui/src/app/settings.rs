@@ -1,4 +1,5 @@
 //! The settings window.
+use shocora_gui_common::translate::{Provider, Service};
 use wiiu_title::update::AddOnKind;
 
 use super::*;
@@ -197,17 +198,119 @@ impl ShocoraApp {
 
     fn general_settings(&mut self, ui: &mut egui::Ui) {
         ui.label(tr("general.language"));
+        let ctx = ui.ctx().clone();
+        let repaint = move || ctx.request_repaint();
         ui.horizontal(|ui| {
-            for (code, name) in lang::languages() {
-                let chosen = self.config.language == code;
-
-                if ui.radio(chosen, name).clicked() && !chosen {
-                    lang::set_language(&code);
-                    self.config.language = code;
-                    self.save_config();
-                }
+            let current = shocora_gui_common::translate::language_name(&self.config.language)
+                .unwrap_or(&self.config.language)
+                .to_owned();
+            let mut chosen = None;
+            egui::ComboBox::from_id_salt("language").selected_text(&current).height(400.0).show_ui(
+                ui,
+                |ui| {
+                    for &(code, name) in lang::languages() {
+                        let label = format!("{name}  ({code})");
+                        if ui.selectable_label(self.config.language == code, label).clicked() {
+                            chosen = Some(code);
+                        }
+                    }
+                },
+            );
+            if let Some(code) = chosen.filter(|code| *code != self.config.language) {
+                self.config.language =
+                    lang::set_language(code, &self.config.translation, repaint.clone());
+                self.save_config();
+            }
+            if ui
+                .button(tr("general.language_retranslate"))
+                .on_hover_text(tr("general.language_retranslate_hint"))
+                .clicked()
+            {
+                self.config.language = lang::retranslate(
+                    &self.config.language,
+                    &self.config.translation,
+                    repaint.clone(),
+                );
             }
         });
+        match lang::status() {
+            lang::Status::Ready => {}
+            lang::Status::Translating => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(tr("general.language_translating"));
+                });
+            }
+            lang::Status::Failed(error) => {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    trf("general.language_failed", &[("error", &error)]),
+                );
+            }
+        }
+
+        ui.add_space(4.0);
+        ui.label(tr("general.translation_service"))
+            .on_hover_text(tr("general.translation_service_hint"));
+        let mut changed = false;
+        let service = &mut self.config.translation;
+        egui::Grid::new("translation_service").num_columns(2).show(ui, |ui| {
+            ui.label(tr("general.translation_provider"));
+            ui.horizontal(|ui| {
+                let mut provider = service.provider;
+                egui::ComboBox::from_id_salt("translation_provider")
+                    .selected_text(provider.label())
+                    .show_ui(ui, |ui| {
+                        for option in Provider::ALL {
+                            ui.selectable_value(&mut provider, option, option.label());
+                        }
+                    });
+                if provider != service.provider {
+                    // Another service's address and model mean nothing to this one.
+                    let key = std::mem::take(&mut service.api_key);
+                    *service = Service::of(provider);
+                    service.api_key = key;
+                    changed = true;
+                }
+            });
+            ui.end_row();
+
+            ui.label(tr("general.translation_endpoint"));
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .add(egui::TextEdit::singleline(&mut service.endpoint).desired_width(360.0))
+                    .lost_focus();
+                if ui.button(tr("general.translation_default")).clicked() {
+                    service.endpoint = service.provider.default_endpoint().to_owned();
+                    changed = true;
+                }
+            });
+            ui.end_row();
+
+            if service.provider.needs_key() {
+                ui.label(tr("general.translation_key"));
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut service.api_key)
+                            .password(true)
+                            .desired_width(360.0),
+                    )
+                    .lost_focus();
+                ui.end_row();
+            }
+            if service.provider.has_model() {
+                ui.label(tr("general.translation_model"));
+                changed |= ui
+                    .add(egui::TextEdit::singleline(&mut service.model).desired_width(200.0))
+                    .lost_focus();
+                ui.end_row();
+            }
+        });
+        if changed {
+            // Descriptions translated by the service before are asked for again.
+            self.translator.clear();
+            self.save_config();
+        }
 
         ui.separator();
 

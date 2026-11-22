@@ -66,7 +66,6 @@ pub struct ShocoraApp {
     fps: f32,
     instructions: u64,
     log: Vec<String>,
-    show_log: bool,
     last_gamepad: GamePadState,
     /// The settings window's page, while it is open.
     settings_tab: Option<SettingsTab>,
@@ -141,7 +140,18 @@ impl ShocoraApp {
             Console::spawn(config.emulator_config(), volume.clone(), render, move || {
                 ctx.request_repaint();
             })?;
-        lang::set_language(&config.language);
+        // Older settings name a file (`jpn`): kept from now on as the language it stands for.
+        let repaint_ctx = cc.egui_ctx.clone();
+        let language = lang::set_language(&config.language, &config.translation, move || {
+            repaint_ctx.request_repaint();
+        });
+        let mut config = config;
+        if language != config.language {
+            config.language = language;
+            if let Err(error) = config.save(&config_path) {
+                log::warn!("{}: {error}", config_path.display());
+            }
+        }
 
         let picture_path = config
             .launcher_image
@@ -179,7 +189,6 @@ impl ShocoraApp {
             fps: 0.0,
             instructions: 0,
             log: Vec::new(),
-            show_log: true,
             last_gamepad: GamePadState::default(),
             settings_tab: None,
             binding_capture: None,
@@ -336,20 +345,23 @@ impl eframe::App for ShocoraApp {
                 .default_size(260.0)
                 .show(ui, |ui| self.library_panel(ui));
         }
-        if self.show_log && !in_menu {
+        if self.config.show_log && !in_menu {
             egui::Panel::bottom("log")
                 .resizable(true)
                 .default_size(140.0)
                 .show(ui, |ui| self.log_panel(ui));
         }
+        // Around the title's pictures, the start screen's backdrop: see-through when it is.
+        let [r, g, b, a] = self.config.launcher_background;
+        let backdrop = egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
         if matches!(self.netplay, Netplay::Guest(_)) {
-            egui::CentralPanel::default().show(ui, |ui| self.guest_screen(ui));
+            egui::CentralPanel::default().frame(backdrop).show(ui, |ui| self.guest_screen(ui));
         } else if in_menu {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| self.menu_screen(ui));
         } else {
-            egui::CentralPanel::default().show(ui, |ui| self.screens(ui));
+            egui::CentralPanel::default().frame(backdrop).show(ui, |ui| self.screens(ui));
         }
         self.keyboard_window(ui.ctx());
         self.cheat_window(ui.ctx());

@@ -446,8 +446,9 @@ fn a_new_picture_waits_until_the_guest_has_the_last_one() {
     let host = Host::start(config, BusyHost { returned: Mutex::new(returned_tx) }).unwrap();
     let mut stream = join_by_hand(host.port());
 
-    // However fast the title draws, one picture of each screen is on its way at a time.
-    assert_eq!(pictures_until_quiet(&mut stream), [1, 1]);
+    // However fast the title draws, a few pictures of each screen are on their way at a time.
+    let in_flight = usize::from(crate::host::PICTURES_IN_FLIGHT);
+    assert_eq!(pictures_until_quiet(&mut stream), [in_flight, in_flight]);
     // Taking in the TV's picture lets exactly the newest one of it come.
     protocol::write_message(&mut stream, &Message::FrameShown(Display::Tv)).unwrap();
     assert_eq!(pictures_until_quiet(&mut stream), [1, 0]);

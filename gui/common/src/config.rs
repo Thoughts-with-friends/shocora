@@ -37,8 +37,13 @@ pub struct AppConfig {
     pub background_shaders: bool,
     /// Picture behind the start screen's color.
     pub launcher_image: Option<PathBuf>,
-    /// Language of the window: `eng` or `jpn`.
+    /// Language of the window, as Google Translate names it (`ja`, `de`, `zh-CN`, ...). One
+    /// without a translation file is machine-translated with [`Self::translation`].
     pub language: String,
+    /// The service translating the window and graphic pack descriptions.
+    pub translation: crate::translate::Service,
+    /// Show the log under a running title.
+    pub show_log: bool,
     /// Directories scanned for titles.
     pub rom_dirs: Vec<PathBuf>,
     /// The host a guest joins.
@@ -103,11 +108,13 @@ impl Default for AppConfig {
             frame_generation: false,
             background_shaders: true,
             launcher_image: None,
-            language: "jpn".to_owned(),
+            language: "ja".to_owned(),
+            translation: crate::translate::Service::default(),
+            show_log: false,
             rom_dirs: Vec::new(),
             netplay_host: "127.0.0.1".to_owned(),
             netplay_address: "127.0.0.1".to_owned(),
-            netplay_stream_height: 1080,
+            netplay_stream_height: 720,
             netplay_stream_fps: 60,
             resolution_factor: 1,
             min_swap_interval: None,

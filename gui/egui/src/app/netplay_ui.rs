@@ -1,6 +1,12 @@
 //! Netplay as the window shows it: hosting, joining and their state.
 use super::*;
 
+/// Most lines a guest's TV picture has: beyond 2K, encoding, sending and decoding each picture
+/// took long enough to delay it and drop others.
+const MAX_STREAM_HEIGHT: u32 = 1440;
+/// Most lines of the GamePad's.
+const MAX_GAMEPAD_STREAM_HEIGHT: u32 = 1080;
+
 impl ShocoraApp {
     fn start_hosting(&mut self) {
         self.netplay = Netplay::Off;
@@ -20,6 +26,7 @@ impl ShocoraApp {
         let address = config.address;
         let [tv, gamepad] = self.presenter.stream_taps();
         tv.set_format(self.stream_format());
+        gamepad.set_format(self.gamepad_stream_format());
         match netplay::host(config, commands, tv, gamepad, self.last_gamepad) {
             Ok(hosting) => {
                 self.console.send(ConsoleCommand::AudioTap(Some(hosting.host.audio_sink())));
@@ -102,25 +109,37 @@ impl ShocoraApp {
         }
     }
 
-    /// The TV pictures a guest gets, as chosen.
+    /// The TV pictures a guest gets, as chosen: 2K at most, which keeps the delay low.
     fn stream_format(&self) -> StreamFormat {
         match self.config.netplay_stream_height {
             0 => StreamFormat::TV_DEFAULT,
-            height => StreamFormat::tv(height, self.config.netplay_stream_fps.max(1)),
+            height => StreamFormat::tv(
+                height.min(MAX_STREAM_HEIGHT),
+                self.config.netplay_stream_fps.max(1),
+            ),
+        }
+    }
+
+    /// The GamePad pictures a guest gets: video like the TV's, so that a graphic pack's
+    /// resolution shows there too, up to 1080 lines (a GamePad is small, and the TV goes first).
+    fn gamepad_stream_format(&self) -> StreamFormat {
+        match self.config.netplay_stream_height {
+            0 => StreamFormat::GAMEPAD_DEFAULT,
+            height => StreamFormat::tv(
+                height.min(MAX_GAMEPAD_STREAM_HEIGHT),
+                self.config.netplay_stream_fps.max(1),
+            ),
         }
     }
 
     /// Size and rate of the guest's picture. Changes apply at once while hosting.
     fn stream_quality(&mut self, ui: &mut egui::Ui) {
-        const HEIGHTS: [(u32, &str); 7] = [
-            (0, "JPEG 360p"),
-            (720, "720p"),
-            (1080, "1080p"),
-            (1440, "1440p"),
-            (2160, "4K"),
-            (2880, "5K"),
-            (4320, "8K"),
-        ];
+        const HEIGHTS: [(u32, &str); 4] =
+            [(0, "JPEG 360p"), (720, "720p"), (1080, "1080p"), (1440, "1440p (2K)")];
+        // Settings from before the limit.
+        if self.config.netplay_stream_height > MAX_STREAM_HEIGHT {
+            self.config.netplay_stream_height = MAX_STREAM_HEIGHT;
+        }
         let before = (self.config.netplay_stream_height, self.config.netplay_stream_fps);
         ui.label(tr("netplay.stream_quality")).on_hover_text(tr("netplay.stream_quality_hint"));
         ui.horizontal(|ui| {
@@ -143,7 +162,9 @@ impl ShocoraApp {
         if before != (self.config.netplay_stream_height, self.config.netplay_stream_fps) {
             self.save_config();
             if matches!(self.netplay, Netplay::Host(_)) {
-                self.presenter.stream_taps()[0].set_format(self.stream_format());
+                let [tv, gamepad] = self.presenter.stream_taps();
+                tv.set_format(self.stream_format());
+                gamepad.set_format(self.gamepad_stream_format());
             }
         }
     }

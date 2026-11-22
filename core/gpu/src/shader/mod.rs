@@ -69,6 +69,10 @@ pub struct TranslatedShader {
     pub writes_depth: bool,
     /// Writes stream-out buffers.
     pub stream_out: bool,
+    /// Per uniform block, how many vec4s from its start the program reads: 0 for none,
+    /// `u32::MAX` when an index register picks them (the whole block counts). As Cemu's
+    /// uniform buffer access tracking, so that only what is read is hashed and copied.
+    pub ubo_vec4s: [u32; 16],
 }
 
 /// `group(0)`: arena and per-draw parameters, shared by every shader.

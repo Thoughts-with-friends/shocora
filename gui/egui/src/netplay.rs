@@ -39,13 +39,16 @@ impl PadMixer {
     /// What the title reads from the GamePad. The guest can always touch its screen.
     fn gamepad(&self) -> GamePadState {
         let Some(guest) = self.guest else { return self.host };
-        if self.player1 {
+        let mut pad = if self.player1 {
             guest.pad
         } else if guest.to_gamepad {
             merge(self.host, guest.pad)
         } else {
             GamePadState { touch: self.host.touch.or(guest.pad.touch), ..self.host }
-        }
+        };
+        // There is one GamePad microphone: whoever speaks into theirs is heard.
+        pad.mic = self.host.mic.max(guest.pad.mic);
+        pad
     }
 
     /// What the title reads from the guest's Pro Controller. It stays plugged in while the
