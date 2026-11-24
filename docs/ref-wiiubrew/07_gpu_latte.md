@@ -108,12 +108,15 @@ them once and replay them each frame.
   offset.
 
 ```text
-   linear (row by row)                    2D tiled (macro tiles of 8×8 micro tiles)
-   ┌──┬──┬──┬──┬──┬──┬──┬──┐               ┌─────────┬─────────┐
-   │ 0│ 1│ 2│ 3│ 4│ 5│ 6│ 7│               │ tile 0  │ tile 1  │   each micro tile = 8×8 pixels
-   ├──┼──┼──┼──┼──┼──┼──┼──┤      ──►      │ ▓▓░░▓▓░░│ bank/pipe│   stored contiguously; tiles
-   │ 8│ 9│10│11│12│13│14│15│               │ ░░▓▓░░▓▓│ swizzled │   spread over memory banks
-   └──┴──┴──┴──┴──┴──┴──┴──┘               └─────────┴─────────┘   for bandwidth
+   linear (row by row)                     tiled (8×8 micro tiles, stored one after another)
+   ┌───┬───┬───┬───┬───┬───┬───┬───┐       ┌───────────────┬───────────────┐
+   │ 0 │ 1 │ 2 │ 3 │ 4 │ 5 │ 6 │ 7 │       │ micro tile A  │ micro tile B  │
+   ├───┼───┼───┼───┼───┼───┼───┼───┤  ──►  │ bytes 0..255  │ bytes 256..511│
+   │ 8 │ 9 │10 │11 │12 │13 │14 │15 │       ├───────────────┼───────────────┤
+   └───┴───┴───┴───┴───┴───┴───┴───┘       │ micro tile C  │ micro tile D  │
+   neighbours above/below are a whole      └───────────────┴───────────────┘
+   row apart in memory                      macro tiles group micro tiles and
+                                            spread them over memory banks/pipes
 ```
 
 [Tiling](../guide/wiiu_term.md#t5-21) reorders pixels so that a small square of the image sits
