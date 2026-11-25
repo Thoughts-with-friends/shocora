@@ -1,6 +1,6 @@
 # 7.2 PM4 Packets
 
-[← 7.1 GX2 and the command flow](07_1_gx2_command_flow.md) · [7. Latte Graphics](07_gpu_latte.md) · next: [7.3 Registers and GPU state →](07_3_registers_state.md)
+[← 7.1 GX2 and the command flow](07_1_gx2_command_flow.md) · [7. Latte Graphics](07_0_gpu_latte.md) · next: [7.3 Registers and GPU state →](07_3_registers_state.md)
 
 [PM4](../guide/wiiu_term.md#t5-3) is the command language of AMD's Radeon GPUs of the R600/R700
 generation, and therefore of [Latte](../guide/wiiu_term.md#t2-16). A

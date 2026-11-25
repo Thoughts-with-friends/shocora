@@ -1,6 +1,6 @@
 # 7.4 Shaders
 
-[← 7.3 Registers and GPU state](07_3_registers_state.md) · [7. Latte Graphics](07_gpu_latte.md) · next: [7.5 Surfaces, formats and tiling →](07_5_surfaces_tiling.md)
+[← 7.3 Registers and GPU state](07_3_registers_state.md) · [7. Latte Graphics](07_0_gpu_latte.md) · next: [7.5 Surfaces, formats and tiling →](07_5_surfaces_tiling.md)
 
 A [shader](../guide/wiiu_term.md#t2-17) is a small program the GPU runs for every vertex or
 every pixel. On the Wii U, games ship shaders already compiled to the GPU's machine code, the

@@ -23,11 +23,34 @@ of them, so read it last, or first if you want the overview before the parts.
 |    4 | [Memory Map](04_memory_map.md)                       | Physical and virtual addresses, MEM1 / MEM2, the game's view          |
 |    5 | [The Espresso CPU](05_cpu_espresso.md)               | Cores, registers, paired singles, caches, time                        |
 |    6 | [Cafe OS](06_cafe_os.md)                             | Kernel, loader, threads, scheduler, sync objects, heaps               |
-|    7 | [Latte Graphics (GX2)](07_gpu_latte.md)              | From `GX2Draw` to pixels: command buffers, shaders, surfaces, display |
-|    8 | [IOSU and IPC](08_iosu_ipc.md)                       | The ARM co-processor OS, devices, and how the PowerPC talks to it     |
+|    7 | [Latte Graphics (GX2)](07_0_gpu_latte.md)            | From `GX2Draw` to pixels: command buffers, shaders, surfaces, display |
+|    8 | [IOSU and IPC](08_0_iosu_ipc.md)                     | The ARM co-processor OS, devices, and how the PowerPC talks to it     |
 |    9 | [Sound and Input](09_audio_input.md)                 | AX voices and mixing; GamePad, Wii remotes, Pro Controller            |
 |   10 | [Titles, Storage and Saves](10_titles_storage.md)    | Title IDs, folders, the file system, save data                        |
 |   11 | [The Life of a Frame](11_life_of_a_frame.md)         | One frame of a game, end to end, and how shocora maps it              |
+
+### Sections of chapters 7 and 8
+
+Chapters 7 and 8 are split into one file per section. Start with the chapter page (7.0 /
+8.0), which has the overview diagram and a table of the sections.
+
+- **7. Latte Graphics:** [7.0 overview](07_0_gpu_latte.md) ·
+  [7.1 GX2 and the command flow](07_1_gx2_command_flow.md) ·
+  [7.2 PM4 packets](07_2_pm4_packets.md) ·
+  [7.3 Registers and GPU state](07_3_registers_state.md) ·
+  [7.4 Shaders](07_4_shaders.md) ·
+  [7.5 Surfaces, formats and tiling](07_5_surfaces_tiling.md) ·
+  [7.6 Render targets, depth and copies](07_6_targets_copies.md) ·
+  [7.7 Display, vsync and synchronisation](07_7_display_sync.md) ·
+  [7.8 How shocora emulates it](07_8_shocora_gpu.md)
+- **8. IOSU and IPC:** [8.0 overview](08_0_iosu_ipc.md) ·
+  [8.1 Two operating systems](08_1_two_systems.md) ·
+  [8.2 The IPC request](08_2_requests.md) ·
+  [8.3 The round trip](08_3_round_trip.md) ·
+  [8.4 The file system: FS and FSA](08_4_fsa.md) ·
+  [8.5 The other services](08_5_services.md) ·
+  [8.6 Where shocora answers](08_6_shocora_iosu.md) ·
+  [8.7 Syscalls](08_7_syscalls.md)
 
 ## Conventions
 

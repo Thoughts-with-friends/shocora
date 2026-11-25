@@ -1,6 +1,6 @@
 # 7.3 Registers and GPU State
 
-[← 7.2 PM4 packets](07_2_pm4_packets.md) · [7. Latte Graphics](07_gpu_latte.md) · next: [7.4 Shaders →](07_4_shaders.md)
+[← 7.2 PM4 packets](07_2_pm4_packets.md) · [7. Latte Graphics](07_0_gpu_latte.md) · next: [7.4 Shaders →](07_4_shaders.md)
 
 Everything the GPU "knows" about the next draw sits in its [registers](../guide/wiiu_term.md#t2-9):
 which [shaders](../guide/wiiu_term.md#t2-17) to run, which

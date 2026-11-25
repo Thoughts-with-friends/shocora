@@ -1,6 +1,6 @@
 # 7.1 GX2 and the Command Flow
 
-[← 7. Latte Graphics](07_gpu_latte.md) · next: [7.2 PM4 packets →](07_2_pm4_packets.md)
+[← 7. Latte Graphics](07_0_gpu_latte.md) · next: [7.2 PM4 packets →](07_2_pm4_packets.md)
 
 [GX2](../guide/wiiu_term.md#t5-1) is a [library](../guide/wiiu_term.md#t4-5) (`gx2.rpl`) that
 runs inside the game's process on the [CPU](../guide/wiiu_term.md#t2-1). It does not draw

@@ -1,6 +1,6 @@
 # 7.5 Surfaces, Formats and Tiling
 
-[← 7.4 Shaders](07_4_shaders.md) · [7. Latte Graphics](07_gpu_latte.md) · next: [7.6 Render targets, depth and copies →](07_6_targets_copies.md)
+[← 7.4 Shaders](07_4_shaders.md) · [7. Latte Graphics](07_0_gpu_latte.md) · next: [7.6 Render targets, depth and copies →](07_6_targets_copies.md)
 
 Every image the GPU touches is a [surface](../guide/wiiu_term.md#t5-16): a
 [texture](../guide/wiiu_term.md#t5-14), a [render target](../guide/wiiu_term.md#t5-17), a
